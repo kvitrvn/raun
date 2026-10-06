@@ -133,7 +133,11 @@ func renderItem(w io.Writer, it *knowledge.Item) {
 	if len(it.OpenPoints) > 0 {
 		fmt.Fprintf(w, "\nOpen points:\n")
 		for _, p := range it.OpenPoints {
-			fmt.Fprintf(w, "  %s  %s: %s\n", p.ID, p.Kind, p.Summary)
+			by := ""
+			if p.RaisedBy != "" {
+				by = " (raised by " + p.RaisedBy + ")"
+			}
+			fmt.Fprintf(w, "  %s  %s%s: %s\n", p.ID, p.Kind, by, p.Summary)
 			for i, pos := range p.Positions {
 				ev := ""
 				if len(pos.Evidence) > 0 {

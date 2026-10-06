@@ -35,6 +35,13 @@ const (
 	builtinInstructions = "builtin:"
 )
 
+// MaxAgents is the largest number of analysts; the lead sees them
+// anonymized as A to Z.
+const MaxAgents = 26
+
+// reservedIDs name roles, which share the run artifact layout with agents.
+var reservedIDs = []string{"lead", "reconciler"}
+
 // RunnerCommand runs an agent as an external command: prompt on stdin,
 // one JSON object on stdout.
 const RunnerCommand = "command"
@@ -266,8 +273,11 @@ func (c *Config) Validate() error {
 	}
 
 	agents := c.Analysis.Agents
-	if len(agents) == 0 {
+	switch {
+	case len(agents) == 0:
 		add("analysis.agents", "must declare at least one agent")
+	case len(agents) > MaxAgents:
+		add("analysis.agents", "must declare at most %d agents, got %d", MaxAgents, len(agents))
 	}
 	if c.Analysis.Quorum < 1 || c.Analysis.Quorum > len(agents) {
 		add("analysis.quorum", "must be between 1 and the number of agents (%d), got %d", len(agents), c.Analysis.Quorum)
@@ -282,6 +292,8 @@ func (c *Config) Validate() error {
 			add(field+".id", "must match %s, got %q", agentIDPattern, a.ID)
 		case seenIDs[a.ID]:
 			add(field+".id", "duplicate agent id %q", a.ID)
+		case slices.Contains(reservedIDs, a.ID):
+			add(field+".id", "%q is reserved", a.ID)
 		}
 		seenIDs[a.ID] = true
 		errs = append(errs, validateRole(field, Role{Instructions: a.Instructions, Runner: a.Runner})...)

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kvitrvn/raun/internal/agent"
@@ -36,8 +37,7 @@ type Options struct {
 	// Commit to analyze. Empty means HEAD, which requires a clean working
 	// tree (changes under `.raun/` are ignored, except context files).
 	Commit string
-	// Agent selects one agent by ID. Until multi-agent consolidation
-	// exists, it is required when several agents are configured.
+	// Agent restricts the run to one agent, by ID. Empty runs them all.
 	Agent string
 	// RaunVersion is recorded in the manifest.
 	RaunVersion string
@@ -88,7 +88,7 @@ func Execute(ctx context.Context, opts Options) (*Manifest, error) {
 	if len(existing) > 0 {
 		return nil, fmt.Errorf("the knowledge base already holds %d item(s); running again on an existing base needs reconciliation, which is not implemented yet", len(existing))
 	}
-	agents, err := selectAgents(cfg.Analysis.Agents, opts.Agent)
+	agents, err := selectAgents(cfg, opts.Agent)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +111,7 @@ func Execute(ctx context.Context, opts Options) (*Manifest, error) {
 		Quorum:       min(cfg.Analysis.Quorum, len(agents)),
 	}
 	runDir := filepath.Join(workspace.RunsDir(opts.Dir), m.ID)
-	fmt.Fprintf(progress, "run %s on commit %s\n", m.ID, commit[:12])
+	fmt.Fprintf(progress, "run %s on commit %s with %d agent(s)\n", m.ID, commit[:12], len(agents))
 
 	r := &runner{
 		repo:     repo,
@@ -124,6 +124,7 @@ func Execute(ctx context.Context, opts Options) (*Manifest, error) {
 		progress: progress,
 		verifier: evidence.NewVerifier(repo, cfg.Evidence.MaxLines),
 		classify: source.NewClassifier(cfg.Sources.Context, cfg.Sources.Docs, cfg.Sources.Exclude),
+		hidden:   hiddenFromAgents(cfg.Sources.Context),
 	}
 
 	runErr := r.execute(ctx, m, agents, store, now)
@@ -151,25 +152,59 @@ type runner struct {
 	progress io.Writer
 	verifier *evidence.Verifier
 	classify *source.Classifier
+	hidden   func(path string) bool
+	mu       sync.Mutex // serializes progress output
 }
 
 func (r *runner) execute(ctx context.Context, m *Manifest, agents []config.Agent, store *knowledge.Store, now func() time.Time) error {
+	// Analysts work in parallel and independently.
+	recs := make([]AgentRecord, len(agents))
+	outputs := make([][]byte, len(agents))
+	errs := make([]error, len(agents))
+	var wg sync.WaitGroup
+	for i, a := range agents {
+		wg.Go(func() {
+			recs[i], outputs[i], errs[i] = r.analyze(ctx, a)
+		})
+	}
+	wg.Wait()
+	if err := errors.Join(errs...); err != nil {
+		m.Agents = recs
+		return err
+	}
+
+	// Contract and evidence checks run sequentially (the verifier caches).
 	var reports []consolidate.CheckedReport
-	for _, a := range agents {
-		rec, report, err := r.analyze(ctx, a)
+	for i := range agents {
+		if outputs[i] == nil {
+			continue
+		}
+		report, ok, err := r.checkReport(ctx, &recs[i], outputs[i])
 		if err != nil {
+			m.Agents = recs
 			return err
 		}
-		m.Agents = append(m.Agents, rec)
-		if report != nil {
-			reports = append(reports, *report)
+		if ok {
+			reports = append(reports, report)
 		}
 	}
+	m.Agents = recs
 	if len(reports) < m.Quorum {
 		return fmt.Errorf("%w: quorum not met: %d valid report(s), %d required", ErrRunFailed, len(reports), m.Quorum)
 	}
 
-	// Until multi-agent consolidation exists, exactly one report reaches here.
+	var plan consolidate.Plan
+	if len(reports) == 1 {
+		plan = consolidate.Identity(reports)
+		m.Consolidation = &ConsolidationSummary{Method: MethodIdentity}
+	} else {
+		var err error
+		if plan, err = r.lead(ctx, m, reports); err != nil {
+			return err
+		}
+		m.Consolidation = &ConsolidationSummary{Method: MethodLead}
+	}
+
 	used := map[string]bool{}
 	newID := func(t knowledge.Type) (string, error) {
 		for {
@@ -180,7 +215,7 @@ func (r *runner) execute(ctx context.Context, m *Manifest, agents []config.Agent
 			}
 		}
 	}
-	res, err := consolidate.Single(r.runID, r.commit, now(), reports[0], newID)
+	res, err := consolidate.Build(r.runID, r.commit, now(), reports, plan, newID)
 	if err != nil {
 		return err
 	}
@@ -194,29 +229,31 @@ func (r *runner) execute(ctx context.Context, m *Manifest, agents []config.Agent
 			return err
 		}
 		m.Items = append(m.Items, it.ID)
+		if len(it.Support) > 1 {
+			m.Consolidation.Merged++
+		}
+		if it.Status == knowledge.StatusContested {
+			m.Consolidation.Contested++
+		}
 	}
+	m.Consolidation.Items = len(res.Items)
 	for _, q := range res.Questions {
-		m.Questions = append(m.Questions, QuestionRecord{Agent: reports[0].Agent, ID: q.ID, Question: q.Question})
+		m.Questions = append(m.Questions, QuestionRecord{Agent: q.Agent, ID: q.ID, Question: q.Question})
 	}
-	fmt.Fprintf(r.progress, "%d knowledge item(s) proposed\n", len(res.Items))
+	r.logf("%d knowledge item(s) proposed, %d merged from several agents, %d contested",
+		len(res.Items), m.Consolidation.Merged, m.Consolidation.Contested)
 	return nil
 }
 
-// analyze runs one analyst agent. An agent failure is recorded and returns
-// a nil report; only infrastructure problems return an error.
-func (r *runner) analyze(ctx context.Context, a config.Agent) (AgentRecord, *consolidate.CheckedReport, error) {
-	rec := AgentRecord{ID: a.ID, Role: "analyst", Instructions: a.Instructions, Argv: a.Runner.Argv, Status: AgentFailed}
-	fail := func(format string, args ...any) (AgentRecord, *consolidate.CheckedReport, error) {
-		rec.Error = fmt.Sprintf(format, args...)
-		fmt.Fprintf(r.progress, "%s: failed: %s\n", a.ID, firstLine(rec.Error))
-		return rec, nil, nil
-	}
-
+// analyze runs one analyst. It returns the agent's stdout, or nil if the
+// agent failed (the record says why). Only infrastructure problems return
+// an error.
+func (r *runner) analyze(ctx context.Context, a config.Agent) (AgentRecord, []byte, error) {
+	rec := AgentRecord{ID: a.ID, Role: RoleAnalyst, Instructions: a.Instructions, Argv: a.Runner.Argv, Status: AgentFailed}
 	instructions, err := r.instructions(a.Instructions)
 	if err != nil {
 		return rec, nil, err
 	}
-	rec.InstructionsSHA256 = digest([]byte(instructions))
 	text, err := prompt.Analyst{
 		Instructions: instructions,
 		Commit:       r.commit,
@@ -229,33 +266,126 @@ func (r *runner) analyze(ctx context.Context, a config.Agent) (AgentRecord, *con
 	if err != nil {
 		return rec, nil, err
 	}
+	r.logf("%s: analyzing", a.ID)
+	out, err := r.invoke(ctx, &rec, instructions, text, a.Runner)
+	return rec, out, err
+}
+
+// checkReport validates an analyst's output against the contract, then
+// classifies and verifies its citations. ok is false when the report is
+// invalid (recorded as an agent failure).
+func (r *runner) checkReport(ctx context.Context, rec *AgentRecord, stdout []byte) (consolidate.CheckedReport, bool, error) {
+	report, data, err := agent.ParseReport(stdout, r.types)
+	if data != nil {
+		if err := os.WriteFile(filepath.Join(r.rawDir, rec.ID, "report.json"), data, 0o644); err != nil {
+			return consolidate.CheckedReport{}, false, err
+		}
+	}
+	if err != nil {
+		r.fail(rec, "invalid report: %v", err)
+		return consolidate.CheckedReport{}, false, nil
+	}
+
+	checked, summary, err := r.check(ctx, report)
+	if err != nil {
+		return consolidate.CheckedReport{}, false, err
+	}
+	rec.Status = AgentOK
+	rec.Report = summary
+	r.logf("%s: %d interpretation(s), evidence %d verified, %d relocated, %d invalid",
+		rec.ID, summary.Interpretations, summary.Evidence.Verified, summary.Evidence.Relocated, summary.Evidence.Invalid)
+	return consolidate.CheckedReport{Agent: rec.ID, Report: report, Citations: checked}, true, nil
+}
+
+// lead asks the lead to consolidate the reports, anonymized. Any lead
+// failure fails the run: the knowledge base never receives unconsolidated
+// results.
+func (r *runner) lead(ctx context.Context, m *Manifest, reports []consolidate.CheckedReport) (consolidate.Plan, error) {
+	l := r.cfg.Lead
+	rec := AgentRecord{ID: RoleLead, Role: RoleLead, Instructions: l.Instructions, Argv: l.Runner.Argv, Status: AgentFailed}
+	defer func() { m.Lead = &rec }()
+
+	labels := consolidate.Labels(rand.Perm(len(reports)))
+	m.Anonymization = map[string]string{}
+	for i, label := range labels {
+		m.Anonymization[label] = reports[i].Agent
+	}
+	input, refs, err := consolidate.LeadInput(reports, labels)
+	if err != nil {
+		return consolidate.Plan{}, err
+	}
+	instructions, err := r.instructions(l.Instructions)
+	if err != nil {
+		return consolidate.Plan{}, err
+	}
+	text, err := prompt.Lead{
+		Instructions: instructions,
+		Commit:       r.commit,
+		Language:     r.cfg.Language,
+		Types:        r.types,
+		Reports:      string(input),
+	}.Render()
+	if err != nil {
+		return consolidate.Plan{}, err
+	}
+
+	r.logf("lead: consolidating %d reports", len(reports))
+	out, err := r.invoke(ctx, &rec, instructions, text, l.Runner)
+	if err != nil {
+		return consolidate.Plan{}, err
+	}
+	if out == nil {
+		return consolidate.Plan{}, fmt.Errorf("%w: lead failed: %s", ErrRunFailed, rec.Error)
+	}
+	c, data, err := agent.ParseConsolidation(out, r.types, refs)
+	if data != nil {
+		if err := os.WriteFile(filepath.Join(r.rawDir, rec.ID, "consolidation.json"), data, 0o644); err != nil {
+			return consolidate.Plan{}, err
+		}
+	}
+	if err != nil {
+		r.fail(&rec, "invalid consolidation: %v", err)
+		return consolidate.Plan{}, fmt.Errorf("%w: lead failed: %s", ErrRunFailed, rec.Error)
+	}
+	plan, err := consolidate.FromLead(c, labels)
+	if err != nil {
+		return consolidate.Plan{}, err
+	}
+	rec.Status = AgentOK
+	return plan, nil
+}
+
+// invoke runs one agent on a fresh snapshot, saving its prompt and output
+// under raw/<rec.ID>/. It returns stdout, or nil if the agent failed (the
+// record says why). Only infrastructure problems return an error.
+func (r *runner) invoke(ctx context.Context, rec *AgentRecord, instructions, text string, cfg config.Runner) ([]byte, error) {
+	rec.InstructionsSHA256 = digest([]byte(instructions))
 	rec.PromptSHA256 = digest([]byte(text))
 
-	raw := filepath.Join(r.rawDir, a.ID)
+	raw := filepath.Join(r.rawDir, rec.ID)
 	if err := os.MkdirAll(raw, 0o755); err != nil {
-		return rec, nil, err
+		return nil, err
 	}
 	if err := os.WriteFile(filepath.Join(raw, "prompt.md"), []byte(text), 0o644); err != nil {
-		return rec, nil, err
+		return nil, err
 	}
 
-	snap, err := snapshot.Create(ctx, r.repo, r.commit, "raun-"+r.runID+"-"+a.ID+"-", hiddenFromAgents)
+	snap, err := snapshot.Create(ctx, r.repo, r.commit, "raun-"+r.runID+"-"+rec.ID+"-", r.hidden)
 	if err != nil {
-		return rec, nil, err
+		return nil, err
 	}
 	defer func() { _ = snap.Remove() }()
 
-	fmt.Fprintf(r.progress, "%s: analyzing\n", a.ID)
-	ag, err := newRunner(a.Runner)
+	ag, err := newRunner(cfg)
 	if err != nil {
-		return rec, nil, err
+		return nil, err
 	}
 	out, runErr := ag.Run(ctx, agent.Request{
 		RunID:   r.runID,
-		Role:    "analyst",
+		Role:    rec.Role,
 		Prompt:  text,
 		Dir:     snap.Dir,
-		Timeout: time.Duration(a.Runner.Timeout),
+		Timeout: time.Duration(cfg.Timeout),
 	})
 	rec.ExitCode = out.ExitCode
 	rec.Duration = out.Duration.Round(time.Millisecond).String()
@@ -263,40 +393,36 @@ func (r *runner) analyze(ctx context.Context, a config.Agent) (AgentRecord, *con
 		os.WriteFile(filepath.Join(raw, "stdout.txt"), out.Stdout, 0o644),
 		os.WriteFile(filepath.Join(raw, "stderr.txt"), out.Stderr, 0o644),
 	); err != nil {
-		return rec, nil, err
+		return nil, err
 	}
 	if rec.SnapshotChanges, err = snap.Changes(); err != nil {
-		return rec, nil, err
+		return nil, err
 	}
 	if len(rec.SnapshotChanges) > 0 {
-		fmt.Fprintf(r.progress, "%s: warning: the agent changed %d file(s) in its copy\n", a.ID, len(rec.SnapshotChanges))
+		r.logf("%s: warning: the agent changed %d file(s) in its copy", rec.ID, len(rec.SnapshotChanges))
 	}
 
-	if runErr != nil {
-		return fail("%v", runErr)
+	switch {
+	case runErr != nil:
+		r.fail(rec, "%v", runErr)
+		return nil, nil
+	case out.ExitCode != 0:
+		r.fail(rec, "exited with code %d", out.ExitCode)
+		return nil, nil
 	}
-	if out.ExitCode != 0 {
-		return fail("exited with code %d", out.ExitCode)
-	}
-	report, data, err := agent.ParseReport(out.Stdout, r.types)
-	if data != nil {
-		if err := os.WriteFile(filepath.Join(raw, "report.json"), data, 0o644); err != nil {
-			return rec, nil, err
-		}
-	}
-	if err != nil {
-		return fail("invalid report: %v", err)
-	}
+	return out.Stdout, nil
+}
 
-	checked, summary, err := r.check(ctx, report)
-	if err != nil {
-		return rec, nil, err
-	}
-	rec.Status = AgentOK
-	rec.Report = summary
-	fmt.Fprintf(r.progress, "%s: %d interpretation(s), evidence %d verified, %d relocated, %d invalid\n",
-		a.ID, summary.Interpretations, summary.Evidence.Verified, summary.Evidence.Relocated, summary.Evidence.Invalid)
-	return rec, &consolidate.CheckedReport{Agent: a.ID, Report: report, Citations: checked}, nil
+func (r *runner) fail(rec *AgentRecord, format string, args ...any) {
+	rec.Status = AgentFailed
+	rec.Error = fmt.Sprintf(format, args...)
+	r.logf("%s: failed: %s", rec.ID, firstLine(rec.Error))
+}
+
+func (r *runner) logf(format string, args ...any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	fmt.Fprintf(r.progress, format+"\n", args...)
 }
 
 // check classifies and verifies every citation of a report.
@@ -364,15 +490,13 @@ func newRunner(cfg config.Runner) (agent.Runner, error) {
 	return nil, fmt.Errorf("unsupported runner kind %q", cfg.Kind)
 }
 
-// hiddenFromAgents keeps the knowledge base and past runs out of agent
-// snapshots, so analyses stay independent of earlier conclusions.
-func hiddenFromAgents(p string) bool {
-	for _, dir := range []string{workspace.Dir + "/knowledge", workspace.Dir + "/runs"} {
-		if p == dir || strings.HasPrefix(p, dir+"/") {
-			return true
-		}
+// hiddenFromAgents keeps `.raun/` out of agent snapshots, except the
+// context files: agents must not see earlier conclusions (knowledge, runs)
+// nor which agents and models take part (configuration).
+func hiddenFromAgents(contextFiles []string) func(string) bool {
+	return func(p string) bool {
+		return strings.HasPrefix(p, workspace.Dir+"/") && !slices.Contains(contextFiles, p)
 	}
-	return false
 }
 
 func openRoot(ctx context.Context, dir string) (*gitx.Repo, error) {
@@ -419,7 +543,10 @@ func resolveCommit(ctx context.Context, repo *gitx.Repo, rev string, contextFile
 	return repo.ResolveCommit(ctx, "HEAD")
 }
 
-func selectAgents(all []config.Agent, id string) ([]config.Agent, error) {
+// selectAgents returns the agent named id, or all agents. Several agents
+// need a lead to consolidate their reports.
+func selectAgents(cfg *config.Config, id string) ([]config.Agent, error) {
+	all := cfg.Analysis.Agents
 	if id != "" {
 		i := slices.IndexFunc(all, func(a config.Agent) bool { return a.ID == id })
 		if i < 0 {
@@ -427,8 +554,8 @@ func selectAgents(all []config.Agent, id string) ([]config.Agent, error) {
 		}
 		return all[i : i+1], nil
 	}
-	if len(all) > 1 {
-		return nil, errors.New("several agents are configured but multi-agent consolidation is not implemented yet; select one with -agent")
+	if len(all) > 1 && cfg.Lead == nil {
+		return nil, fmt.Errorf("%d agents are configured but no lead: add a `lead` section to consolidate their reports, or run one agent with -agent", len(all))
 	}
 	return all, nil
 }

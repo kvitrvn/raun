@@ -3,6 +3,7 @@ package run
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,6 +14,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/kvitrvn/raun/internal/agenttest"
+	"github.com/kvitrvn/raun/internal/gittest"
 	"github.com/kvitrvn/raun/internal/knowledge"
 	"github.com/kvitrvn/raun/internal/workspace"
 )
@@ -226,7 +228,7 @@ func TestRunPreconditions(t *testing.T) {
 			"    - id: beta\n      runner: { argv: [\"unused\"] }\n"
 		fx.Write(".raun/config.yaml", cfg)
 
-		if _, err := execute(t, fx.Dir, Options{}); err == nil || !strings.Contains(err.Error(), "select one with -agent") {
+		if _, err := execute(t, fx.Dir, Options{}); err == nil || !strings.Contains(err.Error(), "2 agents are configured but no lead") {
 			t.Errorf("error = %v", err)
 		}
 		if _, err := execute(t, fx.Dir, Options{Agent: "gamma"}); err == nil || !strings.Contains(err.Error(), `no agent "gamma"`) {
@@ -248,6 +250,147 @@ func TestRunPreconditions(t *testing.T) {
 		_ = os.WriteFile(filepath.Join(sub, ".raun", "config.yaml"), data, 0o644)
 		if _, err := execute(t, sub, Options{}); err == nil || !strings.Contains(err.Error(), "not the repository root") {
 			t.Errorf("error = %v", err)
+		}
+	})
+}
+
+func team(t *testing.T, quorum int, lead string, alpha, beta string) *gittest.Repo {
+	t.Helper()
+	cfg := agenttest.TeamConfig("10s", agenttest.Argv(lead),
+		agenttest.Agent{ID: "alpha", Argv: agenttest.Argv(alpha)},
+		agenttest.Agent{ID: "beta", Argv: agenttest.Argv(beta)})
+	cfg = strings.Replace(cfg, "quorum: 1", fmt.Sprintf("quorum: %d", quorum), 1)
+	return agenttest.NewTeamProject(t, cfg)
+}
+
+func TestRunTeam(t *testing.T) {
+	fx := team(t, 2, agenttest.Lead, agenttest.Valid, agenttest.Dissent)
+
+	m, err := execute(t, fx.Dir, Options{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if got := *m.Consolidation; got != (ConsolidationSummary{Method: MethodLead, Items: 3, Merged: 2, Contested: 1}) {
+		t.Errorf("consolidation = %+v", got)
+	}
+	if m.Lead == nil || m.Lead.Status != AgentOK || m.Lead.Role != RoleLead {
+		t.Errorf("lead record = %+v", m.Lead)
+	}
+	agents := []string{m.Anonymization["A"], m.Anonymization["B"]}
+	slices.Sort(agents)
+	if len(m.Anonymization) != 2 || !slices.Equal(agents, []string{"alpha", "beta"}) {
+		t.Errorf("anonymization = %v", m.Anonymization)
+	}
+
+	// The lead never learns who the analysts are.
+	leadPrompt, err := os.ReadFile(filepath.Join(workspace.RunsDir(fx.Dir), m.ID, "raw", "lead", "prompt.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"alpha", "beta"} {
+		if strings.Contains(string(leadPrompt), name) {
+			t.Errorf("lead prompt reveals agent %q", name)
+		}
+	}
+
+	items, err := knowledge.NewStore(workspace.KnowledgeDir(fx.Dir)).List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTitle := map[string]*knowledge.Item{}
+	for _, it := range items {
+		byTitle[it.Title] = it
+	}
+
+	accountant := byTitle["Accountant"]
+	if len(accountant.Support) != 2 || accountant.Status != knowledge.StatusProposed {
+		t.Errorf("accountant = %s with %d supports", accountant.Status, len(accountant.Support))
+	}
+	if len(accountant.Evidence) != 1 {
+		t.Errorf("both agents cite the same context line, stored once: %+v", accountant.Evidence)
+	}
+
+	immutable := byTitle["Issued invoices are immutable"]
+	if immutable.Status != knowledge.StatusContested {
+		t.Fatalf("status = %s, want contested", immutable.Status)
+	}
+	i := slices.IndexFunc(immutable.OpenPoints, func(p knowledge.OpenPoint) bool { return p.Kind == knowledge.PointDisagreement })
+	if i < 0 {
+		t.Fatalf("no disagreement: %+v", immutable.OpenPoints)
+	}
+	d := immutable.OpenPoints[i]
+	if len(d.Positions) != 2 || d.RaisedBy != "lead" {
+		t.Fatalf("disagreement = %+v", d)
+	}
+	for _, p := range d.Positions {
+		if len(p.Agents) != 1 || len(p.Evidence) != 1 {
+			t.Errorf("position %q: agents %v, evidence %v", p.Statement, p.Agents, p.Evidence)
+		}
+		e := immutable.Evidence[slices.IndexFunc(immutable.Evidence, func(e knowledge.Evidence) bool { return e.ID == p.Evidence[0] })]
+		wantPath := map[string]string{"alpha": "billing/invoice.go", "beta": "docs/billing.md"}[p.Agents[0]]
+		if e.Path != wantPath {
+			t.Errorf("position of %s backed by %s, want %s", p.Agents[0], e.Path, wantPath)
+		}
+	}
+	if immutable.Requirement.Personas[0] != accountant.ID {
+		t.Errorf("persona link = %v", immutable.Requirement.Personas)
+	}
+
+	// A contested item cannot be validated before its disagreement is resolved.
+	err = immutable.Transition(knowledge.StatusValidated, knowledge.Actor{Kind: knowledge.ActorHuman, Name: "PO"}, fixedNow(), "ok")
+	if !errors.Is(err, knowledge.ErrTransition) {
+		t.Errorf("validating a contested item: %v", err)
+	}
+}
+
+func TestRunTeamLeadFailures(t *testing.T) {
+	tests := []struct {
+		lead    string
+		wantErr string
+	}{
+		{agenttest.LeadUnknownRef, `unknown interpretation "Z.i9"`},
+		{agenttest.LeadDrop, "every interpretation must be placed"},
+		{agenttest.Crash, "exited with code 2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.lead, func(t *testing.T) {
+			fx := team(t, 2, tt.lead, agenttest.Valid, agenttest.Dissent)
+			m, err := execute(t, fx.Dir, Options{})
+			if !errors.Is(err, ErrRunFailed) || !strings.Contains(err.Error(), "lead failed") {
+				t.Fatalf("Execute() error = %v", err)
+			}
+			if m.Lead == nil || m.Lead.Status != AgentFailed || !strings.Contains(m.Lead.Error, tt.wantErr) {
+				t.Errorf("lead record = %+v", m.Lead)
+			}
+			if _, err := os.Stat(workspace.KnowledgeDir(fx.Dir)); !errors.Is(err, os.ErrNotExist) {
+				t.Error("a run whose lead failed wrote knowledge")
+			}
+		})
+	}
+}
+
+func TestRunTeamWithFailingAnalyst(t *testing.T) {
+	t.Run("quorum met by one report", func(t *testing.T) {
+		fx := team(t, 1, agenttest.Lead, agenttest.Valid, agenttest.Garbage)
+		m, err := execute(t, fx.Dir, Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.Consolidation.Method != MethodIdentity || m.Lead != nil || len(m.Items) != 3 {
+			t.Errorf("one valid report needs no lead: %+v, lead %+v", m.Consolidation, m.Lead)
+		}
+		if m.Agents[1].Status != AgentFailed {
+			t.Errorf("beta = %+v", m.Agents[1])
+		}
+	})
+	t.Run("quorum not met", func(t *testing.T) {
+		fx := team(t, 2, agenttest.Lead, agenttest.Valid, agenttest.Garbage)
+		m, err := execute(t, fx.Dir, Options{})
+		if !errors.Is(err, ErrRunFailed) || !strings.Contains(err.Error(), "1 valid report(s), 2 required") {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if m.Lead != nil {
+			t.Error("the lead ran although the quorum was not met")
 		}
 	})
 }

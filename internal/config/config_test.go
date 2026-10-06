@@ -158,6 +158,8 @@ analysis:
       runner: { argv: ["x"] }
     - id: b
       runner: { kind: http, argv: [] }
+    - id: lead
+      runner: { argv: ["x"] }
     - id: b
       instructions: ../outside.md
       runner: { argv: ["x"], timeout: -1m }
@@ -168,8 +170,9 @@ analysis:
 				"analysis.agents[1].runner.kind",
 				"analysis.agents[1].runner.argv",
 				"analysis.agents[2].id",
-				"analysis.agents[2].instructions",
-				"analysis.agents[2].runner.timeout",
+				"analysis.agents[3].id",
+				"analysis.agents[3].instructions",
+				"analysis.agents[3].runner.timeout",
 			},
 		},
 		{

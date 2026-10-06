@@ -47,3 +47,32 @@ func TestRunCommandFailure(t *testing.T) {
 		t.Errorf("exit = %d, stdout = %q, stderr = %q", code, out, errOut)
 	}
 }
+
+func TestRunCommandTeam(t *testing.T) {
+	cfg := agenttest.TeamConfig("10s", agenttest.Argv(agenttest.Lead),
+		agenttest.Agent{ID: "alpha", Argv: agenttest.Argv(agenttest.Valid)},
+		agenttest.Agent{ID: "beta", Argv: agenttest.Argv(agenttest.Dissent)})
+	fx := agenttest.NewTeamProject(t, cfg)
+
+	code, _, errOut := runCLI(t, "run", "-dir", fx.Dir)
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr = %s", code, errOut)
+	}
+	for _, want := range []string{"with 2 agent(s)", "lead: consolidating 2 reports", "3 knowledge item(s) proposed, 2 merged from several agents, 1 contested"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("progress lacks %q:\n%s", want, errOut)
+		}
+	}
+
+	_, out, _ := runCLI(t, "list", "-dir", fx.Dir, "-status", "contested")
+	fields := strings.Fields(strings.Split(out, "\n")[1])
+	if len(fields) == 0 {
+		t.Fatalf("no contested item:\n%s", out)
+	}
+	_, out, _ = runCLI(t, "show", fields[0], "-dir", fx.Dir)
+	for _, want := range []string{"disagreement (raised by lead)", "(alpha)", "(beta)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("show lacks %q:\n%s", want, out)
+		}
+	}
+}

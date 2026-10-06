@@ -15,7 +15,14 @@ analysis:
         kind: command
         argv: ["my-agent", "--json"]
         timeout: 20m
+    - id: beta
+      runner: { kind: command, argv: ["my-other-agent"], timeout: 20m }
+lead:                          # required with several analysts
+  instructions: builtin:lead
+  runner: { kind: command, argv: ["my-agent", "--json"], timeout: 20m }
 ```
+
+Analysts run in parallel and independently. When several reports are valid, the lead consolidates them. A run with a single valid report skips the lead and creates one item per interpretation. If fewer than `quorum` reports are valid, or if the lead fails, the run fails and writes nothing to the knowledge base.
 
 `instructions` only replaces the job description. Raun always appends the project facts, the knowledge types and the output contract, so custom instructions cannot break the contract.
 
@@ -28,12 +35,12 @@ analysis:
 | stderr | Free; saved with the run's raw artifacts. |
 | exit code | Must be 0. Anything else counts as a failure. |
 | working directory | A disposable copy of the analyzed commit. |
-| environment | Inherited, plus `RAUN_RUN_ID` and `RAUN_ROLE` (`analyst`). |
+| environment | Inherited, plus `RAUN_RUN_ID` and `RAUN_ROLE` (`analyst` or `lead`). |
 | timeout | `runner.timeout`; the whole process group is killed when it expires. |
 
-The working directory is a plain copy of the commit, outside the repository. It contains no `.git`, no `.raun/knowledge/` and no `.raun/runs/`. Agents therefore cannot read the knowledge base or earlier conclusions, and they cannot modify the repository. Any file an agent changes in its copy is listed in the run manifest (`snapshot_changes`).
+The working directory is a plain copy of the commit, outside the repository. It contains no `.git` and nothing from `.raun/` except the context files. Agents therefore cannot read the knowledge base, earlier conclusions, or the configuration that would tell them which agents take part. They cannot modify the repository either. Any file an agent changes in its copy is listed in the run manifest (`snapshot_changes`).
 
-## Report contract (v1)
+## Analyst report contract (v1)
 
 ```json
 {
@@ -81,3 +88,40 @@ An invalid report fails the agent, and the run continues if the quorum is still 
 4. **Create one `proposed` item per interpretation.** Each question becomes a `question` open point on the items it is about. Project-wide questions go to the run manifest.
 
 Nothing an agent writes is ever `validated`. Only a human can validate.
+
+## Lead consolidation contract (v1)
+
+The lead receives the valid reports in its prompt, as JSON. They are anonymized: reports are labeled `A`, `B`, … in a random order, and every id is prefixed with its label (`A.i1`). Each citation carries Raun's verification outcome. The manifest records which label stands for which agent.
+
+```json
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "k1",
+      "type": "requirement",
+      "title": "Issued invoice corrections",
+      "requirement": {"statement": "...", "kind": "business-rule", "rationale": "", "personas": ["k2"]},
+      "support": ["A.i2", "B.i2"],
+      "disagreements": [
+        {"summary": "Code forbids edits, docs allow 24 hours.",
+         "positions": [
+           {"statement": "Issued invoices are never editable.", "support": ["A.i2"]},
+           {"statement": "Admins can edit within 24 hours.", "support": ["B.i2"]}
+         ]}
+      ],
+      "uncertainties": ["..."],
+      "questions": ["..."]
+    }
+  ]
+}
+```
+
+The lead groups and arbitrates. It never adds evidence and never discards an interpretation. Raun checks that:
+
+- every interpretation appears in the `support` of exactly one item, of the same type;
+- a disagreement has at least two positions, each backed by interpretations of the item's own support, and no interpretation backs two positions;
+- `personas` link to persona items of the consolidation;
+- the contract has no field for evidence; unknown fields are rejected.
+
+Raun then builds each item from its supporting interpretations, using only verified evidence. It derives each position's agents and evidence from the interpretations behind it, so the lead cannot misattribute them. The same question asked by several agents is recorded once. An item with a disagreement is created `contested`. Open points carry `raised_by`: the agent ID, `lead`, or `raun` for verification problems.

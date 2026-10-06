@@ -1,0 +1,73 @@
+# Raun consolidation task
+
+{{.Instructions}}
+
+## Project
+
+- Commit analyzed: {{.Commit}}
+- Write titles, contents, summaries, uncertainties and questions in this language: {{.Language}}.
+- Analysts are anonymous: reports are labeled A, B, C… and every id is prefixed with its report's label (`A.i1`).
+
+## Knowledge types
+{{- if .HasPersona}}
+
+### persona
+
+Content block `persona`: `description` (required), `goals`, `capabilities`.
+{{- end}}
+{{- if .HasRequirement}}
+
+### requirement
+
+Content block `requirement`: `statement` (required), `kind` (`business-rule`, `functional` or `constraint`), `rationale`, `personas` (ids of persona items of your consolidation).
+{{- end}}
+
+## Analyst reports
+
+Each citation carries `verification`: `verified` or `relocated` (the excerpt is in the file; lines corrected), or `invalid` with a `reason`.
+
+````json
+{{.Reports}}
+````
+
+## Output contract
+
+Print exactly one JSON object on stdout, and nothing after it. Its shape:
+
+```json
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "k1",
+      "type": "{{.ExampleType}}",
+      "title": "Short label",
+{{- if eq .ExampleType "persona"}}
+      "persona": {"description": "...", "goals": ["..."], "capabilities": ["..."]},
+{{- else}}
+      "requirement": {"statement": "...", "kind": "business-rule", "rationale": "", "personas": []},
+{{- end}}
+      "support": ["A.i1", "B.i2"],
+      "disagreements": [
+        {
+          "summary": "What the interpretations disagree on.",
+          "positions": [
+            {"statement": "First view.", "support": ["A.i1"]},
+            {"statement": "Second view.", "support": ["B.i2"]}
+          ]
+        }
+      ],
+      "uncertainties": ["Why part of this item is doubtful."],
+      "questions": ["Something a human should settle."]
+    }
+  ]
+}
+```
+
+Rules, checked by Raun without exception:
+
+- Every interpretation id of every report appears in the `support` of exactly one item, whose `type` matches the interpretation's type.
+- A disagreement has at least two positions. Each position's `support` lists interpretations of the item's own `support`; one interpretation backs at most one position.
+- Each item carries exactly the content block of its `type`. Item ids are short and unique (`k1`, `k2`…).
+- There is no field for evidence: evidence comes from the analysts only. No other fields are accepted.
+- `disagreements`, `uncertainties` and `questions` may be empty lists.

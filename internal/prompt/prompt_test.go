@@ -80,3 +80,33 @@ func TestBuiltinUnknown(t *testing.T) {
 		t.Error("Builtin(unknown) succeeded")
 	}
 }
+
+func TestLeadRender(t *testing.T) {
+	instructions, err := Builtin("lead")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, types := range [][]knowledge.Type{
+		{knowledge.TypePersona, knowledge.TypeRequirement},
+		{knowledge.TypeRequirement},
+	} {
+		l := Lead{Instructions: instructions, Commit: "c0ffee", Language: "fr", Types: types, Reports: `{"reports": []}`}
+		got, err := l.Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"You are the lead", "Commit analyzed: c0ffee", "this language: fr", `{"reports": []}`, "exactly one item"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("lead prompt lacks %q", want)
+			}
+		}
+
+		// The example must satisfy the contract, given matching reports.
+		blocks := jsonBlock.FindAllStringSubmatch(got, -1)
+		example := blocks[len(blocks)-1][1]
+		shown := map[string]knowledge.Type{"A.i1": types[0], "B.i2": types[0]}
+		if _, _, err := agent.ParseConsolidation([]byte(example), types, shown); err != nil {
+			t.Errorf("lead example rejected by the contract: %v\n%s", err, example)
+		}
+	}
+}

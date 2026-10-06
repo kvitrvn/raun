@@ -183,6 +183,9 @@ type OpenPoint struct {
 	ID      string    `yaml:"id"`
 	Kind    PointKind `yaml:"kind"`
 	Summary string    `yaml:"summary"`
+	// RaisedBy names who raised the point: an agent ID, "lead", or "raun"
+	// for problems found by verification.
+	RaisedBy string `yaml:"raised_by,omitempty"`
 	// Positions are the divergent views of a disagreement, kept as-is.
 	Positions  []Position  `yaml:"positions,omitempty"`
 	Resolution *Resolution `yaml:"resolution,omitempty"`

@@ -19,6 +19,20 @@ const (
 	StatusFailed    = "failed"
 )
 
+// Agent roles.
+const (
+	RoleAnalyst = "analyst"
+	RoleLead    = "lead"
+)
+
+// Consolidation methods.
+const (
+	// MethodIdentity: one valid report, one item per interpretation.
+	MethodIdentity = "identity"
+	// MethodLead: the lead grouped the interpretations of several reports.
+	MethodLead = "lead"
+)
+
 // Agent statuses.
 const (
 	AgentOK     = "ok"
@@ -41,6 +55,10 @@ type Manifest struct {
 	Types        []string      `yaml:"types"`
 	Quorum       int           `yaml:"quorum"`
 	Agents       []AgentRecord `yaml:"agents"`
+	// Anonymization maps the labels shown to the lead to agent IDs.
+	Anonymization map[string]string     `yaml:"anonymization,omitempty"`
+	Lead          *AgentRecord          `yaml:"lead,omitempty"`
+	Consolidation *ConsolidationSummary `yaml:"consolidation,omitempty"`
 	// Items lists the knowledge items this run created.
 	Items []string `yaml:"items,omitempty"`
 	// Questions are agent questions not attached to any item.
@@ -62,6 +80,16 @@ type AgentRecord struct {
 	// SnapshotChanges lists files the agent changed in its copy.
 	SnapshotChanges []string       `yaml:"snapshot_changes,omitempty"`
 	Report          *ReportSummary `yaml:"report,omitempty"`
+}
+
+// ConsolidationSummary describes how reports became knowledge items.
+type ConsolidationSummary struct {
+	Method string `yaml:"method"`
+	Items  int    `yaml:"items"`
+	// Merged counts items backed by more than one interpretation.
+	Merged int `yaml:"merged"`
+	// Contested counts items created with a disagreement.
+	Contested int `yaml:"contested"`
 }
 
 // ReportSummary counts what a valid report contained and how its evidence

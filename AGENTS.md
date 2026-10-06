@@ -29,7 +29,7 @@ internal/source      path classification (code / doc / human-context) and `**` g
 internal/snapshot    disposable copy of a commit for one agent, with change detection
 internal/agent       Runner interface, `command` runner, report contract v1 and its validation
 internal/prompt      embedded prompt templates; the output contract is always appended
-internal/consolidate verified reports -> knowledge items (single-agent identity for now)
+internal/consolidate plans (identity or lead grouping) -> knowledge items; anonymized lead input
 internal/run         run pipeline and manifest
 internal/gittest     fixture repositories for tests (ignores user Git config)
 internal/agenttest   fake agent (the test binary itself) and matching fixture project
@@ -46,7 +46,8 @@ These invariants are the core of the product. Never weaken them:
 - No claim without evidence. Evidence = path + line range + excerpt at a commit, verified deterministically by Raun (never by an LLM).
 - An LLM proposes; it never establishes. Only a human command moves knowledge to `validated` or `rejected`. Human-validated content is never rewritten automatically.
 - Disagreements between agents are stored as-is, never averaged or dropped.
-- Agents analyze independently: they never see the knowledge base or each other's output.
+- Agents analyze independently: they never see the knowledge base, the configuration or each other's output.
+- The lead groups and arbitrates on anonymized reports. It never adds evidence and never discards an interpretation; Raun derives positions' agents and evidence itself.
 - Provider neutrality: no LLM provider, model or vendor API is named or imported in code. Agents are reached through the agent contract (`runner.kind`). Concrete commands belong in docs and examples only.
 - On-disk formats (config, knowledge files, agent contract) carry a `version` field. Changing one is a design decision: ask the owner first, then update `docs/`.
 

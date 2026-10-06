@@ -207,32 +207,9 @@ func (r *Report) Validate(allowed []knowledge.Type) error {
 			}
 		}
 
-		if (it.Persona != nil) != (it.Type == knowledge.TypePersona) {
-			add(f+".persona", "must be set if and only if type is %q", knowledge.TypePersona)
-		}
-		if (it.Requirement != nil) != (it.Type == knowledge.TypeRequirement) {
-			add(f+".requirement", "must be set if and only if type is %q", knowledge.TypeRequirement)
-		}
-		if p := it.Persona; p != nil {
-			nonEmpty(f+".persona.description", p.Description)
-			for j, g := range p.Goals {
-				nonEmpty(fmt.Sprintf("%s.persona.goals[%d]", f, j), g)
-			}
-			for j, c := range p.Capabilities {
-				nonEmpty(fmt.Sprintf("%s.persona.capabilities[%d]", f, j), c)
-			}
-		}
-		if q := it.Requirement; q != nil {
-			nonEmpty(f+".requirement.statement", q.Statement)
-			if !slices.Contains([]knowledge.RequirementKind{knowledge.KindBusinessRule, knowledge.KindFunctional, knowledge.KindConstraint}, q.Kind) {
-				add(f+".requirement.kind", "must be %q, %q or %q, got %q", knowledge.KindBusinessRule, knowledge.KindFunctional, knowledge.KindConstraint, q.Kind)
-			}
-			for j, ref := range q.Personas {
-				if ids[ref] != "interpretation:"+string(knowledge.TypePersona) {
-					add(fmt.Sprintf("%s.requirement.personas[%d]", f, j), "unknown persona interpretation %q", ref)
-				}
-			}
-		}
+		validateContent(f, it.Type, it.Persona, it.Requirement, add, func(ref string) bool {
+			return ids[ref] == "interpretation:"+string(knowledge.TypePersona)
+		}, "unknown persona interpretation %q")
 	}
 
 	for i, q := range r.Questions {
@@ -247,4 +224,42 @@ func (r *Report) Validate(allowed []knowledge.Type) error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// validateContent checks the type-specific content block of an
+// interpretation or a consolidated item. isPersona tells whether a
+// requirement's persona reference is valid; badPersona formats the error.
+func validateContent(f string, t knowledge.Type, p *PersonaContent, q *RequirementContent,
+	add func(field, format string, args ...any), isPersona func(string) bool, badPersona string) {
+	nonEmpty := func(field, s string) {
+		if strings.TrimSpace(s) == "" {
+			add(field, "must not be empty")
+		}
+	}
+	if (p != nil) != (t == knowledge.TypePersona) {
+		add(f+".persona", "must be set if and only if type is %q", knowledge.TypePersona)
+	}
+	if (q != nil) != (t == knowledge.TypeRequirement) {
+		add(f+".requirement", "must be set if and only if type is %q", knowledge.TypeRequirement)
+	}
+	if p != nil {
+		nonEmpty(f+".persona.description", p.Description)
+		for j, g := range p.Goals {
+			nonEmpty(fmt.Sprintf("%s.persona.goals[%d]", f, j), g)
+		}
+		for j, c := range p.Capabilities {
+			nonEmpty(fmt.Sprintf("%s.persona.capabilities[%d]", f, j), c)
+		}
+	}
+	if q != nil {
+		nonEmpty(f+".requirement.statement", q.Statement)
+		if !slices.Contains([]knowledge.RequirementKind{knowledge.KindBusinessRule, knowledge.KindFunctional, knowledge.KindConstraint}, q.Kind) {
+			add(f+".requirement.kind", "must be %q, %q or %q, got %q", knowledge.KindBusinessRule, knowledge.KindFunctional, knowledge.KindConstraint, q.Kind)
+		}
+		for j, ref := range q.Personas {
+			if !isPersona(ref) {
+				add(fmt.Sprintf("%s.requirement.personas[%d]", f, j), badPersona, ref)
+			}
+		}
+	}
 }

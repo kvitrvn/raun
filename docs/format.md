@@ -96,7 +96,7 @@ Full examples live in `internal/knowledge/testdata/`.
 | `support[].observations[]` | `statement` + `evidence[]` (at least one evidence ID from this file). |
 | `evidence[]` | `id` (`e1`, `e2`, …), `source` (`code`, `doc`, `human-context`), `path` (clean, relative to the repository root), `commit` (full hash), `start_line`, `end_line` (1-based, inclusive), `excerpt`, `sha256` (hex SHA-256 of `excerpt`), `state`. |
 | `evidence[].state` | Set by Raun, never by an agent. See [Evidence states](#evidence-states). |
-| `open_points[]` | `id` (`p1`, …), `kind` (`disagreement`, `uncertainty`, `question`), `summary`, `positions[]`, `resolution`. |
+| `open_points[]` | `id` (`p1`, …), `kind` (`disagreement`, `uncertainty`, `question`), `summary`, `raised_by` (optional: an agent ID, `lead`, or `raun` for verification problems), `positions[]`, `resolution`. |
 | `open_points[].positions[]` | One side of a disagreement, kept as written: `statement`, `run`, `agents[]`, `evidence[]`. A disagreement has at least two positions. |
 | `open_points[].resolution` | Set by a human: `at`, `by`, `position` (0-based index of the retained position, optional), `note`. |
 | `history[]` | Every status change: `at` (UTC), `actor` (`human` or `run`), `by` (person name or run ID), `from` (absent on creation), `to`, `reason` (required for humans). |
@@ -141,5 +141,8 @@ Each run writes `.raun/runs/<run-id>/manifest.yaml`. The run ID is the UTC start
 | `commit` | The analyzed commit. |
 | `raun_version`, `config_sha256`, `language`, `types`, `quorum` | The conditions of the run. |
 | `agents[]` | Per agent: `id`, `role`, `instructions` and their `instructions_sha256`, `argv`, `prompt_sha256`, `status` (`ok`/`failed`), `error`, `exit_code`, `duration`, `snapshot_changes`, and for a valid report a `report` summary (counts, evidence outcomes, `rejected_evidence` with reasons). |
+| `anonymization` | With a lead: which agent each label (`A`, `B`, …) shown to the lead stands for. |
+| `lead` | With a lead: its record, like an agent's. |
+| `consolidation` | `method` (`identity` for a single valid report, `lead` otherwise), `items`, `merged` (items backed by several interpretations), `contested`. |
 | `items` | IDs of the knowledge items created. |
 | `questions` | Agent questions not attached to any item. |
