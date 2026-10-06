@@ -1,0 +1,3 @@
+# Raw run artifacts (prompts, agent outputs, logs) stay local.
+# Run manifests are versioned.
+runs/*/raw/

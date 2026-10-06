@@ -1,0 +1,55 @@
+# Raun configuration. Reference: docs/design.md ("Agent configuration").
+version: 1
+
+sources:
+  # Repository paths agents must not cite (glob patterns).
+  exclude:
+    - "vendor/**"
+    - "node_modules/**"
+    - ".raun/**"
+  # Files written by the team. They are cited like any other source, with
+  # the nature "human-context", so they never pass for code-derived facts.
+  context:
+    - ".raun/context.md"
+
+# Knowledge types to build. Built-in: persona, requirement.
+types:
+  - persona
+  - requirement
+
+analysis:
+  # Minimum number of valid agent reports for a run to proceed.
+  # Defaults to 2, or to the number of agents if lower.
+  quorum: 2
+  # Agents analyze the repository independently. Diversity should come from
+  # using different models. Each agent is a command that reads a prompt on
+  # stdin and prints one JSON object on stdout; see docs/design.md.
+  agents:
+    - id: alpha
+      instructions: builtin:analyst
+      runner:
+        kind: command
+        argv: ["replace-with-your-agent-command"]
+        timeout: 20m
+    - id: beta
+      instructions: builtin:analyst
+      runner:
+        kind: command
+        argv: ["replace-with-another-agent-command"]
+        timeout: 20m
+
+# Consolidates the agent reports, keeping disagreements explicit.
+lead:
+  instructions: builtin:lead
+  runner:
+    kind: command
+    argv: ["replace-with-your-lead-command"]
+    timeout: 20m
+
+# Matches a new run against the existing knowledge base.
+reconciler:
+  instructions: builtin:reconciler
+  runner:
+    kind: command
+    argv: ["replace-with-your-reconciler-command"]
+    timeout: 20m
