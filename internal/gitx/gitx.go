@@ -303,3 +303,16 @@ func within(dir, p string) bool {
 	rel, err := filepath.Rel(dir, p)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }
+
+// ConfigValue returns a Git configuration value, or "" when it is unset.
+func (r *Repo) ConfigValue(ctx context.Context, key string) (string, error) {
+	out, err := run(ctx, r.root, "config", "--get", key)
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}

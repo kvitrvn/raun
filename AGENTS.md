@@ -31,6 +31,7 @@ internal/agent       Runner interface, `command` runner, report contract v1 and 
 internal/prompt      embedded prompt templates; the output contract is always appended
 internal/consolidate plans (identity or lead grouping) -> knowledge items; anonymized lead input
 internal/run         run pipeline and manifest
+internal/report      Markdown view of the knowledge base (`raun report`); never read back
 internal/gittest     fixture repositories for tests (ignores user Git config)
 internal/agenttest   fake agent (the test binary itself) and matching fixture project
 docs/agents.md       agent command protocol and report contract
@@ -62,7 +63,7 @@ These invariants are the core of the product. Never weaken them:
 ## Testing
 
 - Table-driven tests; `t.TempDir()` for filesystem work.
-- Golden files live in `testdata/`; regenerate with `go test ./internal/knowledge -update` and review the diff.
+- Golden files live in `testdata/`; regenerate with `go test ./internal/knowledge ./internal/report -update` and review the diff.
 - Never call a real LLM or the network in tests. Use the fake agent from `internal/agenttest`: call `agenttest.MaybeRun()` in `TestMain` and configure `agenttest.Argv(scenario)` as the agent command.
 - Git-dependent tests build their own fixture repository with `internal/gittest`.
 - CLI behavior is tested through `run()` in `cmd/raun`.

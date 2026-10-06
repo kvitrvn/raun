@@ -196,3 +196,19 @@ func TestChangedPaths(t *testing.T) {
 		t.Errorf("ChangedPaths() = %q, want %q", paths, want)
 	}
 }
+
+func TestConfigValue(t *testing.T) {
+	ctx := context.Background()
+	fx := gittest.New(t)
+	r, err := Open(ctx, fx.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fx.Git("config", "raun.test", "Ada Lovelace")
+	if v, err := r.ConfigValue(ctx, "raun.test"); err != nil || v != "Ada Lovelace" {
+		t.Errorf("ConfigValue() = %q, %v", v, err)
+	}
+	if v, err := r.ConfigValue(ctx, "raun.unset"); err != nil || v != "" {
+		t.Errorf("unset key = %q, %v", v, err)
+	}
+}

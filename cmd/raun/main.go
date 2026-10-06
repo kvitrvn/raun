@@ -27,14 +27,19 @@ Commands:
   list      List knowledge items (-type, -status to filter)
   show      Show one knowledge item with its support, evidence and history
   verify    Re-check every evidence at its commit and at HEAD (-at); read-only
+  review    List the items awaiting a human decision, with their open points
+  accept    Validate an item: raun accept <id> -reason "..."
+  reject    Reject an item: raun reject <id> -reason "..."
+  reopen    Reopen a rejected item: raun reopen <id> -reason "..."
+  resolve   Settle an open point: raun resolve <id> <point> -note "..." [-position N]
+  report    Write a Markdown view of the knowledge base (-o, -status, -all)
   version   Print the raun version
   help      Show this help
 
-Planned (not implemented yet): review, accept, reject,
-resolve, report, diff.
+Planned (not implemented yet): diff.
 `
 
-var planned = []string{"review", "accept", "reject", "resolve", "report", "diff"}
+var planned = []string{"diff"}
 
 // errUsage marks errors caused by invalid invocation (exit code 2).
 var errUsage = errors.New("usage error")
@@ -78,6 +83,18 @@ func dispatch(args []string, stdout, stderr io.Writer) error {
 		return cmdShow(rest, stdout, stderr)
 	case "verify":
 		return cmdVerify(rest, stdout, stderr)
+	case "review":
+		return cmdReview(rest, stdout, stderr)
+	case "accept":
+		return cmdAccept(rest, stdout, stderr)
+	case "reject":
+		return cmdReject(rest, stdout, stderr)
+	case "reopen":
+		return cmdReopen(rest, stdout, stderr)
+	case "resolve":
+		return cmdResolve(rest, stdout, stderr)
+	case "report":
+		return cmdReport(rest, stdout, stderr)
 	case "version":
 		fmt.Fprintln(stdout, "raun", buildVersion())
 		return nil

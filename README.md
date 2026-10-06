@@ -4,7 +4,7 @@
 
 Raun builds an evidence-backed knowledge base of a software project, such as its personas and business requirements. Several LLM agents analyze the repository independently. A lead agent consolidates their findings and keeps disagreements visible. Every claim points to exact lines at a given commit, and Raun checks each citation itself. Agents only propose knowledge; a human validates it.
 
-> **Status:** early development. `init`, `check`, `run`, `list`, `show`, `verify` and `version` work today. Human validation (`review`, `accept`, `reject`) and reruns on an existing knowledge base are planned.
+> **Status:** early development. Everything below works today, except reruns on an existing knowledge base (planned).
 
 ## Install
 
@@ -48,13 +48,17 @@ raun show <id>               # support, evidence, open points, history
 raun verify                  # re-check every citation; exits 1 if some no longer hold
 ```
 
-Then (planned):
+Decide. Only humans validate, and every decision is signed (`git config user.name`, or `-author`) and justified:
 
 ```sh
-raun review               # items waiting for a human decision
-raun accept <id> --reason "..."
-raun reject <id> --reason "..."
+raun review                                         # what awaits a decision, with open points
+raun resolve <id> p1 -position 1 -note "..."        # settle a disagreement (or any open point)
+raun accept <id> -reason "..."                      # validate
+raun reject <id> -reason "..."                      # reject; raun reopen <id> -reason "..." undoes it
+raun report -o KNOWLEDGE.md                         # Markdown view for the team
 ```
+
+A disagreement blocks validation until it is resolved. Resolving records your choice but does not rewrite the item. If its content must change, edit the YAML file and run `raun check`.
 
 The knowledge base is made of plain YAML files under `.raun/`. You review and version them with Git, like code.
 

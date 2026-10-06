@@ -75,7 +75,7 @@ func TestDispatch(t *testing.T) {
 	}{
 		{args: nil, wantCode: 2, wantErr: "missing command"},
 		{args: []string{"frobnicate"}, wantCode: 2, wantErr: `unknown command "frobnicate"`},
-		{args: []string{"review"}, wantCode: 1, wantErr: "review: not implemented yet"},
+		{args: []string{"diff"}, wantCode: 1, wantErr: "diff: not implemented yet"},
 		{args: []string{"init", "extra"}, wantCode: 2, wantErr: `unexpected argument "extra"`},
 		{args: []string{"init", "-nope"}, wantCode: 2, wantErr: "flag provided but not defined"},
 		{args: []string{"help"}, wantCode: 0, wantOut: "Usage: raun"},

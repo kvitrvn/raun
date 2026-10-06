@@ -103,3 +103,65 @@ func TestTransitionPreconditions(t *testing.T) {
 		}
 	})
 }
+
+func TestResolve(t *testing.T) {
+	second := 1
+	tests := []struct {
+		name     string
+		item     func() *Item
+		point    string
+		by       string
+		position *int
+		note     string
+		wantErr  bool
+	}{
+		{"unknown point", sampleRequirement, "p9", testPerson, nil, "n", true},
+		{"no author", sampleRequirement, "p1", " ", nil, "n", true},
+		{"no note", sampleRequirement, "p1", testPerson, nil, " ", true},
+		{"position out of range", sampleRequirement, "p1", testPerson, ptr(2), "n", true},
+		{"position on a question", samplePersona, "p1", testPerson, ptr(0), "n", true},
+		{"question with a note", samplePersona, "p1", testPerson, nil, "They are employees.", false},
+		{"disagreement with a position", sampleRequirement, "p1", testPerson, &second, "The docs are outdated.", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			it := tt.item()
+			before := it.Status
+			err := it.Resolve(tt.point, tt.by, testTime, tt.position, tt.note)
+			if tt.wantErr {
+				if !errors.Is(err, ErrResolve) {
+					t.Errorf("error = %v, want ErrResolve", err)
+				}
+				if it.Status != before || it.OpenPoints[0].Resolution != nil {
+					t.Error("a refused resolution modified the item")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := it.Validate(); err != nil {
+				t.Errorf("item invalid after Resolve: %v", err)
+			}
+			if err := it.Resolve(tt.point, tt.by, testTime, nil, "again"); !errors.Is(err, ErrResolve) {
+				t.Errorf("resolving twice: %v", err)
+			}
+		})
+	}
+}
+
+func TestResolveLastDisagreementReturnsToProposed(t *testing.T) {
+	it := sampleRequirement()
+	if err := it.Resolve("p1", testPerson, testTime, ptr(0), "Code is authoritative."); err != nil {
+		t.Fatal(err)
+	}
+	last := it.History[len(it.History)-1]
+	if it.Status != StatusProposed || last.Actor != ActorHuman || last.By != testPerson || last.Reason != "disagreements resolved" {
+		t.Errorf("status = %s, last event = %+v", it.Status, last)
+	}
+	if it.Requirement.Statement != "An invoice cannot be edited once issued." {
+		t.Error("Resolve must not change the content")
+	}
+}
+
+func ptr(i int) *int { return &i }

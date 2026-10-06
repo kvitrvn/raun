@@ -127,7 +127,9 @@ Raun checks evidence without any LLM. The excerpt must equal the cited lines as 
 | `needs-review` | `validated`, `rejected` | human |
 | `rejected` | `proposed` | human |
 
-A run can never validate or reject. An item cannot be `validated` while one of its disagreements is unresolved.
+A run can never validate or reject. An item cannot be `validated` while one of its disagreements is unresolved. Uncertainties and questions do not block validation.
+
+Humans act through `raun accept`, `reject` and `reopen` (status changes, which need `-reason`) and through `raun resolve` (which needs `-note`). Every decision records its author. Resolving a disagreement may name the retained position, but it never changes the item's content. When the last disagreement of a `contested` item is resolved, the item goes back to `proposed` automatically. That change is recorded as a human event with the reason `disagreements resolved`.
 
 # Run manifests
 
