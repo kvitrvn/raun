@@ -22,10 +22,12 @@ Run all of them before declaring a task done.
 cmd/raun/            CLI entry point; run() is testable (args, stdout, stderr) -> exit code
 internal/config      .raun/config.yaml: strict decoding, defaults, validation with field paths
 internal/workspace   .raun/ layout; `raun init` templates embedded from templates/
+internal/knowledge   knowledge model, validation, status transitions, canonical YAML store
 docs/design.md       concepts, lifecycle, architecture, step-by-step roadmap
+docs/format.md       knowledge file format reference
 ```
 
-Planned packages (see `docs/design.md` → Architecture): `knowledge`, `evidence`, `gitx`, `agent`, `prompt`, `run`, `consolidate`, `reconcile`. Don't create them before their roadmap step.
+Planned packages (see `docs/design.md` → Architecture): `evidence`, `gitx`, `agent`, `prompt`, `run`, `consolidate`, `reconcile`. Don't create them before their roadmap step.
 
 ## Domain invariants
 
@@ -44,11 +46,12 @@ These invariants are the core of the product. Never weaken them:
 - Wrap errors with context: `fmt.Errorf("read config: %w", err)`. User-facing validation errors name the field path (`analysis.agents[1].runner.argv: ...`).
 - Decode external input strictly (unknown fields rejected).
 - Deterministic output: stable ordering, stable serialization (knowledge files are reviewed in Git diffs).
-- No package-level mutable state beyond constants and embedded files.
+- No package-level mutable state. Read-only tables, compiled regexps and embedded files are fine.
 
 ## Testing
 
 - Table-driven tests; `t.TempDir()` for filesystem work.
+- Golden files live in `testdata/`; regenerate with `go test ./internal/knowledge -update` and review the diff.
 - Never call a real LLM or the network in tests. Use fake agents, i.e. test helper processes that emit fixture JSON.
 - Git-dependent tests build their own fixture repository in a temp dir.
 - CLI behavior is tested through `run()` in `cmd/raun`.

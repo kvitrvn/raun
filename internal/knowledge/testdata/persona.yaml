@@ -1,0 +1,49 @@
+version: 1
+id: persona-k3x9q2
+type: persona
+title: Platform administrator
+status: proposed
+persona:
+  description: Operates the platform for all tenants.
+  goals:
+    - Keep tenant accounts healthy
+  capabilities:
+    - Delete any user account
+    - Change billing plans
+support:
+  - run: run-20261007-a1
+    agent: alpha
+    interpretation: i1
+    statement: Administrators manage every tenant account.
+    nature: supported
+    observations:
+      - statement: The admin role can delete any account.
+        evidence:
+          - e1
+  - run: run-20261007-a1
+    agent: beta
+    interpretation: i4
+    statement: Administrators are internal support staff.
+    nature: hypothesis
+evidence:
+  - id: e1
+    source: code
+    path: internal/auth/roles.go
+    commit: 3f1c2a9b8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b
+    start_line: 12
+    end_line: 14
+    excerpt: |-
+      case RoleAdmin:
+      	return []Permission{DeleteAccount, ChangePlan}
+      }
+    sha256: 8996f4b2c5490ec0c9c64f2fe9cea1bfc989d10ba3f143e46733087705f85544
+    state: verified
+open_points:
+  - id: p1
+    kind: question
+    summary: Are administrators employees or customers?
+history:
+  - at: 2026-10-07T09:30:00Z
+    actor: run
+    by: run-20261007-a1
+    to: proposed

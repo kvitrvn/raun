@@ -1,0 +1,70 @@
+version: 1
+id: requirement-8fz2mc
+type: requirement
+title: Issued invoices are immutable
+status: contested
+requirement:
+  statement: An invoice cannot be edited once issued.
+  kind: business-rule
+  rationale: Legal immutability of issued invoices.
+  personas:
+    - persona-k3x9q2
+support:
+  - run: run-20261007-a1
+    agent: alpha
+    interpretation: i2
+    statement: Issued invoices are read-only.
+    nature: supported
+    observations:
+      - statement: Update rejects invoices with status issued.
+        evidence:
+          - e1
+evidence:
+  - id: e1
+    source: code
+    path: billing/invoice.go
+    commit: 3f1c2a9b8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b
+    start_line: 40
+    end_line: 42
+    excerpt: |-
+      if inv.Status == StatusIssued {
+      	return ErrInvoiceLocked
+      }
+    sha256: 47267ccb5f30c52c8f86fb18c3a9c19de8a539256970f2a16815483b1e3008c1
+    state: verified
+  - id: e2
+    source: doc
+    path: docs/billing.md
+    commit: 3f1c2a9b8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b
+    start_line: 8
+    end_line: 8
+    excerpt: Admins may correct an issued invoice within 24 hours.
+    sha256: 139ce65b10f929a7a1d0add76475f9cfb87f21fbdaf077a9a60a4928bde54323
+    state: verified
+open_points:
+  - id: p1
+    kind: disagreement
+    summary: Code forbids edits, docs allow a 24h correction window.
+    positions:
+      - statement: Issued invoices are never editable.
+        run: run-20261007-a1
+        agents:
+          - alpha
+        evidence:
+          - e1
+      - statement: Admins can edit within 24 hours.
+        run: run-20261007-a1
+        agents:
+          - beta
+        evidence:
+          - e2
+history:
+  - at: 2026-10-07T09:30:00Z
+    actor: run
+    by: run-20261007-a1
+    to: proposed
+  - at: 2026-10-07T09:30:00Z
+    actor: run
+    by: run-20261007-a1
+    from: proposed
+    to: contested

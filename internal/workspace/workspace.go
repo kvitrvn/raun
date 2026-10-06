@@ -32,6 +32,11 @@ func ConfigPath(root string) string {
 	return filepath.Join(root, Dir, ConfigFile)
 }
 
+// KnowledgeDir returns the knowledge base directory for the repository at root.
+func KnowledgeDir(root string) string {
+	return filepath.Join(root, Dir, "knowledge")
+}
+
 // InitResult lists the files Init created and those it left untouched,
 // as paths relative to the repository root.
 type InitResult struct {

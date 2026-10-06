@@ -11,6 +11,7 @@ import (
 	"slices"
 
 	"github.com/kvitrvn/raun/internal/config"
+	"github.com/kvitrvn/raun/internal/knowledge"
 	"github.com/kvitrvn/raun/internal/workspace"
 )
 
@@ -21,15 +22,17 @@ const usage = `Usage: raun <command> [flags]
 
 Commands:
   init      Create the .raun/ directory with a starter configuration
-  check     Validate .raun/config.yaml
+  check     Validate .raun/config.yaml and the knowledge files
+  list      List knowledge items (-type, -status to filter)
+  show      Show one knowledge item with its support, evidence and history
   version   Print the raun version
   help      Show this help
 
-Planned (not implemented yet): run, list, show, verify, review, accept,
-reject, resolve, report, diff. See docs/design.md.
+Planned (not implemented yet): run, verify, review, accept, reject,
+resolve, report, diff. See docs/design.md.
 `
 
-var planned = []string{"run", "list", "show", "verify", "review", "accept", "reject", "resolve", "report", "diff"}
+var planned = []string{"run", "verify", "review", "accept", "reject", "resolve", "report", "diff"}
 
 // errUsage marks errors caused by invalid invocation (exit code 2).
 var errUsage = errors.New("usage error")
@@ -65,6 +68,10 @@ func dispatch(args []string, stdout, stderr io.Writer) error {
 		return cmdInit(rest, stdout, stderr)
 	case "check":
 		return cmdCheck(rest, stdout, stderr)
+	case "list":
+		return cmdList(rest, stdout, stderr)
+	case "show":
+		return cmdShow(rest, stdout, stderr)
 	case "version":
 		fmt.Fprintln(stdout, "raun", buildVersion())
 		return nil
@@ -116,6 +123,15 @@ func cmdCheck(args []string, stdout, stderr io.Writer) error {
 	}
 	fmt.Fprintf(stdout, "%s is valid: %d agent(s), quorum %d, types %v\n",
 		p, len(cfg.Analysis.Agents), cfg.Analysis.Quorum, cfg.Types)
+
+	items, err := knowledge.NewStore(workspace.KnowledgeDir(*dir)).List()
+	if err != nil {
+		return err
+	}
+	if errs := knowledge.CheckReferences(items); len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	fmt.Fprintf(stdout, "%s is valid: %d item(s)\n", workspace.KnowledgeDir(*dir), len(items))
 	return nil
 }
 
@@ -125,19 +141,36 @@ func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
 	return fs
 }
 
-// parseFlags parses args and rejects positional arguments, which no
-// command accepts yet.
+// parseFlags parses args for a command that takes no positional argument.
 func parseFlags(fs *flag.FlagSet, args []string) error {
-	if err := fs.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return err
+	_, err := parseFlagsWithArgs(fs, args)
+	return err
+}
+
+// parseFlagsWithArgs parses args for a command taking exactly the named
+// positional arguments. Flags may appear before or after them.
+func parseFlagsWithArgs(fs *flag.FlagSet, args []string, names ...string) ([]string, error) {
+	var pos []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil, err
+			}
+			return nil, fmt.Errorf("%w: %v", errUsage, err)
 		}
-		return fmt.Errorf("%w: %v", errUsage, err)
+		if fs.NArg() == 0 {
+			break
+		}
+		pos = append(pos, fs.Arg(0))
+		args = fs.Args()[1:]
 	}
-	if fs.NArg() > 0 {
-		return fmt.Errorf("%w: %s: unexpected argument %q", errUsage, fs.Name(), fs.Arg(0))
+	if len(pos) > len(names) {
+		return nil, fmt.Errorf("%w: %s: unexpected argument %q", errUsage, fs.Name(), pos[len(names)])
 	}
-	return nil
+	if len(pos) < len(names) {
+		return nil, fmt.Errorf("%w: %s: missing argument %s", errUsage, fs.Name(), names[len(pos)])
+	}
+	return pos, nil
 }
 
 func buildVersion() string {

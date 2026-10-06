@@ -4,7 +4,7 @@
 
 Raun builds an evidence-backed knowledge base of a software project, such as its personas and business requirements. Several LLM agents analyze the repository independently. A lead agent consolidates their findings and keeps disagreements visible. Every claim points to exact lines at a given commit, and Raun checks each citation itself. Agents only propose knowledge; a human validates it.
 
-> **Status:** early development. Only `init`, `check` and `version` work today. Other commands are planned (see [docs/design.md](docs/design.md)).
+> **Status:** early development. `init`, `check`, `list`, `show` and `version` work today; nothing produces knowledge yet. Other commands are planned (see [docs/design.md](docs/design.md)).
 
 ## Install
 
@@ -36,6 +36,13 @@ raun init     # creates .raun/config.yaml, .raun/context.md, .raun/.gitignore
 raun check
 ```
 
+Browse the knowledge base:
+
+```sh
+raun list -status proposed   # filters: -type, -status
+raun show <id>               # support, evidence, open points, history
+```
+
 Then (planned):
 
 ```sh
@@ -50,4 +57,5 @@ The knowledge base is made of plain YAML files under `.raun/`. You review and ve
 ## Docs
 
 - [docs/design.md](docs/design.md): concepts, analysis lifecycle, architecture, roadmap.
+- [docs/format.md](docs/format.md): knowledge file format and status rules.
 - [AGENTS.md](AGENTS.md): conventions for contributors and coding agents.
