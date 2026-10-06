@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/kvitrvn/raun/internal/source"
 )
 
 // CurrentVersion is the only configuration format version this build reads.
@@ -25,6 +27,7 @@ const (
 	DefaultTimeout      = 20 * time.Minute
 	DefaultQuorum       = 2
 	DefaultMaxLines     = 40
+	DefaultLanguage     = "en"
 	DefaultRunnerKind   = RunnerCommand
 	BuiltinAnalyst      = "builtin:analyst"
 	BuiltinLead         = "builtin:lead"
@@ -39,11 +42,17 @@ const RunnerCommand = "command"
 // KnownTypes lists the knowledge types built into Raun.
 var KnownTypes = []string{"persona", "requirement"}
 
-var agentIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+var (
+	agentIDPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+	languagePattern = regexp.MustCompile(`^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$`)
+)
 
 // Config is the parsed content of `.raun/config.yaml`.
 type Config struct {
-	Version    int      `yaml:"version"`
+	Version int `yaml:"version"`
+	// Language is the language agents write knowledge in (BCP 47, e.g.
+	// "en", "fr"). Quoted excerpts always keep their original language.
+	Language   string   `yaml:"language"`
 	Sources    Sources  `yaml:"sources"`
 	Types      []string `yaml:"types"`
 	Evidence   Evidence `yaml:"evidence"`
@@ -62,6 +71,9 @@ type Evidence struct {
 type Sources struct {
 	// Exclude holds glob patterns of repository paths that are not sources.
 	Exclude []string `yaml:"exclude"`
+	// Docs holds glob patterns of paths classified as documentation; other
+	// paths are code. Nil means source.DefaultDocs.
+	Docs []string `yaml:"docs"`
 	// Context lists repository paths written by the team; they are sources
 	// of nature "human-context".
 	Context []string `yaml:"context"`
@@ -151,6 +163,12 @@ func Parse(r io.Reader) (*Config, error) {
 }
 
 func (c *Config) applyDefaults() {
+	if c.Language == "" {
+		c.Language = DefaultLanguage
+	}
+	if c.Sources.Docs == nil {
+		c.Sources.Docs = slices.Clone(source.DefaultDocs)
+	}
 	if c.Evidence.MaxLines == 0 {
 		c.Evidence.MaxLines = DefaultMaxLines
 	}
@@ -213,9 +231,17 @@ func (c *Config) Validate() error {
 		add("evidence.max_lines", "must be at least 1, got %d", c.Evidence.MaxLines)
 	}
 
+	if !languagePattern.MatchString(c.Language) {
+		add("language", "must be a language tag such as \"en\" or \"fr\", got %q", c.Language)
+	}
 	for i, p := range c.Sources.Exclude {
-		if _, err := path.Match(p, ""); err != nil {
-			add(fmt.Sprintf("sources.exclude[%d]", i), "invalid glob pattern %q", p)
+		if err := source.ValidPattern(p); err != nil {
+			add(fmt.Sprintf("sources.exclude[%d]", i), "%v", err)
+		}
+	}
+	for i, p := range c.Sources.Docs {
+		if err := source.ValidPattern(p); err != nil {
+			add(fmt.Sprintf("sources.docs[%d]", i), "%v", err)
 		}
 	}
 	for i, p := range c.Sources.Context {

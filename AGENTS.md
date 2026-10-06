@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Raun is a Go CLI that builds an evidence-backed knowledge base of a software project (personas, requirements, …) from independent LLM agent analyses, a lead consolidation, and human validation.
-The design reference is `docs/design.md`. Read it before changing behavior; update it when a decision changes.
+Formats are specified in `docs/`. Ask the owner before changing product behavior or a format.
 
 ## Commands
 
@@ -25,12 +25,19 @@ internal/workspace   .raun/ layout; `raun init` templates embedded from template
 internal/knowledge   knowledge model, validation, status transitions, canonical YAML store
 internal/gitx        git through the `git` binary: resolve commits, read files at a commit
 internal/evidence    deterministic evidence verification (integrity, freshness, relocation)
+internal/source      path classification (code / doc / human-context) and `**` globs
+internal/snapshot    disposable copy of a commit for one agent, with change detection
+internal/agent       Runner interface, `command` runner, report contract v1 and its validation
+internal/prompt      embedded prompt templates; the output contract is always appended
+internal/consolidate verified reports -> knowledge items (single-agent identity for now)
+internal/run         run pipeline and manifest
 internal/gittest     fixture repositories for tests (ignores user Git config)
-docs/design.md       concepts, lifecycle, architecture, step-by-step roadmap
-docs/format.md       knowledge file format reference
+internal/agenttest   fake agent (the test binary itself) and matching fixture project
+docs/agents.md       agent command protocol and report contract
+docs/format.md       knowledge files and run manifests
 ```
 
-Planned packages (see `docs/design.md` → Architecture): `agent`, `prompt`, `run`, `consolidate`, `reconcile`. Don't create them before their roadmap step.
+Planned package: `reconcile`. Don't create it before its roadmap step.
 
 ## Domain invariants
 
@@ -41,7 +48,7 @@ These invariants are the core of the product. Never weaken them:
 - Disagreements between agents are stored as-is, never averaged or dropped.
 - Agents analyze independently: they never see the knowledge base or each other's output.
 - Provider neutrality: no LLM provider, model or vendor API is named or imported in code. Agents are reached through the agent contract (`runner.kind`). Concrete commands belong in docs and examples only.
-- On-disk formats (config, knowledge files, agent contract) carry a `version` field. Changing one is a design decision: update `docs/design.md`.
+- On-disk formats (config, knowledge files, agent contract) carry a `version` field. Changing one is a design decision: ask the owner first, then update `docs/`.
 
 ## Go conventions
 
@@ -55,7 +62,7 @@ These invariants are the core of the product. Never weaken them:
 
 - Table-driven tests; `t.TempDir()` for filesystem work.
 - Golden files live in `testdata/`; regenerate with `go test ./internal/knowledge -update` and review the diff.
-- Never call a real LLM or the network in tests. Use fake agents, i.e. test helper processes that emit fixture JSON.
+- Never call a real LLM or the network in tests. Use the fake agent from `internal/agenttest`: call `agenttest.MaybeRun()` in `TestMain` and configure `agenttest.Argv(scenario)` as the agent command.
 - Git-dependent tests build their own fixture repository with `internal/gittest`.
 - CLI behavior is tested through `run()` in `cmd/raun`.
 
@@ -66,8 +73,8 @@ These invariants are the core of the product. Never weaken them:
 
 ## Workflow and boundaries
 
-- Work one roadmap step at a time (`docs/design.md` → Implementation plan). Stop at the end of each step, summarize, and wait for the owner's review.
+- Work one roadmap step at a time, as agreed with the owner. Stop at the end of each step, summarize, and wait for the owner's review.
 - Never commit, push, tag or rewrite Git history. The owner does it.
 - At the end of each step, propose a commit title following Conventional Commits as enforced by commitlint (`@commitlint/config-conventional`): `type(scope)?: subject`, lowercase type, lowercase subject start, no trailing period, header ≤ 100 chars.
-- Keep `README.md`, `AGENTS.md`, `CLAUDE.md` and `docs/design.md` in sync with what is actually implemented.
-- Don't implement features outside the current step, and don't settle open decisions listed in `docs/design.md` without asking.
+- Keep `README.md`, `AGENTS.md`, `CLAUDE.md` and `docs/` in sync with what is actually implemented.
+- Don't implement features outside the current step, and don't settle open decisions without asking.

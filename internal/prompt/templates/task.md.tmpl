@@ -1,0 +1,100 @@
+# Raun analysis task
+
+{{.Instructions}}
+
+## Project
+
+- Commit analyzed: {{.Commit}}
+- Write titles, statements and descriptions in this language: {{.Language}}. Quote excerpts exactly as they appear, in their original language.
+{{- if .ContextFiles}}
+- Files written by the team as project context (cite them like any other file; they are human statements, not verified facts):
+{{- range .ContextFiles}}
+  - {{.}}
+{{- end}}
+{{- end}}
+{{- if .Exclude}}
+- Do not cite paths matching these patterns (citations to them are rejected):
+{{- range .Exclude}}
+  - {{.}}
+{{- end}}
+{{- end}}
+
+## Knowledge types
+
+{{- if .HasPersona}}
+
+### persona
+
+A kind of user of the product. Content block `persona`:
+
+- `description` (required): who they are and how they relate to the product.
+- `goals`: what they try to achieve with the product.
+- `capabilities`: what they can do in the product, as the repository shows it.
+{{- end}}
+{{- if .HasRequirement}}
+
+### requirement
+
+A business requirement the product satisfies or enforces. Content block `requirement`:
+
+- `statement` (required): the requirement, as one sentence.
+- `kind` (required): `business-rule` (a rule of the domain), `functional` (something the product lets users do) or `constraint` (a limit imposed on the product).
+- `rationale`: why it exists, only if a source says so.
+- `personas`: ids of the persona interpretations it concerns, from this same report.
+{{- end}}
+
+## Output contract
+
+Print exactly one JSON object on stdout, and nothing after it. Its shape:
+
+```json
+{
+  "version": 1,
+  "observations": [
+    {
+      "id": "o1",
+      "statement": "A factual statement about what the repository contains.",
+      "evidence": [
+        {"path": "relative/path/from/repository/root.ext", "start_line": 12, "end_line": 14, "excerpt": "the exact text of lines 12 to 14"}
+      ]
+    }
+  ],
+  "interpretations": [
+{{- if .HasPersona}}
+    {
+      "id": "i1",
+      "type": "persona",
+      "title": "Short label",
+      "statement": "What this interpretation claims, in one or two sentences.",
+      "nature": "supported",
+      "observations": ["o1"],
+      "persona": {"description": "...", "goals": ["..."], "capabilities": ["..."]}
+    }{{if .HasRequirement}},{{end}}
+{{- end}}
+{{- if .HasRequirement}}
+    {
+      "id": "i2",
+      "type": "requirement",
+      "title": "Short label",
+      "statement": "What this interpretation claims.",
+      "nature": "hypothesis",
+      "observations": [],
+      "requirement": {"statement": "...", "kind": "business-rule", "rationale": "", "personas": [{{if .HasPersona}}"i1"{{end}}]}
+    }
+{{- end}}
+  ],
+  "questions": [
+    {"id": "q1", "question": "Something a human should settle.", "about": [{{if .HasPersona}}"i1"{{else}}"i2"{{end}}]}
+  ]
+}
+```
+
+Rules, checked by Raun without exception:
+
+- Every observation cites at least one piece of evidence. `excerpt` must be the complete text of lines `start_line` to `end_line` (1-based, inclusive) of `path` at the analyzed commit. Never quote part of a line, never paraphrase. Whitespace differences are tolerated; anything else makes the evidence invalid.
+- One piece of evidence spans at most {{.MaxLines}} lines. Cite the few lines that matter, not whole files.
+- `nature` is `supported` when the interpretation rests on observations (list at least one), `hypothesis` when it is your inference (observations optional).
+- Each interpretation carries exactly the content block of its `type`.
+- Ids are short and unique across the report (`o1`, `i1`, `q1`…). References (`observations`, `personas`, `about`) use ids of this report.
+- `about` may be empty for questions about the project as a whole.
+- No other fields are accepted.

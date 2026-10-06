@@ -4,7 +4,7 @@
 
 Raun builds an evidence-backed knowledge base of a software project, such as its personas and business requirements. Several LLM agents analyze the repository independently. A lead agent consolidates their findings and keeps disagreements visible. Every claim points to exact lines at a given commit, and Raun checks each citation itself. Agents only propose knowledge; a human validates it.
 
-> **Status:** early development. `init`, `check`, `list`, `show`, `verify` and `version` work today; nothing produces knowledge yet. Other commands are planned (see [docs/design.md](docs/design.md)).
+> **Status:** early development. `init`, `check`, `run` (one agent at a time), `list`, `show`, `verify` and `version` work today. Multi-agent consolidation and human validation are planned.
 
 ## Install
 
@@ -28,13 +28,17 @@ In the repository you want to analyze:
 raun init     # creates .raun/config.yaml, .raun/context.md, .raun/.gitignore
 ```
 
-1. Edit `.raun/config.yaml`: set each agent's `runner.argv` to a command that reads a prompt on stdin and prints one JSON object on stdout. Use different models for different agents.
+1. Edit `.raun/config.yaml`: set each agent's `runner.argv` to a command that reads a prompt on stdin and prints one JSON report on stdout (see [docs/agents.md](docs/agents.md)). Use different models for different agents. Set `language` for the knowledge you want to read.
 2. Write what the team knows in `.raun/context.md` and commit it. Agents can cite it, but it stays tagged as human input, separate from facts found in code.
-3. Validate the configuration:
+3. Validate the configuration, commit, and run an analysis:
 
 ```sh
 raun check
+git add .raun && git commit -m "chore: configure raun"
+raun run -agent alpha        # one agent for now; HEAD must be committed (or use -commit)
 ```
+
+Each agent works on a disposable copy of the commit, without Git history or the knowledge base. Raun then verifies every citation and writes the items as `proposed` under `.raun/knowledge/`, plus a manifest under `.raun/runs/`.
 
 Browse the knowledge base:
 
@@ -47,7 +51,7 @@ raun verify                  # re-check every citation; exits 1 if some no longe
 Then (planned):
 
 ```sh
-raun run                  # independent analyses, consolidation, evidence check
+raun run                  # several agents, lead consolidation, disagreements kept
 raun review               # items waiting for a human decision
 raun accept <id> --reason "..."
 raun reject <id> --reason "..."
@@ -57,6 +61,6 @@ The knowledge base is made of plain YAML files under `.raun/`. You review and ve
 
 ## Docs
 
-- [docs/design.md](docs/design.md): concepts, analysis lifecycle, architecture, roadmap.
-- [docs/format.md](docs/format.md): knowledge file format and status rules.
+- [docs/agents.md](docs/agents.md): agent command protocol and report contract.
+- [docs/format.md](docs/format.md): knowledge files, status rules, run manifests.
 - [AGENTS.md](AGENTS.md): conventions for contributors and coding agents.

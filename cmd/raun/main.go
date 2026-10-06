@@ -22,6 +22,7 @@ const usage = `Usage: raun <command> [flags]
 
 Commands:
   init      Create the .raun/ directory with a starter configuration
+  run       Analyze the repository with the configured agent (-commit, -agent)
   check     Validate .raun/config.yaml and the knowledge files
   list      List knowledge items (-type, -status to filter)
   show      Show one knowledge item with its support, evidence and history
@@ -29,11 +30,11 @@ Commands:
   version   Print the raun version
   help      Show this help
 
-Planned (not implemented yet): run, review, accept, reject,
-resolve, report, diff. See docs/design.md.
+Planned (not implemented yet): review, accept, reject,
+resolve, report, diff.
 `
 
-var planned = []string{"run", "review", "accept", "reject", "resolve", "report", "diff"}
+var planned = []string{"review", "accept", "reject", "resolve", "report", "diff"}
 
 // errUsage marks errors caused by invalid invocation (exit code 2).
 var errUsage = errors.New("usage error")
@@ -69,6 +70,8 @@ func dispatch(args []string, stdout, stderr io.Writer) error {
 		return cmdInit(rest, stdout, stderr)
 	case "check":
 		return cmdCheck(rest, stdout, stderr)
+	case "run":
+		return cmdRun(rest, stdout, stderr)
 	case "list":
 		return cmdList(rest, stdout, stderr)
 	case "show":
@@ -83,7 +86,7 @@ func dispatch(args []string, stdout, stderr io.Writer) error {
 		return nil
 	}
 	if slices.Contains(planned, cmd) {
-		return fmt.Errorf("%s: not implemented yet (see docs/design.md)", cmd)
+		return fmt.Errorf("%s: not implemented yet", cmd)
 	}
 	return fmt.Errorf("%w: unknown command %q", errUsage, cmd)
 }

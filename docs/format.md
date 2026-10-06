@@ -1,4 +1,8 @@
-# Knowledge file format (v1)
+# File formats (v1)
+
+This page specifies the knowledge files and the run manifests. The agent report contract is in [agents.md](agents.md).
+
+# Knowledge files
 
 Each knowledge item is one YAML file:
 
@@ -124,3 +128,18 @@ Raun checks evidence without any LLM. The excerpt must equal the cited lines as 
 | `rejected` | `proposed` | human |
 
 A run can never validate or reject. An item cannot be `validated` while one of its disagreements is unresolved.
+
+# Run manifests
+
+Each run writes `.raun/runs/<run-id>/manifest.yaml`. The run ID is the UTC start time plus a random suffix, for example `20261007-093000-k3x9`. Manifests are meant to be versioned with the knowledge base. Raw artifacts (`prompt.md`, `stdout.txt`, `stderr.txt`, `report.json` per agent) go to `runs/<run-id>/raw/`, which `.raun/.gitignore` keeps out of Git.
+
+| Field | Content |
+|---|---|
+| `version` | Format version, `1`. |
+| `id`, `status`, `error` | Run ID; `succeeded` or `failed`, with the reason. |
+| `started_at`, `finished_at` | UTC. |
+| `commit` | The analyzed commit. |
+| `raun_version`, `config_sha256`, `language`, `types`, `quorum` | The conditions of the run. |
+| `agents[]` | Per agent: `id`, `role`, `instructions` and their `instructions_sha256`, `argv`, `prompt_sha256`, `status` (`ok`/`failed`), `error`, `exit_code`, `duration`, `snapshot_changes`, and for a valid report a `report` summary (counts, evidence outcomes, `rejected_evidence` with reasons). |
+| `items` | IDs of the knowledge items created. |
+| `questions` | Agent questions not attached to any item. |

@@ -3,6 +3,7 @@ package knowledge
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -34,4 +35,33 @@ func Decode(data []byte) (*Item, error) {
 		return nil, err
 	}
 	return &it, nil
+}
+
+// evidenceYAML is Evidence as written to disk. It exists only to control
+// the style of the excerpt; its fields must mirror Evidence.
+type evidenceYAML struct {
+	ID        string        `yaml:"id"`
+	Source    SourceKind    `yaml:"source"`
+	Path      string        `yaml:"path"`
+	Commit    string        `yaml:"commit"`
+	StartLine int           `yaml:"start_line"`
+	EndLine   int           `yaml:"end_line"`
+	Excerpt   *yaml.Node    `yaml:"excerpt"`
+	SHA256    string        `yaml:"sha256"`
+	State     EvidenceState `yaml:"state"`
+}
+
+// MarshalYAML double-quotes multi-line excerpts whose first line starts
+// with whitespace, such as code starting with a tab: the YAML library would
+// write them as block scalars it cannot read back.
+func (e Evidence) MarshalYAML() (any, error) {
+	excerpt := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: e.Excerpt}
+	if strings.Contains(e.Excerpt, "\n") && (strings.HasPrefix(e.Excerpt, " ") || strings.HasPrefix(e.Excerpt, "\t")) {
+		excerpt.Style = yaml.DoubleQuotedStyle
+	}
+	return evidenceYAML{
+		ID: e.ID, Source: e.Source, Path: e.Path, Commit: e.Commit,
+		StartLine: e.StartLine, EndLine: e.EndLine, Excerpt: excerpt,
+		SHA256: e.SHA256, State: e.State,
+	}, nil
 }

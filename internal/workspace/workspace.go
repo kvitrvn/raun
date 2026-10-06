@@ -37,6 +37,11 @@ func KnowledgeDir(root string) string {
 	return filepath.Join(root, Dir, "knowledge")
 }
 
+// RunsDir returns the directory holding run manifests and raw artifacts.
+func RunsDir(root string) string {
+	return filepath.Join(root, Dir, "runs")
+}
+
 // InitResult lists the files Init created and those it left untouched,
 // as paths relative to the repository root.
 type InitResult struct {

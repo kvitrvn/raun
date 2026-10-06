@@ -1,5 +1,9 @@
-# Raun configuration. Reference: docs/design.md ("Agent configuration").
+# Raun configuration.
 version: 1
+
+# Language agents write knowledge in (e.g. en, fr). Quoted excerpts always
+# keep their original language.
+language: en
 
 sources:
   # Repository paths agents must not cite (glob patterns).
@@ -11,6 +15,14 @@ sources:
   # the nature "human-context", so they never pass for code-derived facts.
   context:
     - ".raun/context.md"
+  # Paths classified as documentation; everything else is code. Remove this
+  # list to use the defaults shown here.
+  docs:
+    - "**/*.md"
+    - "**/*.rst"
+    - "**/*.adoc"
+    - "**/*.txt"
+    - "docs/**"
 
 evidence:
   # Longest line range one evidence may cite. Longer citations are invalid:
@@ -28,7 +40,7 @@ analysis:
   quorum: 2
   # Agents analyze the repository independently. Diversity should come from
   # using different models. Each agent is a command that reads a prompt on
-  # stdin and prints one JSON object on stdout; see docs/design.md.
+  # stdin and prints one JSON object on stdout; see docs/agents.md.
   agents:
     - id: alpha
       instructions: builtin:analyst

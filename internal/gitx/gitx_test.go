@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/kvitrvn/raun/internal/gittest"
@@ -103,5 +105,94 @@ func TestReadFile(t *testing.T) {
 				t.Errorf("ReadFile() = %q, %v; want %q", got, err, tt.want)
 			}
 		})
+	}
+}
+
+func TestExport(t *testing.T) {
+	ctx := context.Background()
+	fx := gittest.New(t)
+	fx.Write("src/main.go", "package main\n")
+	fx.Write("run.sh", "#!/bin/sh\n")
+	fx.Write(".gitattributes", "src/main.go export-ignore\n")
+	fx.Write(".raun/knowledge/persona/persona-aaaaaa.yaml", "secret\n")
+	fx.Write(".raun/context.md", "context\n")
+	if err := os.Chmod(filepath.Join(fx.Dir, "run.sh"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("src/main.go", filepath.Join(fx.Dir, "inside")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc/hostname", filepath.Join(fx.Dir, "outside")); err != nil {
+		t.Fatal(err)
+	}
+	c := fx.Commit("one")
+	r, err := Open(ctx, fx.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dest := t.TempDir()
+	skip := func(p string) bool { return p == ".raun/knowledge" || strings.HasPrefix(p, ".raun/knowledge/") }
+	if err := r.Export(ctx, c, dest, skip); err != nil {
+		t.Fatal(err)
+	}
+
+	read := func(p string) string {
+		data, err := os.ReadFile(filepath.Join(dest, p))
+		if err != nil {
+			return "<" + err.Error() + ">"
+		}
+		return string(data)
+	}
+	if got := read("src/main.go"); got != "package main\n" {
+		t.Errorf("export-ignore must not apply: src/main.go = %q", got)
+	}
+	if got := read(".raun/context.md"); got != "context\n" {
+		t.Errorf(".raun/context.md = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(dest, ".raun", "knowledge")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("skipped path was exported: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, ".git")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf(".git was exported")
+	}
+	if info, err := os.Stat(filepath.Join(dest, "run.sh")); err != nil || info.Mode().Perm()&0o100 == 0 {
+		t.Errorf("run.sh lost its executable bit: %v %v", info, err)
+	}
+	if target, err := os.Readlink(filepath.Join(dest, "inside")); err != nil || target != "src/main.go" {
+		t.Errorf("inside symlink = %q, %v", target, err)
+	}
+	if _, err := os.Lstat(filepath.Join(dest, "outside")); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("symlink escaping the export was created")
+	}
+}
+
+func TestChangedPaths(t *testing.T) {
+	ctx := context.Background()
+	fx := gittest.New(t)
+	fx.Write("a.txt", "1")
+	fx.Write("b.txt", "1")
+	fx.Write(".gitignore", "ignored/\n")
+	fx.Commit("one")
+	r, err := Open(ctx, fx.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if paths, err := r.ChangedPaths(ctx); err != nil || len(paths) != 0 {
+		t.Fatalf("clean tree: %v, %v", paths, err)
+	}
+
+	fx.Write("a.txt", "2")
+	fx.Write("new dir/c.txt", "new")
+	fx.Write("ignored/x", "x")
+	fx.Git("mv", "b.txt", "renamed.txt")
+	paths, err := r.ChangedPaths(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(paths)
+	if want := []string{"a.txt", "new dir/c.txt", "renamed.txt"}; !slices.Equal(paths, want) {
+		t.Errorf("ChangedPaths() = %q, want %q", paths, want)
 	}
 }

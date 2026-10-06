@@ -1,1 +1,4 @@
 /bin/
+
+# Owner design notes, kept local.
+/docs/design.md

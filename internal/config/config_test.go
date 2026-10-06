@@ -4,9 +4,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kvitrvn/raun/internal/source"
 )
 
 const validConfig = `
@@ -34,6 +37,12 @@ func TestParseValid(t *testing.T) {
 
 	if cfg.Analysis.Quorum != 2 {
 		t.Errorf("default quorum = %d, want 2", cfg.Analysis.Quorum)
+	}
+	if cfg.Language != "en" {
+		t.Errorf("default language = %q, want en", cfg.Language)
+	}
+	if !slices.Equal(cfg.Sources.Docs, source.DefaultDocs) {
+		t.Errorf("default docs = %v", cfg.Sources.Docs)
 	}
 	if cfg.Evidence.MaxLines != DefaultMaxLines {
 		t.Errorf("default max_lines = %d, want %d", cfg.Evidence.MaxLines, DefaultMaxLines)
@@ -167,9 +176,11 @@ analysis:
 			name: "bad sources and roles",
 			yaml: `
 version: 2
+language: French
 evidence: { max_lines: -3 }
 sources:
   exclude: ["[abc"]
+  docs: ["docs/[x"]
   context: ["/etc/passwd", ""]
 types: [requirement]
 analysis:
@@ -184,8 +195,10 @@ reconciler:
 `,
 			wantFields: []string{
 				"version",
+				"language",
 				"evidence.max_lines",
 				"sources.exclude[0]",
+				"sources.docs[0]",
 				"sources.context[0]",
 				"sources.context[1]",
 				"analysis.agents[0].instructions",

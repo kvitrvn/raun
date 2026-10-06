@@ -33,6 +33,8 @@ type Result struct {
 	// StartLine and EndLine locate the excerpt at the checked commit;
 	// both are 0 when it was not found.
 	StartLine, EndLine int
+	// Excerpt is the exact text of the located lines, as in the file.
+	Excerpt string
 	// Reason explains any state other than verified.
 	Reason string
 }
@@ -47,6 +49,7 @@ type Verifier struct {
 type fileKey struct{ commit, path string }
 
 type fileEntry struct {
+	raw   []string // lines as in the file, without line terminators
 	lines []string // normalized
 	err   error    // content-level problem (missing, not a file, binary)
 }
@@ -80,7 +83,8 @@ func (v *Verifier) Verify(ctx context.Context, ev knowledge.Evidence, at string)
 		return invalid("excerpt has %d lines, the limit is %d", len(want), v.maxLines), nil
 	}
 
-	lines, err := v.lines(ctx, at, ev.Path)
+	file, err := v.file(ctx, at, ev.Path)
+	lines := file.lines
 	var content *contentError
 	if errors.As(err, &content) {
 		return Result{State: notFound, Reason: content.msg}, nil
@@ -90,7 +94,12 @@ func (v *Verifier) Verify(ctx context.Context, ev knowledge.Evidence, at string)
 	}
 
 	if ev.StartLine >= 1 && ev.EndLine <= len(lines) && slices.Equal(trimBlank(lines[ev.StartLine-1:ev.EndLine]), want) {
-		return Result{State: knowledge.EvidenceVerified, StartLine: ev.StartLine, EndLine: ev.EndLine}, nil
+		return Result{
+			State:     knowledge.EvidenceVerified,
+			StartLine: ev.StartLine,
+			EndLine:   ev.EndLine,
+			Excerpt:   strings.Join(file.raw[ev.StartLine-1:ev.EndLine], "\n"),
+		}, nil
 	}
 
 	start, ok := nearest(find(lines, want), ev.StartLine-1)
@@ -101,6 +110,7 @@ func (v *Verifier) Verify(ctx context.Context, ev knowledge.Evidence, at string)
 		State:     knowledge.EvidenceRelocated,
 		StartLine: start + 1,
 		EndLine:   start + len(want),
+		Excerpt:   strings.Join(file.raw[start:start+len(want)], "\n"),
 		Reason:    fmt.Sprintf("excerpt found at lines %d-%d", start+1, start+len(want)),
 	}, nil
 }
@@ -115,10 +125,10 @@ type contentError struct{ msg string }
 
 func (e *contentError) Error() string { return e.msg }
 
-func (v *Verifier) lines(ctx context.Context, commit, path string) ([]string, error) {
+func (v *Verifier) file(ctx context.Context, commit, path string) (fileEntry, error) {
 	key := fileKey{commit, path}
 	if e, ok := v.files[key]; ok {
-		return e.lines, e.err
+		return e, e.err
 	}
 
 	data, err := v.src.ReadFile(ctx, commit, path)
@@ -129,14 +139,18 @@ func (v *Verifier) lines(ctx context.Context, commit, path string) ([]string, er
 	case errors.Is(err, gitx.ErrNotAFile):
 		entry.err = &contentError{path + " is not a regular file"}
 	case err != nil:
-		return nil, err // not cached: may be transient
+		return fileEntry{}, err // not cached: may be transient
 	case isBinary(data):
 		entry.err = &contentError{path + " is a binary file"}
 	default:
-		entry.lines = normalize(string(data))
+		entry.raw = splitLines(string(data))
+		entry.lines = make([]string, len(entry.raw))
+		for i, l := range entry.raw {
+			entry.lines[i] = normalizeLine(l)
+		}
 	}
 	v.files[key] = entry
-	return entry.lines, entry.err
+	return entry, entry.err
 }
 
 // isBinary uses Git's heuristic: a NUL byte in the first 8000 bytes.
@@ -146,13 +160,21 @@ func isBinary(data []byte) bool {
 
 // normalize splits text into lines with whitespace normalized.
 func normalize(text string) []string {
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	text = strings.TrimSuffix(text, "\n")
-	lines := strings.Split(text, "\n")
+	lines := splitLines(text)
 	for i, l := range lines {
-		lines[i] = strings.Join(strings.Fields(l), " ")
+		lines[i] = normalizeLine(l)
 	}
 	return lines
+}
+
+func normalizeLine(l string) string {
+	return strings.Join(strings.Fields(l), " ")
+}
+
+// splitLines splits text on LF or CRLF, ignoring a final line terminator.
+func splitLines(text string) []string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	return strings.Split(strings.TrimSuffix(text, "\n"), "\n")
 }
 
 // trimBlank drops blank lines at both ends.

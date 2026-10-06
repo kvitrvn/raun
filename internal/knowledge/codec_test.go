@@ -5,6 +5,8 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -76,5 +78,44 @@ func TestDecodeRejects(t *testing.T) {
 				t.Errorf("Decode() error = %v, want it to contain %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestEncodeIndentedExcerpts(t *testing.T) {
+	for _, excerpt := range []string{
+		"\tif ok {\n\t\treturn\n\t}",
+		"    indented\nnot indented",
+		"plain\n\tthen tab",
+		"trailing space \nline",
+		"single line with \t tab",
+	} {
+		it := samplePersona()
+		it.Evidence[0].Excerpt = excerpt
+		it.Evidence[0].SHA256 = HashExcerpt(excerpt)
+		data, err := Encode(it)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := Decode(data)
+		if err != nil {
+			t.Fatalf("excerpt %q: Decode(Encode()) error = %v\n%s", excerpt, err, data)
+		}
+		if got.Evidence[0].Excerpt != excerpt {
+			t.Errorf("excerpt %q came back as %q", excerpt, got.Evidence[0].Excerpt)
+		}
+	}
+}
+
+func TestEvidenceYAMLMirrorsEvidence(t *testing.T) {
+	tags := func(v any) []string {
+		var out []string
+		rt := reflect.TypeOf(v)
+		for i := range rt.NumField() {
+			out = append(out, rt.Field(i).Tag.Get("yaml"))
+		}
+		return out
+	}
+	if a, b := tags(Evidence{}), tags(evidenceYAML{}); !slices.Equal(a, b) {
+		t.Errorf("evidenceYAML fields %v differ from Evidence fields %v", b, a)
 	}
 }

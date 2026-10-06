@@ -103,6 +103,20 @@ func TestVerifyIntegrity(t *testing.T) {
 	}
 }
 
+func TestVerifyReturnsFileText(t *testing.T) {
+	fx := newFixture(t)
+	v := NewVerifier(fx.repo, 40)
+	for _, path := range []string{"billing/invoice.go", "billing/crlf.go"} {
+		got, err := v.Verify(context.Background(), ev(fx.c1, path, 9, 11, "  if inv.Status == StatusIssued {\n    return ErrInvoiceLocked\n  }"), fx.c1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "\tif inv.Status == StatusIssued {\n\t\treturn ErrInvoiceLocked\n\t}"; got.Excerpt != want {
+			t.Errorf("%s: Excerpt = %q, want the file's own text %q", path, got.Excerpt, want)
+		}
+	}
+}
+
 func TestVerifyFreshness(t *testing.T) {
 	fx := newFixture(t)
 
