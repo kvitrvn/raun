@@ -24,6 +24,7 @@ const CurrentVersion = 1
 const (
 	DefaultTimeout      = 20 * time.Minute
 	DefaultQuorum       = 2
+	DefaultMaxLines     = 40
 	DefaultRunnerKind   = RunnerCommand
 	BuiltinAnalyst      = "builtin:analyst"
 	BuiltinLead         = "builtin:lead"
@@ -45,9 +46,16 @@ type Config struct {
 	Version    int      `yaml:"version"`
 	Sources    Sources  `yaml:"sources"`
 	Types      []string `yaml:"types"`
+	Evidence   Evidence `yaml:"evidence"`
 	Analysis   Analysis `yaml:"analysis"`
 	Lead       *Role    `yaml:"lead,omitempty"`
 	Reconciler *Role    `yaml:"reconciler,omitempty"`
+}
+
+// Evidence configures evidence verification.
+type Evidence struct {
+	// MaxLines is the longest line range a single evidence may cite.
+	MaxLines int `yaml:"max_lines"`
 }
 
 // Sources selects which repository files agents may cite.
@@ -143,6 +151,9 @@ func Parse(r io.Reader) (*Config, error) {
 }
 
 func (c *Config) applyDefaults() {
+	if c.Evidence.MaxLines == 0 {
+		c.Evidence.MaxLines = DefaultMaxLines
+	}
 	if c.Analysis.Quorum == 0 {
 		c.Analysis.Quorum = min(DefaultQuorum, len(c.Analysis.Agents))
 	}
@@ -197,6 +208,9 @@ func (c *Config) Validate() error {
 
 	if c.Version != CurrentVersion {
 		add("version", "must be %d, got %d", CurrentVersion, c.Version)
+	}
+	if c.Evidence.MaxLines < 1 {
+		add("evidence.max_lines", "must be at least 1, got %d", c.Evidence.MaxLines)
 	}
 
 	for i, p := range c.Sources.Exclude {

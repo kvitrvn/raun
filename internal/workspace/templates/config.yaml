@@ -12,6 +12,11 @@ sources:
   context:
     - ".raun/context.md"
 
+evidence:
+  # Longest line range one evidence may cite. Longer citations are invalid:
+  # citing a whole file explains nothing.
+  max_lines: 40
+
 # Knowledge types to build. Built-in: persona, requirement.
 types:
   - persona

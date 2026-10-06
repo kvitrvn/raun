@@ -23,11 +23,14 @@ cmd/raun/            CLI entry point; run() is testable (args, stdout, stderr) -
 internal/config      .raun/config.yaml: strict decoding, defaults, validation with field paths
 internal/workspace   .raun/ layout; `raun init` templates embedded from templates/
 internal/knowledge   knowledge model, validation, status transitions, canonical YAML store
+internal/gitx        git through the `git` binary: resolve commits, read files at a commit
+internal/evidence    deterministic evidence verification (integrity, freshness, relocation)
+internal/gittest     fixture repositories for tests (ignores user Git config)
 docs/design.md       concepts, lifecycle, architecture, step-by-step roadmap
 docs/format.md       knowledge file format reference
 ```
 
-Planned packages (see `docs/design.md` → Architecture): `evidence`, `gitx`, `agent`, `prompt`, `run`, `consolidate`, `reconcile`. Don't create them before their roadmap step.
+Planned packages (see `docs/design.md` → Architecture): `agent`, `prompt`, `run`, `consolidate`, `reconcile`. Don't create them before their roadmap step.
 
 ## Domain invariants
 
@@ -53,7 +56,7 @@ These invariants are the core of the product. Never weaken them:
 - Table-driven tests; `t.TempDir()` for filesystem work.
 - Golden files live in `testdata/`; regenerate with `go test ./internal/knowledge -update` and review the diff.
 - Never call a real LLM or the network in tests. Use fake agents, i.e. test helper processes that emit fixture JSON.
-- Git-dependent tests build their own fixture repository in a temp dir.
+- Git-dependent tests build their own fixture repository with `internal/gittest`.
 - CLI behavior is tested through `run()` in `cmd/raun`.
 
 ## Language

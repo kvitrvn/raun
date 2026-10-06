@@ -91,11 +91,24 @@ Full examples live in `internal/knowledge/testdata/`.
 | `support[].nature` | `supported`: needs at least one observation. `hypothesis`: an inference the agent declared as such; observations optional. |
 | `support[].observations[]` | `statement` + `evidence[]` (at least one evidence ID from this file). |
 | `evidence[]` | `id` (`e1`, `e2`, …), `source` (`code`, `doc`, `human-context`), `path` (clean, relative to the repository root), `commit` (full hash), `start_line`, `end_line` (1-based, inclusive), `excerpt`, `sha256` (hex SHA-256 of `excerpt`), `state`. |
-| `evidence[].state` | Set by Raun, never by an agent: `verified`, `relocated`, `invalid`, `stale`. |
+| `evidence[].state` | Set by Raun, never by an agent. See [Evidence states](#evidence-states). |
 | `open_points[]` | `id` (`p1`, …), `kind` (`disagreement`, `uncertainty`, `question`), `summary`, `positions[]`, `resolution`. |
 | `open_points[].positions[]` | One side of a disagreement, kept as written: `statement`, `run`, `agents[]`, `evidence[]`. A disagreement has at least two positions. |
 | `open_points[].resolution` | Set by a human: `at`, `by`, `position` (0-based index of the retained position, optional), `note`. |
 | `history[]` | Every status change: `at` (UTC), `actor` (`human` or `run`), `by` (person name or run ID), `from` (absent on creation), `to`, `reason` (required for humans). |
+
+## Evidence states
+
+Raun checks evidence without any LLM. The excerpt must equal the cited lines as whole lines. Before comparing, CRLF is read as LF, runs of spaces and tabs count as one space, line edges are trimmed, and blank lines at both ends are ignored. A fragment of a line never matches. A citation longer than `evidence.max_lines` (default 40) is invalid.
+
+| State | Meaning |
+|---|---|
+| `verified` | The excerpt is at the cited lines. |
+| `relocated` | The excerpt is in the file at other lines (nearest occurrence). Raun corrects the lines. |
+| `invalid` | At the cited commit, the excerpt is not in the file, or the file is missing, binary or not a regular file, or the citation is too long. The agent's claim has no ground. |
+| `stale` | It held at the cited commit, but no longer at a later one (file deleted or excerpt changed). |
+
+`raun verify` reports both checks for every evidence: integrity at the cited commit and freshness at HEAD (or `-at <rev>`). It writes nothing. Only runs update states in files. Human context files must be committed to be citable.
 
 ## Statuses
 

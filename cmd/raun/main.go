@@ -25,14 +25,15 @@ Commands:
   check     Validate .raun/config.yaml and the knowledge files
   list      List knowledge items (-type, -status to filter)
   show      Show one knowledge item with its support, evidence and history
+  verify    Re-check every evidence at its commit and at HEAD (-at); read-only
   version   Print the raun version
   help      Show this help
 
-Planned (not implemented yet): run, verify, review, accept, reject,
+Planned (not implemented yet): run, review, accept, reject,
 resolve, report, diff. See docs/design.md.
 `
 
-var planned = []string{"run", "verify", "review", "accept", "reject", "resolve", "report", "diff"}
+var planned = []string{"run", "review", "accept", "reject", "resolve", "report", "diff"}
 
 // errUsage marks errors caused by invalid invocation (exit code 2).
 var errUsage = errors.New("usage error")
@@ -72,6 +73,8 @@ func dispatch(args []string, stdout, stderr io.Writer) error {
 		return cmdList(rest, stdout, stderr)
 	case "show":
 		return cmdShow(rest, stdout, stderr)
+	case "verify":
+		return cmdVerify(rest, stdout, stderr)
 	case "version":
 		fmt.Fprintln(stdout, "raun", buildVersion())
 		return nil

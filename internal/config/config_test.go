@@ -35,6 +35,9 @@ func TestParseValid(t *testing.T) {
 	if cfg.Analysis.Quorum != 2 {
 		t.Errorf("default quorum = %d, want 2", cfg.Analysis.Quorum)
 	}
+	if cfg.Evidence.MaxLines != DefaultMaxLines {
+		t.Errorf("default max_lines = %d, want %d", cfg.Evidence.MaxLines, DefaultMaxLines)
+	}
 	alpha := cfg.Analysis.Agents[0]
 	if alpha.Instructions != BuiltinAnalyst {
 		t.Errorf("default instructions = %q, want %q", alpha.Instructions, BuiltinAnalyst)
@@ -164,6 +167,7 @@ analysis:
 			name: "bad sources and roles",
 			yaml: `
 version: 2
+evidence: { max_lines: -3 }
 sources:
   exclude: ["[abc"]
   context: ["/etc/passwd", ""]
@@ -180,6 +184,7 @@ reconciler:
 `,
 			wantFields: []string{
 				"version",
+				"evidence.max_lines",
 				"sources.exclude[0]",
 				"sources.context[0]",
 				"sources.context[1]",

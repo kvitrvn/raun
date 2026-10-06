@@ -4,7 +4,7 @@
 
 Raun builds an evidence-backed knowledge base of a software project, such as its personas and business requirements. Several LLM agents analyze the repository independently. A lead agent consolidates their findings and keeps disagreements visible. Every claim points to exact lines at a given commit, and Raun checks each citation itself. Agents only propose knowledge; a human validates it.
 
-> **Status:** early development. `init`, `check`, `list`, `show` and `version` work today; nothing produces knowledge yet. Other commands are planned (see [docs/design.md](docs/design.md)).
+> **Status:** early development. `init`, `check`, `list`, `show`, `verify` and `version` work today; nothing produces knowledge yet. Other commands are planned (see [docs/design.md](docs/design.md)).
 
 ## Install
 
@@ -29,7 +29,7 @@ raun init     # creates .raun/config.yaml, .raun/context.md, .raun/.gitignore
 ```
 
 1. Edit `.raun/config.yaml`: set each agent's `runner.argv` to a command that reads a prompt on stdin and prints one JSON object on stdout. Use different models for different agents.
-2. Write what the team knows in `.raun/context.md`. Agents can cite it, but it stays tagged as human input, separate from facts found in code.
+2. Write what the team knows in `.raun/context.md` and commit it. Agents can cite it, but it stays tagged as human input, separate from facts found in code.
 3. Validate the configuration:
 
 ```sh
@@ -41,6 +41,7 @@ Browse the knowledge base:
 ```sh
 raun list -status proposed   # filters: -type, -status
 raun show <id>               # support, evidence, open points, history
+raun verify                  # re-check every citation; exits 1 if some no longer hold
 ```
 
 Then (planned):
