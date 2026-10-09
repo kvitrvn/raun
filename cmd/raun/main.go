@@ -33,6 +33,7 @@ Commands:
   reopen    Reopen a rejected item: raun reopen <id> -reason "..."
   resolve   Settle an open point: raun resolve <id> <point> -note "..." [-position N]
   report    Write a Markdown view of the knowledge base (-o, -status, -all)
+  serve     Browse and review knowledge locally (-dir, -port, -read-only)
   version   Print the raun version
   help      Show this help
 
@@ -95,6 +96,8 @@ func dispatch(args []string, stdout, stderr io.Writer) error {
 		return cmdResolve(rest, stdout, stderr)
 	case "report":
 		return cmdReport(rest, stdout, stderr)
+	case "serve":
+		return cmdServe(rest, stdout, stderr)
 	case "version":
 		fmt.Fprintln(stdout, "raun", buildVersion())
 		return nil

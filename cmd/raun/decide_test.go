@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -52,6 +54,20 @@ func TestDecisionWorkflow(t *testing.T) {
 	accountant := ids["Accountant"]
 	window := ids["Correction window"]
 
+	// Lead input order is anonymized, so locate the code position in the
+	// stored disagreement instead of assuming it is always position one.
+	codePosition := 0
+	for _, point := range get(t, dir, immutable).OpenPoints {
+		for i, position := range point.Positions {
+			if position.Statement == "An issued invoice cannot be updated." {
+				codePosition = i + 1
+			}
+		}
+	}
+	if codePosition == 0 {
+		t.Fatal("missing code position")
+	}
+
 	// review lists every pending item, contested first, with the next step.
 	code, out, _ := runCLI(t, "review", "-dir", dir)
 	if code != 0 {
@@ -61,7 +77,7 @@ func TestDecisionWorkflow(t *testing.T) {
 		"3 item(s) await a decision.",
 		immutable + "  contested  Issued invoices are immutable",
 		"disagreement (raised by lead)",
-		"1. An issued invoice cannot be updated.  (alpha)",
+		fmt.Sprintf("%d. An issued invoice cannot be updated.  (alpha)", codePosition),
 		"next: raun resolve " + immutable + " p",
 		"next: raun show " + accountant + ", then accept or reject",
 	} {
@@ -93,7 +109,7 @@ func TestDecisionWorkflow(t *testing.T) {
 	if code, _, errOut := runCLI(t, "resolve", immutable, point, "-dir", dir, "-author", "PO"); code != 1 || !strings.Contains(errOut, "needs a note") {
 		t.Errorf("missing note: exit = %d, stderr = %q", code, errOut)
 	}
-	code, out, errOut = runCLI(t, "resolve", immutable, point, "-dir", dir, "-author", "PO", "-position", "1", "-note", "The code is authoritative.")
+	code, out, errOut = runCLI(t, "resolve", immutable, point, "-dir", dir, "-author", "PO", "-position", strconv.Itoa(codePosition), "-note", "The code is authoritative.")
 	if code != 0 || !strings.Contains(out, "contested -> proposed (no disagreement left)") {
 		t.Fatalf("resolve: exit = %d, stdout = %q, stderr = %q", code, out, errOut)
 	}
@@ -176,4 +192,41 @@ func disagreementID(t *testing.T, it *knowledge.Item) string {
 	}
 	t.Fatalf("%s has no disagreement", it.ID)
 	return ""
+}
+
+func TestDecisionCommandsRespectItemLock(t *testing.T) {
+	dir, ids := teamBase(t)
+	id := ids["Issued invoices are immutable"]
+	it := get(t, dir, id)
+	store := knowledge.NewStore(workspace.KnowledgeDir(dir))
+	p := store.Path(it.Type, id)
+	before, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p+".lock", nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, verb := range []string{"accept", "reject", "reopen", "resolve"} {
+		args := []string{verb, id, "-dir", dir, "-author", "Reviewer"}
+		if verb == "resolve" {
+			args = append(args, disagreementID(t, it), "-note", "Confirmed")
+		} else {
+			args = append(args, "-reason", "Confirmed")
+		}
+		code, _, errOut := runCLI(t, args...)
+		if code != 1 || !strings.Contains(errOut, "knowledge update conflict") {
+			t.Errorf("%s: code=%d stderr=%s", verb, code, errOut)
+		}
+	}
+	after, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("busy item changed")
+	}
+	if _, err := os.Stat(p + ".lock"); err != nil {
+		t.Fatal("CLI removed another process's lock")
+	}
 }

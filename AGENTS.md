@@ -16,6 +16,8 @@ gofmt -l .                       # must print nothing
 
 Run all of them before declaring a task done.
 
+After changing web templates or styles, run `./scripts/generate-web.sh` and review the generated Go/CSS diff. Generated resources are committed; regular builds need no frontend tools. See `docs/web.md` for pinned versions.
+
 ## Layout
 
 ```
@@ -32,6 +34,7 @@ internal/prompt      embedded prompt templates; the output contract is always ap
 internal/consolidate plans (identity or lead grouping) -> knowledge items; anonymized lead input
 internal/run         run pipeline and manifest
 internal/report      Markdown view of the knowledge base (`raun report`); never read back
+internal/web         local knowledge browser and human decisions; embedded templ/CSS/JS (`raun serve`)
 internal/gittest     fixture repositories for tests (ignores user Git config)
 internal/agenttest   fake agent (the test binary itself) and matching fixture project
 docs/agents.md       agent command protocol and report contract
@@ -54,9 +57,11 @@ These invariants are the core of the product. Never weaken them:
 
 ## Go conventions
 
-- Standard library first. A new dependency needs a stated reason. Current non-stdlib dependency: `go.yaml.in/yaml/v3`.
+- Standard library first. A new dependency needs a stated reason. Current non-stdlib dependencies: `go.yaml.in/yaml/v3` (YAML) and `github.com/a-h/templ` (typed HTML).
 - Wrap errors with context: `fmt.Errorf("read config: %w", err)`. User-facing validation errors name the field path (`analysis.agents[1].runner.argv: ...`).
 - Decode external input strictly (unknown fields rejected).
+- Knowledge read-modify-write operations use `Store.Update` with the displayed/read canonical revision; never bypass the shared item lock.
+- `raun serve` enables human accept/reject decisions by default; preserve `-read-only`, loopback/Host/origin checks and CSRF protection.
 - Deterministic output: stable ordering, stable serialization (knowledge files are reviewed in Git diffs).
 - No package-level mutable state. Read-only tables, compiled regexps and embedded files are fine.
 

@@ -67,14 +67,21 @@ func transitionCommand(name string, to knowledge.Status) func([]string, io.Write
 			return err
 		}
 
-		from := it.Status
-		if err := it.Transition(to, knowledge.Actor{Kind: knowledge.ActorHuman, Name: author}, time.Now(), *reason); err != nil {
-			if it.HasUnresolvedDisagreement() && to == knowledge.StatusValidated {
-				return fmt.Errorf("%w (see raun review, then raun resolve %s <point> -note ...)", err, it.ID)
-			}
+		revision, err := knowledge.Revision(it)
+		if err != nil {
 			return err
 		}
-		if err := store.Save(it); err != nil {
+		from := it.Status
+		err = store.Update(it.ID, revision, func(current *knowledge.Item) error {
+			if err := current.Transition(to, knowledge.Actor{Kind: knowledge.ActorHuman, Name: author}, time.Now(), *reason); err != nil {
+				if current.HasUnresolvedDisagreement() && to == knowledge.StatusValidated {
+					return fmt.Errorf("%w (see raun review, then raun resolve %s <point> -note ...)", err, current.ID)
+				}
+				return err
+			}
+			return nil
+		})
+		if err != nil {
 			return err
 		}
 		fmt.Fprintf(stdout, "%s: %s -> %s by %s\n", it.ID, from, to, author)
@@ -115,11 +122,19 @@ func cmdResolve(args []string, stdout, stderr io.Writer) error {
 		p := *position - 1
 		retained = &p
 	}
-	from := it.Status
-	if err := it.Resolve(pos[1], author, time.Now(), retained, *note); err != nil {
+	revision, err := knowledge.Revision(it)
+	if err != nil {
 		return err
 	}
-	if err := store.Save(it); err != nil {
+	from := it.Status
+	err = store.Update(it.ID, revision, func(current *knowledge.Item) error {
+		if err := current.Resolve(pos[1], author, time.Now(), retained, *note); err != nil {
+			return err
+		}
+		it = current
+		return nil
+	})
+	if err != nil {
 		return err
 	}
 	fmt.Fprintf(stdout, "%s %s: resolved by %s\n", it.ID, pos[1], author)

@@ -1,0 +1,491 @@
+package web
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/kvitrvn/raun/internal/knowledge"
+	"github.com/kvitrvn/raun/internal/report"
+	"github.com/kvitrvn/raun/internal/web/ui"
+)
+
+templ document(m pageModel) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1"/>
+			<meta name="htmx-config" content='{"historyCacheSize":0,"historyRestoreAsHxRequest":false,"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false,"responseHandling":[{"code":"204","swap":false},{"code":"[2345]..","swap":true},{"code":"...","swap":false}]}'/>
+			<title>{ m.Title } · { m.Project } · Raun</title>
+			<link rel="stylesheet" href="/assets/app.css"/>
+			<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"/>
+			<script src="/assets/htmx.min.js" defer></script>
+			<script src="/assets/app.js" defer></script>
+		</head>
+		<body hx-boost="true" hx-target="#main" hx-select="#main" hx-swap="outerHTML show:window:top" hx-push-url="true" hx-sync="body:replace" hx-history="false">
+			<a class="skip-link" href="#main" hx-boost="false">Skip to content</a>
+			<div class="shell">
+				<aside class="sidebar">
+					<a href="/knowledge" class="brand" aria-label="Raun knowledge home">raun<span class="brand-dot">.</span></a>
+					<p class="project-name">
+						{ m.Project }
+					</p>
+					<nav aria-label="Knowledge navigation" class="space-y-2">
+						<a href="/knowledge">All knowledge</a>
+						<a href="/knowledge?type=persona">Personas</a>
+						<a href="/knowledge?type=requirement">Requirements</a>
+					</nav>
+					<p class="sidebar-note">Local workspace<br/>
+						if m.ReadOnly {
+							Read-only consultation
+						} else {
+							Human decisions enabled
+						}
+					</p>
+				</aside>
+				@mainContent(m)
+			</div>
+			<p id="navigation-status" class="sr-only" role="status" aria-live="polite"></p>
+		</body>
+	</html>
+}
+
+templ fragment(m pageModel) {
+	<title>{ m.Title } · { m.Project } · Raun</title>
+	@mainContent(m)
+}
+
+templ mainContent(m pageModel) {
+	<main id="main" tabindex="-1" hx-history-elt class="content space-y-8">
+		if m.Error != "" {
+			<h1>
+				{ m.Title }
+			</h1>
+			<p id="error-summary" role="alert" tabindex="-1" autofocus class="error whitespace-pre-wrap">
+				{ m.Error }
+			</p>
+			<a href="/knowledge">Return to knowledge</a>
+		} else if m.Item != nil {
+			@detailView(m)
+		} else if m.Decision != nil {
+			<h1>{ m.Title }</h1>
+			@humanDecision(m)
+		} else {
+			@listView(m)
+		}
+	</main>
+}
+
+templ listView(m pageModel) {
+	<header>
+		<p class="eyebrow">Project knowledge</p>
+		<h1>Knowledge</h1>
+		<p class="muted">Explore the people, requirements and evidence behind { m.Project }.</p>
+	</header>
+	<ul class="counts flex flex-wrap gap-3" aria-label="Workspace totals by status">
+		for _, count := range m.Counts {
+			<li>
+				<a href={ templ.SafeURL("/knowledge?status=" + string(count.Status)) }>
+					<strong>
+						{ strconv.Itoa(count.Count) }
+					</strong> { string(count.Status) }
+				</a>
+			</li>
+		}
+	</ul>
+	<form action="/knowledge" method="get" class="filters">
+		<div class="search-field">
+			<label for="q">Search knowledge</label>
+			@ui.Input("q", "q", m.Filters.Query)
+		</div>
+		<div>
+			<label for="type">Type</label>
+			<select id="type" name="type">
+				<option value="" selected?={ m.Filters.Type=="" }>All types</option>
+				for _, typ := range knowledge.Types {
+					<option value={ string(typ) } selected?={ m.Filters.Type==string(typ) }>
+						{ string(typ) }
+					</option>
+				}
+			</select>
+		</div>
+		<div>
+			<label for="status">Status</label>
+			<select id="status" name="status">
+				<option value="" selected?={ m.Filters.Status=="" }>Except rejected</option>
+				<option value="all" selected?={ m.Filters.Status=="all" }>All statuses</option>
+				for _, status := range report.Order {
+					<option value={ string(status) } selected?={ m.Filters.Status==string(status) }>
+						{ string(status) }
+					</option>
+				}
+			</select>
+		</div>
+		@ui.Button() {
+			Apply filters
+		}
+		<a href="/knowledge" class="reset">Reset</a>
+	</form>
+	<section aria-label="Knowledge results" class="space-y-4">
+		<p class="muted" role="status">
+			{ fmt.Sprintf("%d matching items · Page %d of %d",m.Total,m.Filters.Page,m.Pages) }
+		</p>
+		if m.Empty {
+			@ui.Card() {
+				<h2>No knowledge yet</h2>
+				<p>Run an analysis from the CLI to create knowledge for this project.</p>
+			}
+		} else if m.Total==0 {
+			@ui.Card() {
+				<h2>No matching knowledge</h2>
+				<p>Try another search or include rejected items.</p>
+			}
+		} else {
+			for _, it := range m.Items {
+				@ui.Card() {
+					<div class="flex flex-wrap items-center gap-3">
+						<span class="eyebrow">
+							{ string(it.Type) }
+						</span>
+						@ui.Badge() {
+							{ string(it.Status) }
+						}
+					</div>
+					<h2>
+						<a href={ templ.SafeURL(itemURL(it.ID)) }>
+							{ it.Title }
+						</a>
+					</h2>
+					<p class="summary whitespace-pre-wrap">
+						{ businessText(it) }
+					</p>
+					<p class="metadata">
+						{ it.ID } · { fmt.Sprintf("%d interpretations · %d evidence entries",len(it.Support),len(it.Evidence)) }
+					</p>
+				}
+			}
+		}
+	</section>
+	if m.Pages>1 {
+		{{
+			previous, next := "", ""
+			if m.Filters.Page > 1 {
+				previous = m.Filters.pageURL(m.Filters.Page - 1)
+			}
+			if m.Filters.Page < m.Pages {
+				next = m.Filters.pageURL(m.Filters.Page + 1)
+			}
+		}}
+		@ui.Pagination(previous, next, fmt.Sprintf("Page %d of %d", m.Filters.Page, m.Pages))
+	}
+}
+
+templ detailView(m pageModel) {
+	{{ it := m.Item }}
+	<header class="space-y-3">
+		<a href="/knowledge">← All knowledge</a>
+		<p class="eyebrow">
+			{ string(it.Type) } · { it.ID }
+		</p>
+		<h1>
+			{ it.Title }
+		</h1>
+		@ui.Badge() {
+			{ string(it.Status) }
+		}
+		if m.Decision != nil {
+			<p><a href="#human-decision" hx-boost="false">Human decision</a></p>
+		}
+	</header>
+	<section aria-label="Business content" class="space-y-4">
+		<p class="business-text whitespace-pre-wrap">
+			{ businessText(it) }
+		</p>
+		if p:=it.Persona; p!=nil {
+			@textList("Goals", p.Goals)
+			@textList("Capabilities", p.Capabilities)
+		}
+		if r:=it.Requirement; r!=nil {
+			<p>
+				<strong>Kind:</strong> { string(r.Kind) }
+			</p>
+			if r.Rationale!="" {
+				<h2>Rationale</h2>
+				<p class="whitespace-pre-wrap">
+					{ r.Rationale }
+				</p>
+			}
+		}
+		if it.Persona!=nil {
+			<h2>Associated requirements</h2>
+		} else {
+			<h2>Personas</h2>
+		}
+		if len(m.Links)==0 {
+			<p class="muted">None recorded.</p>
+		} else {
+			<ul class="plain-list">
+				for _, link := range m.Links {
+					<li>
+						if link.Missing {
+							<span class="error">
+								Missing reference: { link.ID }
+							</span>
+						} else {
+							<a href={ templ.SafeURL(itemURL(link.ID)) }>
+								{ link.Title }
+							</a> <span class="metadata">({ link.ID } · { string(link.Status) })</span>
+						}
+					</li>
+				}
+			</ul>
+		}
+	</section>
+	<section class="space-y-4" aria-labelledby="interpretations-heading">
+		<h2 id="interpretations-heading">Agent interpretations</h2>
+		if len(it.Support)==0 {
+			<p class="muted">No interpretations recorded.</p>
+		}
+		for _, support := range it.Support {
+			@ui.Card() {
+				<div class="flex flex-wrap gap-3">
+					@ui.Badge() {
+						if support.Nature==knowledge.NatureHypothesis {
+							Hypothesis
+						} else {
+							Supported
+						}
+					}
+					<span>
+						Agent { support.Agent }
+					</span>
+				</div>
+				<p class="whitespace-pre-wrap">
+					{ support.Statement }
+				</p>
+				<p class="metadata">
+					Run { support.Run } · Interpretation { support.Interpretation }
+				</p>
+				for _, observation := range support.Observations {
+					<div class="observation">
+						<p class="whitespace-pre-wrap">
+							{ observation.Statement }
+						</p>
+						@citations(observation.Evidence)
+					</div>
+				}
+			}
+		}
+	</section>
+	<section class="space-y-4" aria-labelledby="evidence-heading">
+		<h2 id="evidence-heading">Evidence</h2>
+		<p class="muted">States were recorded in the knowledge files. Viewing this page does not verify evidence. Use <code>raun verify</code> to check it again.</p>
+		if len(it.Evidence)==0 {
+			<p class="muted">No evidence recorded.</p>
+		}
+		for _, e := range it.Evidence {
+			<article id={ "evidence-" + e.ID } class="evidence space-y-3" tabindex="-1">
+				<h3>
+					{ e.ID } · { e.Path }:{ strconv.Itoa(e.StartLine) }–{ strconv.Itoa(e.EndLine) }
+				</h3>
+				<p>
+					Source: { string(e.Source) } · Recorded state: 
+					<strong>
+						{ string(e.State) }
+					</strong>
+				</p>
+				<p class="metadata">
+					Commit 
+					<code>
+						{ e.Commit }
+					</code>
+				</p>
+				<div class="excerpt" role="region" aria-label={ "Excerpt " + e.ID } tabindex="0">
+					<pre>
+						<code>
+							for i, line := range strings.Split(e.Excerpt,"\n") {
+								<span class="code-line">
+									<span class="line-number" aria-hidden="true">
+										{ strconv.Itoa(e.StartLine+i) }
+									</span>{ line }
+									<br/>
+								</span>
+							}
+						</code>
+					</pre>
+				</div>
+			</article>
+		}
+	</section>
+	<section class="space-y-4" aria-labelledby="points-heading">
+		<h2 id="points-heading">Open points</h2>
+		if len(it.OpenPoints)==0 {
+			<p class="muted">No open points recorded.</p>
+		}
+		for _, point := range it.OpenPoints {
+			@ui.Card() {
+				<h3>
+					{ point.ID } · { string(point.Kind) } ·
+					if point.Unresolved() {
+						Unresolved
+					} else {
+						Resolved
+					}
+				</h3>
+				<p class="whitespace-pre-wrap">
+					{ point.Summary }
+				</p>
+				if point.RaisedBy!="" {
+					<p class="metadata">
+						Raised by { point.RaisedBy }
+					</p>
+				}
+				for i, position := range point.Positions {
+					<div class="position space-y-2">
+						<h4>
+							Position { strconv.Itoa(i+1) }
+						</h4>
+						<p class="whitespace-pre-wrap">
+							{ position.Statement }
+						</p>
+						<p class="metadata">
+							Agents: { strings.Join(position.Agents,", ") } · Run { position.Run }
+						</p>
+						@citations(position.Evidence)
+					</div>
+				}
+				if resolution:=point.Resolution; resolution!=nil {
+					<div class="resolution space-y-2">
+						<h4>Human resolution</h4>
+						<p>
+							{ resolution.By } · 
+							<time datetime={ resolution.At.Format(time.RFC3339) }>
+								{ resolution.At.Format(time.RFC3339) }
+							</time>
+						</p>
+						if resolution.Position!=nil {
+							<p>
+								Kept position { strconv.Itoa(*resolution.Position+1) }
+							</p>
+						}
+						<p class="whitespace-pre-wrap">
+							{ resolution.Note }
+						</p>
+					</div>
+				}
+			}
+		}
+	</section>
+	@humanDecision(m)
+	<section class="space-y-4" aria-labelledby="history-heading">
+		<h2 id="history-heading">History and human decisions</h2>
+		<ol class="history space-y-4">
+			for _, event := range it.History {
+				<li class="space-y-2">
+					<p>
+						<strong>
+							{ string(event.Actor) } · { event.By }
+						</strong> · 
+						<time datetime={ event.At.Format(time.RFC3339) }>
+							{ event.At.Format(time.RFC3339) }
+						</time>
+					</p>
+					<p>
+						if event.From!="" {
+							{ string(event.From) } →
+						}
+						{ string(event.To) }
+					</p>
+					if event.Reason!="" {
+						<p class="whitespace-pre-wrap">
+							{ event.Reason }
+						</p>
+					}
+				</li>
+			}
+		</ol>
+	</section>
+}
+
+templ textList(title string, items []string) {
+	if len(items)>0 {
+		<h2>
+			{ title }
+		</h2>
+		<ul class="plain-list">
+			for _,item:=range items {
+				<li class="whitespace-pre-wrap">
+					{ item }
+				</li>
+			}
+		</ul>
+	}
+}
+
+templ citations(ids []string) {
+	if len(ids)>0 {
+		<p class="citations flex flex-wrap gap-3">
+			<span>Evidence:</span>
+			for _, id := range ids {
+				<a href={ templ.SafeURL(evidenceURL(id)) } hx-boost="false">
+					{ id }
+				</a>
+			}
+		</p>
+	}
+}
+
+
+templ humanDecision(m pageModel) {
+	if m.ReadOnly {
+		<p class="muted">Read-only consultation. Human decisions are disabled on this server.</p>
+	} else if d := m.Decision; d != nil {
+		<section id="human-decision" tabindex="-1" class="cn-card space-y-4" aria-labelledby="decision-heading">
+			<h2 id="decision-heading">Human decision</h2>
+			if d.Error != "" {
+				<div id="error-summary" class="error space-y-2" role="alert" tabindex="-1" autofocus>
+					<p><strong>Unable to complete decision</strong></p>
+					<p class="whitespace-pre-wrap">{ d.Error }</p>
+					if d.Blocked {
+						<p><a href={ templ.SafeURL(itemURL(d.ID)) }>Reload and review this item before deciding again</a></p>
+					}
+				</div>
+			}
+			if m.Item != nil && m.Item.HasUnresolvedDisagreement() {
+				<div id="decision-disagreements" class="space-y-2">
+					<p>Validation is unavailable until these disagreements are resolved with the CLI. Rejection remains available.</p>
+					<ul class="plain-list">
+						for _, point := range m.Item.OpenPoints {
+							if point.Kind == knowledge.PointDisagreement && point.Unresolved() {
+								<li><code>{ fmt.Sprintf("raun resolve %s %s -note \"...\" [-position N]", d.ID, point.ID) }</code></li>
+							}
+						}
+					</ul>
+				</div>
+			}
+			<p id="decision-help" class="muted">Author and reason are required. Submitting records your decision and its reason in the history.</p>
+			<form method="post" action={ templ.SafeURL(itemURL(d.ID) + "/accept") } hx-push-url="false" hx-sync="this:drop" class="decision-form space-y-4" aria-describedby="decision-help">
+				<input type="hidden" name="csrf" value={ d.CSRF }/>
+				<input type="hidden" name="revision" value={ d.Revision }/>
+				<div>
+					<label for="decision-author">Author (required)</label>
+					<input id="decision-author" class="cn-input" name="author" value={ d.Author } autocomplete="name" required/>
+				</div>
+				<div>
+					<label for="decision-reason">Reason (required)</label>
+					<textarea id="decision-reason" class="cn-input" name="reason" rows="4" required>{ d.Reason }</textarea>
+				</div>
+				<div class="decision-actions">
+					<button type="submit" class="cn-button" disabled?={ d.Blocked || m.Item != nil && m.Item.HasUnresolvedDisagreement() }
+						if m.Item != nil && m.Item.HasUnresolvedDisagreement() {
+							aria-describedby="decision-disagreements"
+						}
+					>Validate proposal</button>
+					<button type="submit" formaction={ templ.SafeURL(itemURL(d.ID) + "/reject") } class="cn-button cn-button-outline" disabled?={ d.Blocked }>Reject proposal</button>
+				</div>
+			</form>
+		</section>
+	}
+}

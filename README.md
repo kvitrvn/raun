@@ -45,8 +45,11 @@ Browse the knowledge base:
 ```sh
 raun list -status proposed   # filters: -type, -status
 raun show <id>               # support, evidence, open points, history
+raun serve                   # local knowledge browser with human decisions at http://127.0.0.1:8080
 raun verify                  # re-check every citation; exits 1 if some no longer hold
 ```
+
+The browser provides search, filters, evidence excerpts, disagreements and human decisions. Validate or reject proposals with a required author and reason; unresolved disagreements block validation. Use `raun serve -read-only` for consultation alone. Use `raun serve -dir /path/to/project -port 8081` to choose a project or port; Ctrl+C stops it. It reads current files on each navigation and works without internet access. See [the browser guide](docs/web.md).
 
 Decide. Only humans validate, and every decision is signed (`git config user.name`, or `-author`) and justified:
 
@@ -66,4 +69,5 @@ The knowledge base is made of plain YAML files under `.raun/`. You review and ve
 
 - [docs/agents.md](docs/agents.md): agent command protocol and report contract.
 - [docs/format.md](docs/format.md): knowledge files, status rules, run manifests.
+- [docs/web.md](docs/web.md): local browser usage and resource generation.
 - [AGENTS.md](AGENTS.md): conventions for contributors and coding agents.
