@@ -57,7 +57,7 @@ func NewHandler(root string, options Options) (http.Handler, error) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 		// Refuse DNS rebinding and requests initiated by another website.
 		host := r.Host
 		if name, _, err := net.SplitHostPort(host); err == nil {
@@ -158,6 +158,8 @@ func serveAsset(w http.ResponseWriter, r *http.Request) {
 		contentType = "text/css; charset=utf-8"
 	case "htmx.min.js", "app.js":
 		contentType = "text/javascript; charset=utf-8"
+	case "geist-latin.woff2", "geist-latin-ext.woff2", "geist-mono.woff2":
+		contentType = "font/woff2"
 	default:
 		http.NotFound(w, r)
 		return

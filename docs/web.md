@@ -105,8 +105,10 @@ submissions return `303` to the detail GET, while HTMX receives `200` and
 [`HX-Redirect`](https://htmx.org/headers/hx-redirect/). Only the GET detail URL is
 added to history after a decision.
 
-CSS and JavaScript are embedded and served under `/assets/`. No CDN, external
-font or internet access is required at runtime. No route exposes repository
+CSS, JavaScript and fonts are embedded and served under `/assets/`. No CDN, external
+font or internet access is required at runtime. The Content Security Policy allows
+only same-origin scripts, stylesheets, images and fonts; inline styles and scripts
+are refused. No route exposes repository
 files or raw `.raun/` files. File content is escaped by templ. GET and HEAD are
 read-only; the only write routes are `POST /knowledge/{id}/accept` and
 `POST /knowledge/{id}/reject`. They use a random server-specific CSRF token and
@@ -157,6 +159,10 @@ upstream component registry. Their MIT license is in `internal/web/licenses/`.
 HTMX is the unchanged upstream `dist/htmx.min.js` from tag `v2.0.11`, SHA-256
 `d6fdc75f204e6bdefa99b69bf1e6d4ac69b8a364f77929f45c13476b4000f717`.
 Its license and Tailwind's license are retained alongside the component license.
+The Geist and Geist Mono fonts are the Geist 1.5.0 files shipped with the pinned
+shadcn-templ assets: Geist's variable latin and latin-ext subsets, and the complete
+variable Geist Mono (its subsets only provide weight 400). Their SIL Open Font
+License is in `internal/web/licenses/geist.txt`.
 `assets/app.js` handles focus, announcements and browser cache restoration.
 
 ## Verification

@@ -98,6 +98,8 @@ func TestHTTP(t *testing.T) {
 		{"unknown asset", "GET", "/assets/server.go", nil, 404, "404", false},
 		{"css", "GET", "/assets/app.css", nil, 200, ".cn-card", false},
 		{"js", "GET", "/assets/htmx.min.js", nil, 200, "htmx", false},
+		{"font", "GET", "/assets/geist-latin.woff2", nil, 200, "wOF2", false},
+		{"mono font", "GET", "/assets/geist-mono.woff2", nil, 200, "wOF2", false},
 		{"cross site", "GET", "/knowledge", map[string]string{"Sec-Fetch-Site": "cross-site"}, 403, "Local access only", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -111,6 +113,10 @@ func TestHTTP(t *testing.T) {
 			}
 			if w.Header().Get("Cache-Control") != "no-store" {
 				t.Fatal("page can be cached")
+			}
+			// Embedded fonts only; inline styles and scripts stay forbidden.
+			if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "font-src 'self'") || !strings.Contains(csp, "style-src 'self';") {
+				t.Fatalf("CSP = %q", csp)
 			}
 			if tt.method == "HEAD" && w.Body.Len() != 0 {
 				t.Fatal("HEAD has body")
