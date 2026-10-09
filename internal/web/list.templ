@@ -1,0 +1,192 @@
+package web
+
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/kvitrvn/raun/internal/web/ui"
+)
+
+templ listColumn(m pageModel) {
+	<section class="list-column" aria-labelledby="list-title">
+		<div class="list-header">
+			<div class="list-heading">
+				<h1 id="list-title">{ viewTitle(m.Filters.Status) }</h1>
+				<span class="list-subtitle">{ m.listSubtitle() }</span>
+			</div>
+			@progress(m.Counts)
+			@searchForm(m)
+			@ui.TabsList(ui.TabsDefault, "Status", "status-tabs") {
+				@statusTab(m, statusPending, "Awaiting", m.Counts.Pending)
+				@statusTab(m, "validated", "Validated", m.Counts.status("validated"))
+				@statusTab(m, "rejected", "Rejected", m.Counts.status("rejected"))
+				@statusTab(m, statusAll, "All", m.Counts.Total)
+			}
+		</div>
+		<div class="list-scroll" data-list-scroll>
+			if len(m.Items) == 0 {
+				{{ title, text, showAll := m.emptyList() }}
+				@ui.Empty("list-empty") {
+					@ui.EmptyMedia("") {
+						@ui.Icon("inbox", ui.IconProps{Size: 18})
+					}
+					@ui.EmptyTitle("") {
+						{ title }
+					}
+					@ui.EmptyDescription("") {
+						{ text }
+					}
+					if showAll {
+						@ui.Button(ui.ButtonProps{Variant: ui.ButtonOutline, Size: ui.ButtonSizeSm, Href: filters{Status: statusAll, Page: 1}.url(m.selectedID()), Class: "list-empty-action"}) {
+							Show all knowledge
+						}
+					}
+				}
+			} else {
+				@ui.ItemGroup("list-items", templ.Attributes{"aria-label": "Knowledge items"}) {
+					for _, it := range m.Items {
+						@ui.Item(m.Filters.url(it.ID), m.Item != nil && it.ID == m.Item.ID, "list-row", templ.Attributes{"id": "row-" + it.ID, "data-row": it.ID}) {
+							@ui.ItemHeader("") {
+								<span class={ "status-dot list-item-dot tone-" + string(it.Status) } title={ statusLabel(it.Status) }></span>
+								<span class="sr-only">{ statusLabel(it.Status) }:</span>
+								@ui.ItemTitle("") {
+									{ it.Title }
+								}
+								if it.HasUnresolvedDisagreement() {
+									<span class="list-item-warning" title="Unresolved disagreement">
+										@ui.Icon("triangle-alert", ui.IconProps{Size: 14})
+										<span class="sr-only">Unresolved disagreement</span>
+									</span>
+								}
+							}
+							@ui.ItemDescription("") {
+								{ businessText(it) }
+							}
+							@ui.ItemFooter("") {
+								@ui.Icon(typeIcon(it.Type), ui.IconProps{Size: 12})
+								<span>{ it.ID }</span>
+								<span aria-hidden="true">·</span>
+								<span>{ itemMeta(it) }</span>
+							}
+						}
+					}
+				}
+			}
+			if m.Pages > 1 {
+				{{
+					previous, next := "", ""
+					if m.Filters.Page > 1 {
+						previous = m.Filters.pageURL(m.selectedID(), m.Filters.Page-1)
+					}
+					if m.Filters.Page < m.Pages {
+						next = m.Filters.pageURL(m.selectedID(), m.Filters.Page+1)
+					}
+				}}
+				@ui.Pagination(previous, next, fmt.Sprintf("Page %d of %d", m.Filters.Page, m.Pages))
+			}
+		</div>
+		<div class="list-footer" data-kbd-hint>
+			@ui.KbdGroup("list-footer-hint") {
+				@ui.Kbd(ui.KbdMuted, ui.KbdSizeSm, "") {
+					J
+				}
+				@ui.Kbd(ui.KbdMuted, ui.KbdSizeSm, "") {
+					K
+				}
+				navigate
+			}
+			@ui.KbdGroup("list-footer-hint") {
+				@ui.Kbd(ui.KbdMuted, ui.KbdSizeSm, "") {
+					V
+				}
+				validate
+			}
+			@ui.KbdGroup("list-footer-hint") {
+				@ui.Kbd(ui.KbdMuted, ui.KbdSizeSm, "") {
+					X
+				}
+				reject
+			}
+		</div>
+	</section>
+}
+
+templ progress(c *counts) {
+	<div class="progress">
+		<div class="progress-bar" data-slot="progress" data-progress>
+			for _, s := range c.Statuses {
+				if s.Count > 0 {
+					<span
+						class={ "progress-segment tone-" + string(s.Status) + " grow-" + strconv.Itoa(s.Grow) }
+						title={ statusLabel(s.Status) + ": " + strconv.Itoa(s.Count) }
+						data-status={ string(s.Status) }
+						data-grow={ strconv.Itoa(s.Grow) }
+					></span>
+				}
+			}
+		</div>
+		<div class="progress-labels">
+			<span>{ fmt.Sprintf("%d of %d decided", c.Decided, c.Total) }</span>
+			<span>
+				if c.Blocked > 0 {
+					{ fmt.Sprintf("%d blocked by a disagreement", c.Blocked) }
+				}
+			</span>
+		</div>
+	</div>
+}
+
+templ searchForm(m pageModel) {
+	{{
+		action := "/knowledge"
+		if m.Item != nil {
+			action = itemURL(m.Item.ID)
+		}
+	}}
+	<form action={ templ.SafeURL(action) } method="get" role="search" class="list-search">
+		@ui.InputGroup("search-group") {
+			@ui.InputGroupAddon("inline-start", "search-icon") {
+				@ui.Icon("search", ui.IconProps{Size: 15})
+			}
+			@ui.InputGroupInput("search-input", templ.Attributes{
+				"id":             "q",
+				"name":           "q",
+				"type":           "search",
+				"value":          m.Filters.Query,
+				"placeholder":    "Search titles, IDs, statements",
+				"aria-label":     "Search knowledge",
+				"autocomplete":   "off",
+				"hx-get":         action,
+				"hx-trigger":     "input changed delay:200ms, search",
+				"hx-include":     "closest form",
+				"hx-push-url":    "false",
+				"hx-replace-url": "true",
+			})
+			@ui.InputGroupAddon("inline-end", "search-kbd") {
+				@ui.Kbd(ui.KbdMuted, "", "") {
+					/
+				}
+			}
+		}
+		if m.Filters.Type != "" {
+			<input type="hidden" name="type" value={ m.Filters.Type }/>
+		}
+		if m.Filters.Status != statusPending {
+			<input type="hidden" name="status" value={ m.Filters.Status }/>
+		}
+	</form>
+}
+
+templ statusTab(m pageModel, status, label string, count int) {
+	@ui.TabsTrigger(m.Filters.withStatus(status).url(m.selectedID()), currentIf(m.Filters.Status == status, "page"), "", nil) {
+		{ label }
+		<span class="tab-count">{ strconv.Itoa(count) }</span>
+	}
+}
+
+func currentIf(active bool, value string) string {
+	if active {
+		return value
+	}
+	return ""
+}

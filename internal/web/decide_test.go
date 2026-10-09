@@ -183,7 +183,7 @@ func TestDecisionDisagreementsAndTerminalStatuses(t *testing.T) {
 	_, store, h := setup(t, true)
 	it := fixture(t, "requirement")
 	body := request(h, "GET", itemURL(it.ID), nil).Body.String()
-	assertContains(t, body, "raun resolve "+it.ID+" p1", `disabled`, "Rejection remains available")
+	assertContains(t, body, "raun resolve "+it.ID+` p1 -note &#34;...&#34; [-position N]`, `disabled`, "Resolve p1 to validate", `aria-describedby="decision-blocked"`)
 	v := decisionForm(t, h, it.ID)
 	w := postDecision(h, itemURL(it.ID)+"/accept", v, nil)
 	if w.Code != 422 {
@@ -314,7 +314,7 @@ func TestDecisionAuthor(t *testing.T) {
 	}
 	assertContains(t, request(h, "GET", itemURL(it.ID), nil).Body.String(), `name="author" value=""`)
 	repo.Git("config", "user.name", "Git reviewer")
-	assertContains(t, request(h, "GET", itemURL(it.ID), nil).Body.String(), `name="author" value="Git reviewer"`)
+	assertContains(t, request(h, "GET", itemURL(it.ID), nil).Body.String(), `name="author" value="Git reviewer"`, "Signed as Git reviewer")
 	v := decisionForm(t, h, it.ID)
 	v.Set("author", "Different reviewer")
 	if w := postDecision(h, itemURL(it.ID)+"/accept", v, nil); w.Code != 303 {
@@ -399,5 +399,96 @@ func TestDecisionRejectsQueryAndEscapesRetainedFields(t *testing.T) {
 	assertContains(t, w.Body.String(), "query fields are not accepted", "&lt;/textarea&gt;&lt;script&gt;")
 	if strings.Contains(w.Body.String(), payload) {
 		t.Fatal("unescaped form input")
+	}
+}
+
+func TestDecisionNext(t *testing.T) {
+	_, store, h := setup(t, true)
+	other := fixture(t, "persona")
+	other.ID = "persona-aaaaaa"
+	if err := store.Save(other); err != nil {
+		t.Fatal(err)
+	}
+	// The form leads to the next pending item of the displayed list.
+	body := request(h, "GET", "/knowledge/persona-aaaaaa?q=a&type=persona", nil).Body.String()
+	assertContains(t, body, `name="next" value="/knowledge/persona-k3x9q2?q=a&amp;type=persona"`)
+	for _, hx := range []bool{false, true} {
+		for _, tt := range []struct {
+			next, want string
+			status     int
+		}{
+			{"/knowledge/requirement-8fz2mc?status=all&page=1", "/knowledge/requirement-8fz2mc?status=all", 0},
+			{"/knowledge/persona-k3x9q2?q=a+%26+b", "/knowledge/persona-k3x9q2?q=a+%26+b", 0},
+			{"https://evil.example/knowledge/persona-k3x9q2", "", 422},
+			{"//evil.example/knowledge/persona-k3x9q2", "", 422},
+			{"/knowledge/persona-k3x9q2/accept", "", 422},
+			{"/assets/app.js", "", 422},
+			{"/knowledge/persona-k3x9q2?actor=human", "", 422},
+			{"/knowledge/persona-k3x9q2?status=unknown", "", 422},
+		} {
+			t.Run(tt.next+map[bool]string{true: "/htmx", false: "/html"}[hx], func(t *testing.T) {
+				_, store, h := setup(t, true)
+				v := decisionForm(t, h, "persona-k3x9q2")
+				v.Set("next", tt.next)
+				headers := map[string]string{}
+				if hx {
+					headers["HX-Request"] = "true"
+				}
+				w := postDecision(h, itemURL("persona-k3x9q2")+"/reject", v, headers)
+				got, err := store.Get("persona-k3x9q2")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if tt.status != 0 {
+					if w.Code != tt.status || got.Status != knowledge.StatusProposed {
+						t.Fatalf("status=%d item=%s", w.Code, got.Status)
+					}
+					assertContains(t, w.Body.String(), "next:", `id="error-summary"`, v.Get("reason"))
+					return
+				}
+				redirect := w.Header().Get("Location")
+				if hx {
+					redirect = w.Header().Get("HX-Redirect")
+				}
+				if redirect != tt.want || got.Status != knowledge.StatusRejected {
+					t.Fatalf("redirect=%q status=%s", redirect, got.Status)
+				}
+			})
+		}
+	}
+	v := decisionForm(t, h, "persona-k3x9q2")
+	v.Add("next", "/knowledge/persona-k3x9q2")
+	v.Add("next", "/knowledge/persona-aaaaaa")
+	if w := postDecision(h, itemURL("persona-k3x9q2")+"/reject", v, nil); w.Code != 422 || !strings.Contains(w.Body.String(), "form.next: duplicate") {
+		t.Fatalf("duplicate next: %d", w.Code)
+	}
+}
+
+func TestDecisionForm(t *testing.T) {
+	_, _, h := setup(t, true)
+	body := request(h, "GET", "/knowledge/requirement-8fz2mc", nil).Body.String()
+	// The first submit button is disabled: Enter in the author field never decides.
+	first := regexp.MustCompile(`<button[^>]*type="submit"[^>]*>`).FindString(body)
+	if !strings.Contains(first, "decision-default") || !strings.Contains(first, "disabled") {
+		t.Fatalf("first submit button: %s", first)
+	}
+	assertContains(t, body, `formaction="/knowledge/requirement-8fz2mc/reject"`, `data-action="validate"`, `title="Unresolved disagreements block validation"`, `required`, `placeholder="Why do you validate or reject this proposal? Recorded in history."`)
+	// Decided items offer no form; a rejected item offers the reopen command.
+	_, store, h := setup(t, true)
+	for _, status := range []knowledge.Status{knowledge.StatusValidated, knowledge.StatusRejected} {
+		it := fixture(t, "persona")
+		it.Status = status
+		it.History = append(it.History, knowledge.Event{At: time.Date(2026, 10, 8, 10, 2, 0, 0, time.UTC), Actor: knowledge.ActorHuman, By: "Léa Martin", From: knowledge.StatusProposed, To: status, Reason: "Checked."})
+		if err := store.Save(it); err != nil {
+			t.Fatal(err)
+		}
+		body := request(h, "GET", itemURL(it.ID), nil).Body.String()
+		assertContains(t, body, statusLabel(status)+" by Léa Martin · Oct 8, 2026 · 10:02 UTC", "decision-terminal")
+		if strings.Contains(body, `name="reason"`) {
+			t.Fatal("decided item offers a form")
+		}
+		if (status == knowledge.StatusRejected) != strings.Contains(body, `raun reopen persona-k3x9q2 -reason &#34;...&#34;`) {
+			t.Fatalf("%s: reopen command", status)
+		}
 	}
 }

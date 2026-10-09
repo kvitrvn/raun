@@ -1,0 +1,28 @@
+// Adapted from shadcn-templ v2.0.0-beta.13 (MIT): components/input,
+// inputgroup and textarea. See ../licenses/shadcn-templ.txt and ../../../docs/web.md.
+package ui
+
+templ Input(class string, attrs templ.Attributes) {
+	<input data-slot="input" class={ cn("cn-input", class) } { attrs... }/>
+}
+
+templ InputGroup(class string) {
+	<div data-slot="input-group" role="group" class={ cn("cn-input-group", class) }>
+		{ children... }
+	</div>
+}
+
+// InputGroupAddon aligns "inline-start", "inline-end" or "block-end".
+templ InputGroupAddon(align, class string) {
+	<div data-slot="input-group-addon" data-align={ align } class={ cn("cn-input-group-addon", class) }>
+		{ children... }
+	</div>
+}
+
+templ InputGroupInput(class string, attrs templ.Attributes) {
+	<input data-slot="input-group-control" class={ cn("cn-input-group-input", class) } { attrs... }/>
+}
+
+templ InputGroupTextarea(class, value string, attrs templ.Attributes) {
+	<textarea data-slot="input-group-control" class={ cn("cn-input-group-textarea", class) } { attrs... }>{ value }</textarea>
+}

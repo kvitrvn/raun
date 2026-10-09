@@ -1,0 +1,38 @@
+// Adapted from shadcn-templ v2.0.0-beta.13 (MIT): components/empty,
+// separator and spinner. See ../licenses/shadcn-templ.txt and ../../../docs/web.md.
+package ui
+
+templ Empty(class string) {
+	<div data-slot="empty" class={ cn("cn-empty", class) }>
+		{ children... }
+	</div>
+}
+
+templ EmptyMedia(class string) {
+	<span data-slot="empty-icon" data-variant="icon" class={ cn("cn-empty-media cn-empty-media-icon", class) }>
+		{ children... }
+	</span>
+}
+
+templ EmptyTitle(class string) {
+	<h2 data-slot="empty-title" class={ cn("cn-empty-title", class) }>
+		{ children... }
+	</h2>
+}
+
+templ EmptyDescription(class string) {
+	<p data-slot="empty-description" class={ cn("cn-empty-description", class) }>
+		{ children... }
+	</p>
+}
+
+templ Separator(orientation, class string) {
+	<span data-slot="separator" role="separator" aria-orientation={ orientation } data-orientation={ orientation } class={ cn("cn-separator", class) }></span>
+}
+
+// Spinner is hidden by default; app.js shows it while a form is submitted.
+templ Spinner(size int, class string) {
+	<span data-slot="spinner" role="status" aria-label="Loading" class={ cn("cn-spinner", class) } hidden>
+		@Icon("loader-circle", IconProps{Size: size})
+	</span>
+}

@@ -49,7 +49,7 @@ raun serve                   # local knowledge browser with human decisions at h
 raun verify                  # re-check every citation; exits 1 if some no longer hold
 ```
 
-The browser provides search, filters, evidence excerpts, disagreements and human decisions. Validate or reject proposals with a required author and reason; unresolved disagreements block validation. Use `raun serve -read-only` for consultation alone. Use `raun serve -dir /path/to/project -port 8081` to choose a project or port; Ctrl+C stops it. It reads current files on each navigation and works without internet access. See [the browser guide](docs/web.md).
+The browser shows the knowledge list and one item side by side, starting with what awaits a decision: search, filters, evidence excerpts, disagreements and human decisions, with keyboard shortcuts and a `⌘K`/`Ctrl+K` palette. Validate or reject proposals with a required author and reason, then move on to the next pending item; unresolved disagreements block validation. Use `raun serve -read-only` for consultation alone. Use `raun serve -dir /path/to/project -port 8081` to choose a project or port; Ctrl+C stops it. It reads current files on each navigation and works without internet access. See [the browser guide](docs/web.md).
 
 Decide. Only humans validate, and every decision is signed (`git config user.name`, or `-author`) and justified:
 

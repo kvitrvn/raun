@@ -1,0 +1,16 @@
+// Adapted from shadcn-templ v2.0.0-beta.13 (MIT): components/pagination.
+// See ../licenses/shadcn-templ.txt and ../../../docs/web.md.
+package ui
+
+// Pagination keeps native link semantics and visible text on small screens.
+templ Pagination(previous, next, label string) {
+	<nav aria-label="Pagination" data-slot="pagination" class="cn-pagination">
+		if previous != "" {
+			<a href={ templ.SafeURL(previous) } data-slot="pagination-link" rel="prev" class="cn-button cn-button-variant-outline cn-button-size-sm">Previous</a>
+		}
+		<span data-slot="pagination-label" class="cn-pagination-label">{ label }</span>
+		if next != "" {
+			<a href={ templ.SafeURL(next) } data-slot="pagination-link" rel="next" class="cn-button cn-button-variant-outline cn-button-size-sm">Next</a>
+		}
+	</nav>
+}

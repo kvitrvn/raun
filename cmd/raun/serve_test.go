@@ -117,7 +117,7 @@ func TestServeInterrupt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != 200 || !strings.Contains(string(body), "No knowledge yet") {
+	if response.StatusCode != 200 || !strings.Contains(string(body), "Nothing here yet") {
 		t.Errorf("page: %s", body)
 	}
 	if err := cmd.Process.Signal(os.Interrupt); err != nil {

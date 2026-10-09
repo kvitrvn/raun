@@ -1,0 +1,29 @@
+// Adapted from shadcn-templ v2.0.0-beta.13 (MIT): components/breadcrumb.
+// See ../licenses/shadcn-templ.txt and ../../../docs/web.md.
+package ui
+
+templ Breadcrumb(class string) {
+	<nav data-slot="breadcrumb" aria-label="Breadcrumb" class={ cn("cn-breadcrumb", class) }>
+		<ol data-slot="breadcrumb-list" class="cn-breadcrumb-list">
+			{ children... }
+		</ol>
+	</nav>
+}
+
+templ BreadcrumbItem(class string) {
+	<li data-slot="breadcrumb-item" class={ cn("cn-breadcrumb-item", class) }>
+		{ children... }
+	</li>
+}
+
+templ BreadcrumbPage(class string) {
+	<span data-slot="breadcrumb-page" aria-current="page" class={ cn("cn-breadcrumb-page", class) }>
+		{ children... }
+	</span>
+}
+
+templ BreadcrumbSeparator() {
+	<li data-slot="breadcrumb-separator" role="presentation" aria-hidden="true" class="cn-breadcrumb-separator">
+		@Icon("chevron-right", IconProps{Size: 14})
+	</li>
+}

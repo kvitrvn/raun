@@ -1,0 +1,48 @@
+// Adapted from shadcn-templ v2.0.0-beta.13 (MIT): components/item.
+// See ../licenses/shadcn-templ.txt and ../../../docs/web.md.
+package ui
+
+templ ItemGroup(class string, attrs templ.Attributes) {
+	<div data-slot="item-group" class={ cn("cn-item-group", class) } { attrs... }>
+		{ children... }
+	</div>
+}
+
+// Item is a link; current marks the selected item with aria-current="page".
+templ Item(href string, current bool, class string, attrs templ.Attributes) {
+	<a
+		href={ templ.SafeURL(href) }
+		data-slot="item"
+		if current {
+			aria-current="page"
+		}
+		class={ cn("cn-item", class) }
+		{ attrs... }
+	>
+		{ children... }
+	</a>
+}
+
+templ ItemHeader(class string) {
+	<span data-slot="item-header" class={ cn("cn-item-header", class) }>
+		{ children... }
+	</span>
+}
+
+templ ItemTitle(class string) {
+	<span data-slot="item-title" class={ cn("cn-item-title", class) }>
+		{ children... }
+	</span>
+}
+
+templ ItemDescription(class string) {
+	<span data-slot="item-description" class={ cn("cn-item-description", class) }>
+		{ children... }
+	</span>
+}
+
+templ ItemFooter(class string) {
+	<span data-slot="item-footer" class={ cn("cn-item-footer", class) }>
+		{ children... }
+	</span>
+}

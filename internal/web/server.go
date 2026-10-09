@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
 
@@ -101,36 +102,76 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 		h.render(w, r, http.StatusInternalServerError, pageModel{Title: "Cannot read knowledge", Error: err.Error()})
 		return
 	}
-	h.render(w, r, http.StatusOK, listModel(items, f))
+	m, err := h.shell(items, f, nil)
+	if err != nil {
+		h.render(w, r, http.StatusInternalServerError, pageModel{Title: "Cannot read knowledge", Error: err.Error()})
+		return
+	}
+	h.render(w, r, http.StatusOK, m)
 }
 
 func (h *handler) detail(w http.ResponseWriter, r *http.Request) {
+	f, err := parseFilters(r.URL.Query())
+	if err != nil {
+		h.render(w, r, http.StatusBadRequest, pageModel{Title: "Invalid filters", Error: err.Error()})
+		return
+	}
 	items, err := h.load()
 	if err != nil {
 		h.render(w, r, http.StatusInternalServerError, pageModel{Title: "Cannot read knowledge", Error: err.Error()})
 		return
 	}
-	for _, it := range items {
-		if it.ID == r.PathValue("id") {
-			m := pageModel{Title: it.Title, Item: it, Links: relatedItems(it, items)}
-			if !h.readOnly && canDecide(it.Status) {
-				revision, err := knowledge.Revision(it)
-				if err != nil {
-					h.render(w, r, http.StatusInternalServerError, pageModel{Title: "Cannot read knowledge", Error: err.Error()})
-					return
-				}
-				m.Decision = &decisionModel{ID: it.ID, CSRF: h.csrf, Revision: revision, Author: h.defaultAuthor(r.Context())}
-			}
-			h.render(w, r, http.StatusOK, m)
-			return
-		}
+	id := r.PathValue("id")
+	i := slices.IndexFunc(items, func(it *knowledge.Item) bool { return it.ID == id })
+	if i < 0 {
+		m := listModel(items, f)
+		m.Title, m.Explicit, m.NotFound = "Knowledge item not found", true, fmt.Sprintf("No knowledge item with ID %q.", id)
+		h.render(w, r, http.StatusNotFound, m)
+		return
 	}
-	h.render(w, r, http.StatusNotFound, pageModel{Title: "Knowledge item not found", Error: fmt.Sprintf("No knowledge item with ID %q.", r.PathValue("id"))})
+	m, err := h.shell(items, f, items[i])
+	if err != nil {
+		h.render(w, r, http.StatusInternalServerError, pageModel{Title: "Cannot read knowledge", Error: err.Error()})
+		return
+	}
+	h.render(w, r, http.StatusOK, m)
+}
+
+// shell lists items with f and details it, by default the first listed item.
+// The decision form of a pending item leads to the next one awaiting a decision.
+func (h *handler) shell(items []*knowledge.Item, f filters, it *knowledge.Item) (pageModel, error) {
+	m := listModel(items, f)
+	m.Explicit = it != nil
+	if it == nil {
+		if len(m.Items) == 0 {
+			return m, nil
+		}
+		it = m.Items[0]
+	} else {
+		m.Title = it.Title
+	}
+	m.Item, m.Links = it, relatedItems(it, items)
+	if !h.readOnly && canDecide(it.Status) {
+		revision, err := knowledge.Revision(it)
+		if err != nil {
+			return m, err
+		}
+		next, page := nextPending(items, f, it.ID)
+		m.Decision = &decisionModel{ID: it.ID, CSRF: h.csrf, Revision: revision, Next: f.withPage(page).url(next)}
+	}
+	return m, nil
 }
 
 func (h *handler) render(w http.ResponseWriter, r *http.Request, status int, m pageModel) {
 	m.Project = h.project
 	m.ReadOnly = h.readOnly
+	// The Host header was checked to name the loopback address.
+	m.Host = r.Host
+	m.Author = h.defaultAuthor(r.Context())
+	// A new form proposes the Git author; a rejected submission keeps its own.
+	if d := m.Decision; d != nil && d.Error == "" {
+		d.Author = m.Author
+	}
 	var b bytes.Buffer
 	component := document(m)
 	if r.Header.Get("HX-Request") == "true" && r.Header.Get("HX-History-Restore-Request") != "true" {

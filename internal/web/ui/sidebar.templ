@@ -1,0 +1,81 @@
+// Adapted from shadcn-templ v2.0.0-beta.13 (MIT): components/sidebar and sheet.
+// Below the desktop breakpoint the sidebar is an off-canvas sheet. Without
+// JavaScript it opens through the #sidebar fragment (:target).
+// See ../licenses/shadcn-templ.txt and ../../../docs/web.md.
+package ui
+
+templ Sidebar(label string) {
+	<aside id="sidebar" data-slot="sidebar" aria-label={ label } class="cn-sidebar">
+		{ children... }
+	</aside>
+	<a href="#" data-slot="sheet-overlay" class="cn-sheet-overlay" aria-label="Close navigation" hx-boost="false"></a>
+}
+
+templ SidebarHeader(class string) {
+	<div data-slot="sidebar-header" class={ cn("cn-sidebar-header", class) }>
+		{ children... }
+	</div>
+}
+
+templ SidebarContent(label string) {
+	<nav data-slot="sidebar-content" aria-label={ label } class="cn-sidebar-content">
+		{ children... }
+	</nav>
+}
+
+templ SidebarGroup() {
+	<div data-slot="sidebar-group" class="cn-sidebar-group">
+		{ children... }
+	</div>
+}
+
+templ SidebarGroupLabel(id string) {
+	<div data-slot="sidebar-group-label" id={ id } class="cn-sidebar-group-label">
+		{ children... }
+	</div>
+}
+
+templ SidebarMenu(labelledBy string) {
+	<ul data-slot="sidebar-menu" aria-labelledby={ labelledBy } class="cn-sidebar-menu">
+		{ children... }
+	</ul>
+}
+
+templ SidebarMenuItem() {
+	<li data-slot="sidebar-menu-item" class="cn-sidebar-menu-item">
+		{ children... }
+	</li>
+}
+
+templ SidebarMenuButton(href string, active bool) {
+	<a
+		href={ templ.SafeURL(href) }
+		data-slot="sidebar-menu-button"
+		if active {
+			data-active
+			aria-current="true"
+		}
+		class="cn-sidebar-menu-button"
+	>
+		{ children... }
+	</a>
+}
+
+templ SidebarMenuBadge() {
+	<span data-slot="sidebar-menu-badge" class="cn-sidebar-menu-badge">
+		{ children... }
+	</span>
+}
+
+templ SidebarFooter(class string) {
+	<div data-slot="sidebar-footer" class={ cn("cn-sidebar-footer", class) }>
+		{ children... }
+	</div>
+}
+
+// SidebarTrigger toggles the sidebar with JavaScript and opens the sheet without it.
+templ SidebarTrigger() {
+	<a href="#sidebar" data-slot="sidebar-trigger" aria-controls="sidebar" aria-label="Toggle sidebar" hx-boost="false" class="cn-button cn-button-variant-ghost cn-button-size-icon cn-sidebar-trigger">
+		@Icon("panel-left")
+	</a>
+}

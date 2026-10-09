@@ -1,0 +1,90 @@
+// Adapted from shadcn-templ v2.0.0-beta.13 (MIT): components/command, dialog,
+// hovercard and toast. Behavior is provided by ../assets/app.js; the dialog is
+// a native <dialog>. See ../licenses/shadcn-templ.txt and ../../../docs/web.md.
+package ui
+
+templ CommandDialog(id, label string) {
+	<dialog id={ id } data-slot="command-dialog" aria-label={ label } class="cn-command-dialog">
+		<div data-slot="command" class="cn-command">
+			{ children... }
+		</div>
+	</dialog>
+}
+
+templ CommandInput(listID, placeholder string) {
+	<div data-slot="command-input-wrapper" class="cn-command-input-wrapper">
+		@Icon("search", IconProps{Size: 15, Class: "cn-command-input-icon"})
+		<input
+			data-slot="command-input"
+			type="text"
+			role="combobox"
+			aria-autocomplete="list"
+			aria-expanded="true"
+			aria-controls={ listID }
+			aria-label={ placeholder }
+			autocomplete="off"
+			spellcheck="false"
+			placeholder={ placeholder }
+			class="cn-command-input"
+		/>
+		{ children... }
+	</div>
+}
+
+templ CommandList(id, label string) {
+	<div id={ id } data-slot="command-list" role="listbox" aria-label={ label } class="cn-command-list">
+		{ children... }
+	</div>
+}
+
+// CommandEmpty is shown by app.js when no item matches; it names the query.
+templ CommandEmpty() {
+	<p data-slot="command-empty" class="cn-command-empty" hidden></p>
+}
+
+templ CommandGroup(id, heading string) {
+	<div data-slot="command-group" role="presentation" class="cn-command-group">
+		<div data-slot="command-group-heading" id={ id } aria-hidden="true" class="cn-command-group-heading">{ heading }</div>
+		<div role="group" aria-labelledby={ id }>
+			{ children... }
+		</div>
+	</div>
+}
+
+// CommandItem is a link; app.js filters items on their data-value.
+templ CommandItem(href, value string) {
+	<a href={ templ.SafeURL(href) } data-slot="command-item" data-value={ value } role="option" aria-selected="false" class="cn-command-item">
+		{ children... }
+	</a>
+}
+
+templ CommandFooter() {
+	<div data-slot="command-footer" class="cn-command-footer">
+		{ children... }
+	</div>
+}
+
+// HoverCardContent receives a citation preview cloned by app.js.
+templ HoverCardContent(id string) {
+	<div id={ id } data-slot="hover-card-content" role="tooltip" class="cn-hover-card-content" hidden></div>
+}
+
+// Toaster renders the notification region and the toast app.js fills.
+templ Toaster(class string) {
+	<div data-slot="toast-viewport" role="region" aria-label="Notifications" class={ cn("cn-toast-viewport", class) }>
+		<template data-slot="toast-template">
+			<div data-slot="toast" role="status" class="cn-toast">
+				<span data-slot="toast-icon" data-tone="validated" class="cn-toast-icon tone-validated">
+					@Icon("circle-check", IconProps{Size: 18})
+				</span>
+				<span data-slot="toast-icon" data-tone="rejected" class="cn-toast-icon tone-rejected">
+					@Icon("circle-x", IconProps{Size: 18})
+				</span>
+				<span data-slot="toast-content" class="cn-toast-content">
+					<span data-slot="toast-title" class="cn-toast-title"></span>
+					<span data-slot="toast-description" class="cn-toast-description"></span>
+				</span>
+			</div>
+		</template>
+	</div>
+}

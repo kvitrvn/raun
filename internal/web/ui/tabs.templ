@@ -1,0 +1,32 @@
+// Adapted from shadcn-templ v2.0.0-beta.13 (MIT): components/tabs.
+// The browser's tabs navigate (filters, page sections), so they are links in a
+// <nav> marked with aria-current rather than ARIA tab panels.
+// See ../licenses/shadcn-templ.txt and ../../../docs/web.md.
+package ui
+
+const (
+	TabsDefault = "default"
+	TabsLine    = "line"
+)
+
+templ TabsList(variant, label, class string) {
+	<nav data-slot="tabs-list" aria-label={ label } class={ cn("cn-tabs-list cn-tabs-list-variant-"+variant, class) }>
+		{ children... }
+	</nav>
+}
+
+// TabsTrigger is active when current is a non-empty aria-current value.
+templ TabsTrigger(href string, current string, class string, attrs templ.Attributes) {
+	<a
+		href={ templ.SafeURL(href) }
+		data-slot="tabs-trigger"
+		if current != "" {
+			aria-current={ current }
+			data-active
+		}
+		class={ cn("cn-tabs-trigger", class) }
+		{ attrs... }
+	>
+		{ children... }
+	</a>
+}

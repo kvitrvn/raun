@@ -1,0 +1,152 @@
+package web
+
+import "github.com/kvitrvn/raun/internal/web/ui"
+
+// decisionDock is the sticky bar at the bottom of the detail column.
+templ decisionDock(m pageModel) {
+	{{ it := m.Item }}
+	<div class="decision-dock">
+		<div class="decision-dock-inner">
+			if m.ReadOnly {
+				<div class="decision-readonly">
+					@ui.Icon("lock", ui.IconProps{Size: 15})
+					Read-only consultation. Human decisions are disabled on this server.
+				</div>
+			} else if d := m.Decision; d != nil {
+				@decisionPanel(m, d)
+			} else if !canDecide(it.Status) {
+				<div class={ "decision-terminal tone-" + string(it.Status) }>
+					<span class="decision-terminal-icon">
+						if it.Status == "validated" {
+							@ui.Icon("circle-check", ui.IconProps{Size: 18})
+						} else {
+							@ui.Icon("circle-x", ui.IconProps{Size: 18})
+						}
+					</span>
+					<div class="decision-terminal-text">
+						<span class="decision-terminal-title">{ terminalTitle(it) }</span>
+						<span class="decision-terminal-note">{ terminalText(it) }</span>
+					</div>
+					if it.Status == "rejected" {
+						<span class="reopen-chip" data-copy={ reopenCommand(it) } data-copy-label="Copy reopen command" title={ reopenCommand(it) }>
+							@ui.Icon("copy", ui.IconProps{Size: 12, Class: "copy-icon-idle"})
+							@ui.Icon("check", ui.IconProps{Size: 12, Class: "copy-icon-done"})
+							raun reopen …
+						</span>
+					}
+				</div>
+			}
+		</div>
+	</div>
+}
+
+// decisionPanel starts with a disabled default button: implicit submission
+// (Enter in the author field) must never record a decision.
+templ decisionPanel(m pageModel, d *decisionModel) {
+	{{
+		var blocking []string
+		title := m.Title
+		if m.Item != nil {
+			blocking, title = blockingPoints(m.Item), m.Item.Title
+		}
+		blocked := len(blocking) > 0
+	}}
+	<form
+		method="post"
+		action={ templ.SafeURL(itemURL(d.ID) + "/accept") }
+		hx-push-url="false"
+		hx-sync="this:drop"
+		aria-label="Human decision"
+		aria-describedby="decision-help"
+		class="decision-form"
+		data-decision
+		data-title={ title }
+		if blocked {
+			data-blocked
+		}
+		if d.Error != "" {
+			data-invalid
+		}
+	>
+		<input type="hidden" name="csrf" value={ d.CSRF }/>
+		<input type="hidden" name="revision" value={ d.Revision }/>
+		<input type="hidden" name="next" value={ d.Next }/>
+		<p id="decision-help" class="sr-only">Author and reason are required. Submitting records your decision and its reason in the history.</p>
+		<button type="submit" class="decision-default" disabled hidden aria-hidden="true" tabindex="-1"></button>
+		@ui.InputGroup("decision-group") {
+			@ui.InputGroupTextarea("decision-reason", d.Reason, templ.Attributes{
+				"id":          "decision-reason",
+				"name":        "reason",
+				"rows":        "1",
+				"required":    true,
+				"placeholder": "Why do you validate or reject this proposal? Recorded in history.",
+				"aria-label":  "Reason (required)",
+			})
+			if d.Error != "" {
+				<div id="error-summary" class="decision-error" role="alert" tabindex="-1" autofocus>
+					<strong>Unable to complete decision</strong>
+					<span class="decision-error-message">{ d.Error }</span>
+					if d.Blocked {
+						<a href={ templ.SafeURL(itemURL(d.ID)) }>Reload and review this item before deciding again</a>
+					}
+				</div>
+			}
+			<p class="decision-error" data-decision-error role="alert" hidden></p>
+			@ui.InputGroupAddon("block-end", "decision-actions") {
+				<label class="decision-author">
+					@ui.Icon("user-round", ui.IconProps{Size: 13})
+					<input id="decision-author" name="author" value={ d.Author } autocomplete="name" required aria-label="Author (required)" class="decision-author-input"/>
+				</label>
+				if blocked {
+					<a href="#sec-points" id="decision-blocked" class="decision-blocked" hx-boost="false">
+						@ui.Icon("lock", ui.IconProps{Size: 12})
+						{ blockedLabel(blocking) }
+					</a>
+				}
+				<span class="detail-spacer"></span>
+				@ui.Button(ui.ButtonProps{
+					Variant:  ui.ButtonOutline,
+					Type:     "submit",
+					Class:    "decision-reject",
+					Disabled: d.Blocked,
+					Attrs:    templ.Attributes{"formaction": itemURL(d.ID) + "/reject", "data-action": "reject"},
+				}) {
+					<span class="button-icon">
+						@ui.Icon("x", ui.IconProps{Size: 15})
+					</span>
+					@ui.Spinner(15, "button-spinner")
+					Reject
+					@ui.Kbd(ui.KbdMuted, ui.KbdSizeSm, "") {
+						X
+					}
+				}
+				@ui.Button(ui.ButtonProps{
+					Type:     "submit",
+					Class:    "decision-validate",
+					Disabled: d.Blocked || blocked,
+					Attrs:    validateAttrs(blocked),
+				}) {
+					<span class="button-icon">
+						@ui.Icon("check", ui.IconProps{Size: 15})
+					</span>
+					@ui.Spinner(15, "button-spinner")
+					Validate
+					@ui.Kbd(ui.KbdInverse, ui.KbdSizeSm, "") {
+						@ui.ModKey("↵")
+					}
+				}
+			}
+		}
+	</form>
+}
+
+func validateAttrs(blocked bool) templ.Attributes {
+	attrs := templ.Attributes{"data-action": "validate"}
+	if blocked {
+		attrs["title"] = "Unresolved disagreements block validation"
+		attrs["aria-describedby"] = "decision-blocked"
+	} else {
+		attrs["title"] = "Validate proposal (⌘↵)"
+	}
+	return attrs
+}

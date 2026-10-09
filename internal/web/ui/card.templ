@@ -1,0 +1,49 @@
+// Adapted from shadcn-templ v2.0.0-beta.13 (MIT): components/card.
+// See ../licenses/shadcn-templ.txt and ../../../docs/web.md.
+package ui
+
+type CardProps struct {
+	// Article renders an <article> instead of a <div>.
+	Article bool
+	ID      string
+	Class   string
+	Attrs   templ.Attributes
+}
+
+templ Card(p CardProps) {
+	if p.Article {
+		<article
+			if p.ID != "" {
+				id={ p.ID }
+			}
+			data-slot="card"
+			class={ cn("cn-card", p.Class) }
+			{ p.Attrs... }
+		>
+			{ children... }
+		</article>
+	} else {
+		<div
+			if p.ID != "" {
+				id={ p.ID }
+			}
+			data-slot="card"
+			class={ cn("cn-card", p.Class) }
+			{ p.Attrs... }
+		>
+			{ children... }
+		</div>
+	}
+}
+
+templ CardHeader(class string) {
+	<div data-slot="card-header" class={ cn("cn-card-header", class) }>
+		{ children... }
+	</div>
+}
+
+templ CardTitle(class string) {
+	<h3 data-slot="card-title" class={ cn("cn-card-title", class) }>
+		{ children... }
+	</h3>
+}

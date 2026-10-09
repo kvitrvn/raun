@@ -134,7 +134,7 @@ func TestHTTP(t *testing.T) {
 func TestDetailContentAndLinks(t *testing.T) {
 	_, store, h := setup(t, true)
 	body := request(h, "GET", "/knowledge/requirement-8fz2mc", nil).Body.String()
-	assertContains(t, body, "An invoice cannot be edited once issued.", "Legal immutability", `href="/knowledge/persona-k3x9q2"`, "Position 1", "Position 2", "Issued invoices are never editable.", "Admins can edit within 24 hours.", `href="#evidence-e1"`, `id="evidence-e1"`, "Recorded state:", "verified", "billing/invoice.go", "3f1c2a9b8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b", `aria-hidden="true">40</span>`, "Unresolved")
+	assertContains(t, body, "An invoice cannot be edited once issued.", "Legal immutability", `href="/knowledge/persona-k3x9q2"`, "Position 1", "Position 2", "Issued invoices are never editable.", "Admins can edit within 24 hours.", `href="#evidence-e1"`, `id="evidence-e1"`, `data-state="verified"`, "Recorded states", "verified", "billing/invoice.go", "3f1c2a9b8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b", `aria-hidden="true">40</span>`, "Unresolved")
 	body = request(h, "GET", "/knowledge/persona-k3x9q2", nil).Body.String()
 	assertContains(t, body, "Hypothesis", "Administrators are internal support staff.", `href="/knowledge/requirement-8fz2mc"`, "Goals", "Capabilities")
 	it := fixture(t, "requirement")
@@ -147,7 +147,10 @@ func TestDetailContentAndLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	body = request(h, "GET", itemURL(it.ID), nil).Body.String()
-	assertContains(t, body, "Missing reference: persona-zzzzzz", "Human resolution", "Keep the correction window.", "Kept position 2", "Confirmed by the owner.", "human · Reviewer", "Issued invoices are never editable.", "Admins can edit within 24 hours.")
+	assertContains(t, body, "data-missing", "Missing reference", "persona-zzzzzz", "Resolved by Reviewer · Oct 9, 2026 · 10:00 UTC · Kept position 2", "Keep the correction window.", "Confirmed by the owner.", `data-actor="human" title="Human decision">R</span>`, "Contested →", "Issued invoices are never editable.", "Admins can edit within 24 hours.")
+	if strings.Contains(body, "raun resolve "+it.ID+" p1") {
+		t.Error("resolved point still offers its command")
+	}
 }
 
 func TestRecordedStatusesAndSources(t *testing.T) {
@@ -164,7 +167,7 @@ func TestRecordedStatusesAndSources(t *testing.T) {
 					t.Fatal(err)
 				}
 				body := request(h, "GET", itemURL(it.ID), nil).Body.String()
-				assertContains(t, body, string(status), string(state), "Source: "+string(source), "does not verify evidence")
+				assertContains(t, body, "tone-"+string(status), statusLabel(status), `data-state="`+string(state)+`"`, `<span class="evidence-source">`+string(source)+"</span>", sourceIcons[source], "viewing does not re-verify")
 			}
 		}
 	}
@@ -206,7 +209,11 @@ func TestReadOnlyRefreshAndErrors(t *testing.T) {
 
 func TestEmptyAndEscaping(t *testing.T) {
 	_, store, h := setup(t, false)
-	assertContains(t, request(h, "GET", "/knowledge", nil).Body.String(), "No knowledge yet")
+	body := request(h, "GET", "/knowledge", nil).Body.String()
+	assertContains(t, body, "Nothing here yet", "Run an analysis from the CLI")
+	if strings.Contains(body, "Show all knowledge") || strings.Contains(body, `data-detail="`) {
+		t.Fatal("empty base offers a filter or a detail")
+	}
 	it := fixture(t, "persona")
 	payload := `<script>alert("x")</script>`
 	it.Title = payload
@@ -266,4 +273,42 @@ func TestServeCancelled(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertContains(t, out.String(), "http://127.0.0.1:", "Press Ctrl+C")
+}
+
+func TestShell(t *testing.T) {
+	root, store, h := setup(t, true)
+	validated := fixture(t, "persona")
+	validated.ID, validated.Title, validated.Status = "persona-aaaaaa", "Validated persona", knowledge.StatusValidated
+	validated.History = append(validated.History, knowledge.Event{At: time.Date(2026, 10, 8, 9, 0, 0, 0, time.UTC), Actor: knowledge.ActorHuman, By: "Reviewer", From: knowledge.StatusProposed, To: knowledge.StatusValidated, Reason: "Checked."})
+	if err := store.Save(validated); err != nil {
+		t.Fatal(err)
+	}
+	// The list shows the first pending item without naming it in the address.
+	body := request(h, "GET", "/knowledge", nil).Body.String()
+	assertContains(t, body, `data-view="list"`, `data-detail="persona-k3x9q2"`, `id="row-persona-k3x9q2"`, `aria-current="page"`, "Awaiting decision", "2 items", "1 of 3 decided", "1 blocked by a disagreement", "grow-1", `id="command"`, `data-value="persona-aaaaaa Validated persona"`, "Human decisions enabled", "127.0.0.1:8080")
+	if strings.Contains(body, `id="row-persona-aaaaaa"`) {
+		t.Fatal("validated item listed as awaiting a decision")
+	}
+	// Filters keep the displayed item; rows keep the filters.
+	body = request(h, "GET", "/knowledge/requirement-8fz2mc?status=all&type=persona", nil).Body.String()
+	assertContains(t, body, `data-view="detail"`, `data-detail="requirement-8fz2mc"`, `id="row-persona-aaaaaa"`, `href="/knowledge/persona-aaaaaa?status=all&amp;type=persona"`, `href="/knowledge/requirement-8fz2mc?status=all"`, `<input type="hidden" name="status" value="all">`, "Personas · 2 items")
+	if strings.Contains(body, `id="row-requirement-8fz2mc"`) {
+		t.Fatal("filtered list includes a requirement")
+	}
+	// A missing item keeps the list and explains in the detail column.
+	w := request(h, "GET", "/knowledge/persona-zzzzzz?status=all", nil)
+	assertContains(t, w.Body.String(), `id="row-persona-aaaaaa"`, `id="error-summary"`, `No knowledge item with ID &#34;persona-zzzzzz&#34;.`, `href="/knowledge?status=all"`)
+	for _, path := range []string{"/knowledge", "/knowledge/requirement-8fz2mc", "/knowledge/persona-zzzzzz", "/knowledge?q=nothing"} {
+		body := request(h, "GET", path, nil).Body.String()
+		// The Content Security Policy refuses inline styles.
+		if strings.Contains(body, " style=") {
+			t.Fatalf("%s: inline style", path)
+		}
+	}
+	readOnly, err := NewHandler(root, Options{ReadOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = request(readOnly, "GET", "/knowledge/requirement-8fz2mc", nil).Body.String()
+	assertContains(t, body, `data-mode="read-only"`, "Read-only consultation. Human decisions are disabled on this server.")
 }

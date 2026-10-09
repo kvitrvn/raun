@@ -19,7 +19,12 @@ import (
 
 type decisionModel struct {
 	ID, CSRF, Revision, Author, Reason, Error string
-	Blocked                                   bool
+	// Next is the address shown after a successful decision.
+	Next    string
+	Blocked bool
+	// next and filters are the validated Next.
+	next    string
+	filters filters
 }
 
 func canDecide(status knowledge.Status) bool {
@@ -44,7 +49,7 @@ func (h *handler) decide(to knowledge.Status) http.HandlerFunc {
 			h.render(w, r, http.StatusForbidden, pageModel{Title: "Read-only consultation", Error: "Human decisions are disabled on this server."})
 			return
 		}
-		d := &decisionModel{ID: r.PathValue("id"), CSRF: h.csrf}
+		d := &decisionModel{ID: r.PathValue("id"), CSRF: h.csrf, filters: filters{Status: statusPending, Page: 1}}
 		status, err := h.parseDecision(w, r, d)
 		if err != nil {
 			h.decisionError(w, r, d, status, err)
@@ -69,12 +74,16 @@ func (h *handler) decide(to knowledge.Status) http.HandlerFunc {
 			h.decisionError(w, r, d, status, err)
 			return
 		}
+		target := itemURL(d.ID)
+		if d.next != "" {
+			target = d.filters.url(d.next)
+		}
 		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("HX-Redirect", itemURL(d.ID))
+			w.Header().Set("HX-Redirect", target)
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		http.Redirect(w, r, itemURL(d.ID), http.StatusSeeOther)
+		http.Redirect(w, r, target, http.StatusSeeOther)
 	}
 }
 
@@ -85,7 +94,7 @@ func (h *handler) parseDecision(w http.ResponseWriter, r *http.Request, d *decis
 		return http.StatusUnprocessableEntity, errors.New("form: expected application/x-www-form-urlencoded")
 	}
 	err = r.ParseForm()
-	d.Author, d.Reason, d.Revision = r.PostForm.Get("author"), r.PostForm.Get("reason"), r.PostForm.Get("revision")
+	d.Author, d.Reason, d.Revision, d.Next = r.PostForm.Get("author"), r.PostForm.Get("reason"), r.PostForm.Get("revision"), r.PostForm.Get("next")
 	if err != nil {
 		d.Blocked = true
 		return http.StatusUnprocessableEntity, fmt.Errorf("form: cannot read submission (maximum 64 KiB): %w", err)
@@ -98,13 +107,20 @@ func (h *handler) parseDecision(w http.ResponseWriter, r *http.Request, d *decis
 	}
 	for _, field := range slices.Sorted(maps.Keys(r.PostForm)) {
 		switch field {
-		case "csrf", "revision", "author", "reason":
+		case "csrf", "revision", "author", "reason", "next":
 		default:
 			return http.StatusUnprocessableEntity, fmt.Errorf("form.%s: unknown field", field)
 		}
 		if len(r.PostForm[field]) != 1 {
 			return http.StatusUnprocessableEntity, fmt.Errorf("form.%s: duplicate field", field)
 		}
+	}
+	if d.Next != "" {
+		next, f, err := parseNext(d.Next)
+		if err != nil {
+			return http.StatusUnprocessableEntity, err
+		}
+		d.next, d.filters = next, f
 	}
 	revision, err := hex.DecodeString(d.Revision)
 	if err != nil || len(revision) != 32 {
@@ -123,9 +139,11 @@ func (h *handler) parseDecision(w http.ResponseWriter, r *http.Request, d *decis
 func (h *handler) decisionError(w http.ResponseWriter, r *http.Request, d *decisionModel, status int, err error) {
 	d.Error = err.Error()
 	d.Blocked = d.Blocked || status != http.StatusUnprocessableEntity
-	m := pageModel{Title: "Cannot record decision", Decision: d}
+	m := pageModel{Title: "Cannot record decision", Decision: d, Filters: d.filters}
 	items, loadErr := h.load()
 	if loadErr == nil {
+		m = listModel(items, d.filters)
+		m.Title, m.Decision, m.Explicit = "Cannot record decision", d, true
 		for _, it := range items {
 			if it.ID == d.ID {
 				m.Title, m.Item, m.Links = it.Title, it, relatedItems(it, items)

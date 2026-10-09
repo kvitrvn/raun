@@ -1,0 +1,390 @@
+package web
+
+import (
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/kvitrvn/raun/internal/knowledge"
+	"github.com/kvitrvn/raun/internal/web/ui"
+)
+
+templ detailColumn(m pageModel) {
+	<section class="detail-column" aria-label="Knowledge detail">
+		<div class="detail-scroll" data-detail-scroll>
+			if m.NotFound != "" {
+				<div class="detail detail-error">
+					<a href={ templ.SafeURL(m.Filters.url("")) } class="detail-back">← { viewTitle(m.Filters.Status) }</a>
+					<h2 class="detail-title">{ m.Title }</h2>
+					<p id="error-summary" role="alert" tabindex="-1" autofocus class="detail-error-message">{ m.NotFound }</p>
+					<a href={ templ.SafeURL(m.Filters.url("")) }>Return to knowledge</a>
+				</div>
+			} else if m.Item != nil {
+				@detail(m)
+			} else if m.Decision != nil {
+				<div class="detail">
+					<h2 class="detail-title">{ m.Title }</h2>
+				</div>
+			}
+		</div>
+		if m.NotFound == "" && (m.Item != nil || m.Decision != nil) {
+			@decisionDock(m)
+		}
+		@ui.Toaster("detail-toaster")
+	</section>
+}
+
+templ detail(m pageModel) {
+	{{ it := m.Item }}
+	<div class="detail" data-detail={ it.ID }>
+		<a href={ templ.SafeURL(m.Filters.url("")) } class="detail-back">← { viewTitle(m.Filters.Status) }</a>
+		<header class="detail-header">
+			<div class="detail-meta">
+				<span class="detail-type">
+					@ui.Icon(typeIcon(it.Type), ui.IconProps{Size: 14})
+					{ typeLabel(it.Type) }
+				</span>
+				if r := it.Requirement; r != nil {
+					<span class="detail-kind">{ string(r.Kind) }</span>
+				}
+				<span class="detail-spacer"></span>
+				@ui.Badge(ui.BadgeProps{Tone: string(it.Status), Class: "badge-status"}) {
+					@ui.BadgeDot("")
+					{ statusLabel(it.Status) }
+				}
+			</div>
+			<h2 class="detail-title">{ it.Title }</h2>
+			<p class="detail-text">{ businessText(it) }</p>
+			<div class="detail-copy">
+				@copyChip("copy-chip copy-chip-id", it.ID, "Copy ID") {
+					{ it.ID }
+				}
+				@copyChip("copy-chip copy-chip-path", yamlPath(it), "Copy file path") {
+					{ yamlPath(it) }
+				}
+			</div>
+		</header>
+		@ui.TabsList(ui.TabsLine, "Sections", "section-tabs") {
+			@sectionTab("overview", "Overview", 0, false)
+			@sectionTab("interp", "Interpretations", len(it.Support), false)
+			@sectionTab("evidence", "Evidence", len(it.Evidence), false)
+			@sectionTab("points", "Open points", unresolvedPoints(it), it.HasUnresolvedDisagreement())
+			@sectionTab("history", "History", len(it.History), false)
+		}
+		@overview(m)
+		@interpretations(it)
+		@evidence(it)
+		@openPoints(it)
+		@history(it)
+	</div>
+}
+
+// copyChip shows text that app.js makes copyable; without JavaScript it is plain text.
+templ copyChip(class, value, label string) {
+	<span class={ class } data-copy={ value } data-copy-label={ label } title={ label }>
+		{ children... }
+		<span class="copy-icon" data-copy-icon>
+			@ui.Icon("copy", ui.IconProps{Size: 12, Class: "copy-icon-idle"})
+			@ui.Icon("check", ui.IconProps{Size: 12, Class: "copy-icon-done"})
+		</span>
+	</span>
+}
+
+templ sectionTab(key, label string, count int, warn bool) {
+	@ui.TabsTrigger("#sec-"+key, currentIf(key == "overview", "location"), "section-tab", templ.Attributes{"data-section": key, "hx-boost": "false"}) {
+		{ label }
+		if count > 0 {
+			<span
+				class="section-count"
+				if warn {
+					data-warn
+				}
+			>{ strconv.Itoa(count) }</span>
+		}
+	}
+}
+
+templ overview(m pageModel) {
+	{{ it := m.Item }}
+	<section id="sec-overview" class="detail-section detail-overview" aria-label="Overview">
+		if p := it.Persona; p != nil {
+			<div class="overview-cards">
+				@ui.Card(ui.CardProps{Class: "overview-card"}) {
+					@ui.CardTitle("section-label") {
+						Goals
+					}
+					<ul class="overview-list">
+						for _, goal := range p.Goals {
+							<li>
+								@ui.Icon("target", ui.IconProps{Size: 15, Class: "overview-goal-icon"})
+								<span>{ goal }</span>
+							</li>
+						}
+					</ul>
+				}
+				@ui.Card(ui.CardProps{Class: "overview-card"}) {
+					@ui.CardTitle("section-label") {
+						Capabilities
+					}
+					<ul class="overview-list">
+						for _, capability := range p.Capabilities {
+							<li>
+								@ui.Icon("check", ui.IconProps{Size: 15, Class: "overview-capability-icon"})
+								<span>{ capability }</span>
+							</li>
+						}
+					</ul>
+				}
+			</div>
+		}
+		if r := it.Requirement; r != nil && r.Rationale != "" {
+			<div class="overview-block overview-rationale">
+				<h3 class="section-label">Rationale</h3>
+				<p class="prose-text">{ r.Rationale }</p>
+			</div>
+		}
+		<div class="overview-block overview-links">
+			<h3 class="section-label">
+				if it.Persona != nil {
+					Associated requirements
+				} else {
+					Personas
+				}
+			</h3>
+			if len(m.Links) == 0 {
+				<p class="muted">None recorded.</p>
+			}
+			<div class="link-chips">
+				for _, link := range m.Links {
+					if link.Missing {
+						<span class="link-chip" data-missing>
+							<span class="status-dot link-chip-dot tone-invalid"></span>
+							Missing reference
+							<span class="link-chip-id">{ link.ID }</span>
+						</span>
+					} else {
+						<a href={ templ.SafeURL(m.Filters.url(link.ID)) } class="link-chip">
+							<span class={ "status-dot link-chip-dot tone-" + string(link.Status) } title={ statusLabel(link.Status) }></span>
+							{ link.Title }
+							<span class="link-chip-id">{ link.ID }</span>
+						</a>
+					}
+				}
+			</div>
+		</div>
+	</section>
+}
+
+templ interpretations(it *knowledge.Item) {
+	<section id="sec-interp" class="detail-section" aria-labelledby="interp-heading">
+		<div class="section-heading">
+			<h3 id="interp-heading">Agent interpretations</h3>
+			<span class="section-note">{ agentCount(it) }</span>
+		</div>
+		for _, s := range it.Support {
+			@ui.Card(ui.CardProps{Article: true, Class: "interpretation"}) {
+				<div class="interpretation-meta">
+					<span class="agent-chip">
+						@ui.Icon("bot", ui.IconProps{Size: 14})
+						{ s.Agent }
+					</span>
+					if s.Nature == knowledge.NatureHypothesis {
+						@ui.Badge(ui.BadgeProps{Variant: ui.BadgeOutline, Class: "badge-nature", Attrs: templ.Attributes{"data-nature": "hypothesis"}}) {
+							Hypothesis
+						}
+					} else {
+						@ui.Badge(ui.BadgeProps{Variant: ui.BadgeOutline, Class: "badge-nature", Attrs: templ.Attributes{"data-nature": "supported"}}) {
+							Supported
+						}
+					}
+					<span class="detail-spacer"></span>
+					<span class="mono-meta">{ s.Run } · { s.Interpretation }</span>
+				</div>
+				<p class="interpretation-statement">{ s.Statement }</p>
+				if len(s.Observations) == 0 {
+					<p class="interpretation-note">Declared as an inference — no observation cited.</p>
+				}
+				<ul class="observations">
+					for _, o := range s.Observations {
+						<li class="observation">
+							<span class="observation-statement">{ o.Statement }</span>
+							@citations(o.Evidence)
+						</li>
+					}
+				</ul>
+			}
+		}
+	</section>
+}
+
+templ citations(ids []string) {
+	<span class="citations">
+		for _, id := range ids {
+			<a href={ templ.SafeURL(evidenceURL(id)) } class="cite" data-cite={ id } aria-describedby="evidence-preview" hx-boost="false">{ id }</a>
+		}
+	</span>
+}
+
+templ evidence(it *knowledge.Item) {
+	<section id="sec-evidence" class="detail-section" aria-labelledby="evidence-heading">
+		<div class="section-heading section-heading-wrap">
+			<h3 id="evidence-heading">Evidence</h3>
+			<span class="section-note">Recorded states — viewing does not re-verify. Run <code class="inline-code">raun verify</code> to check again.</span>
+		</div>
+		for _, e := range it.Evidence {
+			@ui.Card(ui.CardProps{Article: true, ID: "evidence-" + e.ID, Class: "evidence", Attrs: templ.Attributes{"tabindex": "-1", "data-evidence": e.ID}}) {
+				<div class="evidence-header">
+					<span class="evidence-id">{ e.ID }</span>
+					<span class="evidence-source-icon" title={ string(e.Source) }>
+						@ui.Icon(sourceIcons[e.Source], ui.IconProps{Size: 14})
+					</span>
+					<span class="evidence-path">{ e.Path }<span class="evidence-range">:{ evidenceRange(e) }</span></span>
+					<span class="detail-spacer"></span>
+					<span class="evidence-source">{ string(e.Source) }</span>
+					@ui.Badge(ui.BadgeProps{Tone: string(e.State), Class: "badge-evidence", Attrs: templ.Attributes{"title": evidenceHelp[e.State], "data-state": string(e.State)}}) {
+						@ui.BadgeDot("")
+						{ string(e.State) }
+					}
+					<span class="commit-chip" data-copy={ e.Commit } data-copy-label="Copy commit" title={ e.Commit }>
+						@ui.Icon("git-commit-horizontal", ui.IconProps{Size: 13})
+						<span class="sr-only">Commit </span>
+						{ shortCommit(e.Commit) }
+					</span>
+				</div>
+				<pre class="excerpt" role="region" aria-label={ "Excerpt " + e.ID } tabindex="0"><code>
+					for _, line := range excerptLines(e, 0) {
+						<span class="excerpt-line"><span class="excerpt-number" aria-hidden="true">{ strconv.Itoa(line.Number) }</span><span class="excerpt-text">{ line.Text }</span>{ "\n" }</span>
+					}
+				</code></pre>
+			}
+		}
+	</section>
+}
+
+templ openPoints(it *knowledge.Item) {
+	<section id="sec-points" class="detail-section" aria-labelledby="points-heading">
+		<h3 id="points-heading" class="section-title">Open points</h3>
+		if len(it.OpenPoints) == 0 {
+			<p class="muted">No open points recorded.</p>
+		}
+		for _, p := range it.OpenPoints {
+			@ui.Card(ui.CardProps{Article: true, ID: "point-" + p.ID, Class: "point", Attrs: blockedAttrs(blocks(p))}) {
+				<div class="point-header">
+					<span class="point-icon">
+						@ui.Icon(pointIcons[p.Kind])
+					</span>
+					<span class="point-kind">{ pointLabels[p.Kind] }</span>
+					<span class="point-id">{ p.ID }</span>
+					<span class="detail-spacer"></span>
+					if blocks(p) {
+						@ui.Badge(ui.BadgeProps{Tone: "blocked", Class: "badge-blocks"}) {
+							@ui.Icon("lock", ui.IconProps{Size: 12})
+							Blocks validation
+						}
+					}
+					@ui.Badge(ui.BadgeProps{Variant: ui.BadgeOutline, Class: "badge-point-state"}) {
+						if p.Unresolved() {
+							Unresolved
+						} else {
+							Resolved
+						}
+					}
+				</div>
+				<p class="point-summary">{ p.Summary }</p>
+				if p.RaisedBy != "" {
+					<p class="point-raised">Raised by { raisedBy(p) }</p>
+				}
+				if len(p.Positions) > 0 {
+					<div class="positions">
+						for i, position := range p.Positions {
+							<div class="position">
+								<div class="position-header">
+									<span class="position-number">{ strconv.Itoa(i + 1) }</span>
+									<span class="position-label">Position { strconv.Itoa(i + 1) }</span>
+								</div>
+								<p class="position-statement">{ position.Statement }</p>
+								<div class="position-footer">
+									<span class="agent-chip agent-chip-sm" title={ "Run " + position.Run }>
+										@ui.Icon("bot", ui.IconProps{Size: 12})
+										{ strings.Join(position.Agents, ", ") }
+									</span>
+									@citations(position.Evidence)
+								</div>
+							</div>
+						}
+					</div>
+				}
+				if r := p.Resolution; r != nil {
+					<div class="resolution">
+						<span class="resolution-head">{ resolutionHead(r) }</span>
+						<span class="resolution-note">{ r.Note }</span>
+					</div>
+				} else {
+					@commandLine(resolveCommand(it, p))
+				}
+			}
+		}
+	</section>
+}
+
+func blockedAttrs(blocked bool) templ.Attributes {
+	if blocked {
+		return templ.Attributes{"data-blocks": true}
+	}
+	return nil
+}
+
+templ commandLine(cmd string) {
+	<div class="command-line">
+		<span class="command-prompt" aria-hidden="true">$</span>
+		<code class="command-text" tabindex="0">{ cmd }</code>
+		<span class="command-copy" data-copy={ cmd } data-copy-label="Copy command" data-copy-text>
+			@ui.Icon("copy", ui.IconProps{Size: 12, Class: "copy-icon-idle"})
+			@ui.Icon("check", ui.IconProps{Size: 12, Class: "copy-icon-done"})
+			<span class="copy-text-idle">Copy</span>
+			<span class="copy-text-done">Copied</span>
+		</span>
+	</div>
+}
+
+templ history(it *knowledge.Item) {
+	<section id="sec-history" class="detail-section detail-history" aria-labelledby="history-heading">
+		<h3 id="history-heading" class="section-title">History</h3>
+		<ol class="history">
+			for _, e := range newestFirst(it.History) {
+				<li class="history-event">
+					<div class="history-rail">
+						if e.Actor == knowledge.ActorHuman {
+							<span class="history-avatar" data-actor="human" title="Human decision">{ initials(e.By) }</span>
+						} else {
+							<span class="history-avatar" data-actor="run" title="Analysis run">
+								@ui.Icon("bot", ui.IconProps{Size: 13})
+							</span>
+						}
+						<span class="history-line"></span>
+					</div>
+					<div class="history-body">
+						<div class="history-row">
+							<span class="history-by">{ e.By }</span>
+							<span class="history-transition">
+								if e.From != "" {
+									{ statusLabel(e.From) } →
+								} else {
+									Created as
+								}
+								<span class={ "history-to tone-" + string(e.To) }>
+									<span class="status-dot history-to-dot"></span>
+									{ statusLabel(e.To) }
+								</span>
+							</span>
+							<time class="history-at" datetime={ e.At.UTC().Format(time.RFC3339) }>{ formatTime(e.At) }</time>
+						</div>
+						if e.Reason != "" {
+							<p class="history-reason">“{ e.Reason }”</p>
+						}
+					</div>
+				</li>
+			}
+		</ol>
+	</section>
+}

@@ -1,0 +1,42 @@
+// Adapted from shadcn-templ v2.0.0-beta.13 (MIT): components/badge.
+// See ../licenses/shadcn-templ.txt and ../../../docs/web.md.
+package ui
+
+type BadgeVariant string
+
+const (
+	// BadgeTone fills the badge with the colors of its tone-* class.
+	BadgeTone    BadgeVariant = "tone"
+	BadgeOutline BadgeVariant = "outline"
+)
+
+type BadgeProps struct {
+	Variant BadgeVariant
+	// Tone is a tone-* class suffix: a knowledge status, an evidence state or "blocked".
+	Tone  string
+	Class string
+	Attrs templ.Attributes
+}
+
+func (p BadgeProps) class() string {
+	variant := p.Variant
+	if variant == "" {
+		variant = BadgeTone
+	}
+	tone := ""
+	if p.Tone != "" {
+		tone = "tone-" + p.Tone
+	}
+	return cn("cn-badge cn-badge-variant-"+string(variant), tone, p.Class)
+}
+
+templ Badge(p BadgeProps) {
+	<span data-slot="badge" class={ p.class() } { p.Attrs... }>
+		{ children... }
+	</span>
+}
+
+// BadgeDot is the status dot inside a tone badge.
+templ BadgeDot(class string) {
+	<span data-slot="badge-dot" class={ cn("cn-badge-dot", class) } aria-hidden="true"></span>
+}

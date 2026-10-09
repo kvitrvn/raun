@@ -34,7 +34,7 @@ internal/prompt      embedded prompt templates; the output contract is always ap
 internal/consolidate plans (identity or lead grouping) -> knowledge items; anonymized lead input
 internal/run         run pipeline and manifest
 internal/report      Markdown view of the knowledge base (`raun report`); never read back
-internal/web         local knowledge browser and human decisions; embedded templ/CSS/JS (`raun serve`)
+internal/web         local knowledge browser and human decisions; embedded templ/CSS/JS/fonts (`raun serve`)
 internal/gittest     fixture repositories for tests (ignores user Git config)
 internal/agenttest   fake agent (the test binary itself) and matching fixture project
 docs/agents.md       agent command protocol and report contract

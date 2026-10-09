@@ -1,0 +1,37 @@
+// Adapted from shadcn-templ v2.0.0-beta.13 (MIT): components/kbd.
+// See ../licenses/shadcn-templ.txt and ../../../docs/web.md.
+package ui
+
+const (
+	KbdMuted   = "muted"
+	KbdInverse = "inverse"
+	KbdOutline = "outline"
+	KbdSizeSm  = "sm"
+)
+
+// Kbd shows a keyboard shortcut. Shortcuts need JavaScript, so hints are
+// hidden until app.js marks the document as enhanced. A "mod" key is rendered
+// as ⌘ and replaced by Ctrl+ outside Apple platforms.
+templ Kbd(variant, size, class string) {
+	<kbd data-slot="kbd" class={ cn("cn-kbd cn-kbd-variant-"+variant, sizeClass(size), class) }>
+		{ children... }
+	</kbd>
+}
+
+templ KbdGroup(class string) {
+	<span data-slot="kbd-group" class={ cn("cn-kbd-group", class) }>
+		{ children... }
+	</span>
+}
+
+// ModKey renders the platform modifier followed by key, as one text run.
+templ ModKey(key string) {
+	<span data-mod-key={ key }>{ "⌘" + key }</span>
+}
+
+func sizeClass(size string) string {
+	if size == "" {
+		return ""
+	}
+	return "cn-kbd-size-" + size
+}
