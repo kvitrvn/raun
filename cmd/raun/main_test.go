@@ -40,12 +40,28 @@ func TestInitThenCheck(t *testing.T) {
 	}
 }
 
+func TestCheckRejectsVersion1(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".raun"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	v1 := "version: 1\ntypes: [persona]\nanalysis:\n  agents:\n    - id: a\n      runner: { argv: [agent] }\n"
+	if err := os.WriteFile(filepath.Join(dir, ".raun", "config.yaml"), []byte(v1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, errOut := runCLI(t, "check", "-dir", dir)
+	if code != 1 || !strings.Contains(errOut, "version: must be 2, got 1") {
+		t.Errorf("exit = %d, stderr = %q", code, errOut)
+	}
+}
+
 func TestCheckReportsFieldPaths(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".raun"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	bad := "version: 1\ntypes: [persona]\nanalysis:\n  agents:\n    - id: a\n      runner: { argv: [] }\n"
+	bad := "version: 2\ntypes: [persona]\nanalysis:\n  agents:\n    - id: a\n      runner: { argv: [] }\n"
 	if err := os.WriteFile(filepath.Join(dir, ".raun", "config.yaml"), []byte(bad), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -58,7 +58,7 @@ const validReport = `{
 var allTypes = []knowledge.Type{knowledge.TypePersona, knowledge.TypeRequirement}
 
 func TestParseReportValid(t *testing.T) {
-	r, raw, err := ParseReport([]byte("log line\n"+validReport+"\n"), allTypes)
+	r, raw, err := ParseReport([]byte("log line\n"+validReport+"\n"), allTypes, false)
 	if err != nil {
 		t.Fatalf("ParseReport() error = %v", err)
 	}
@@ -92,7 +92,7 @@ func TestParseReportInvalid(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			report := strings.Replace(validReport, tt.replace[0], tt.replace[1], 1)
-			_, _, err := ParseReport([]byte(report), tt.types)
+			_, _, err := ParseReport([]byte(report), tt.types, false)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("ParseReport() error = %v, want it to contain %q", err, tt.want)
 			}
@@ -120,13 +120,23 @@ func TestCommandRunner(t *testing.T) {
 	}
 
 	start := time.Now()
-	_, err = CommandRunner{Argv: []string{"sh", "-c", "sleep 30 & sleep 30"}}.
+	out, err = CommandRunner{Argv: []string{"sh", "-c", "echo partial; sleep 30 & sleep 30"}}.
 		Run(ctx, Request{Dir: dir, Timeout: 200 * time.Millisecond})
-	if !errors.Is(err, ErrTimeout) {
-		t.Errorf("error = %v, want ErrTimeout", err)
+	if !errors.Is(err, ErrTimeout) || string(out.Stdout) != "partial\n" {
+		t.Errorf("error = %v, stdout = %q; want ErrTimeout and the output printed before", err, out.Stdout)
 	}
 	if elapsed := time.Since(start); elapsed > 3*time.Second {
 		t.Errorf("timeout took %s: child processes were not killed", elapsed)
+	}
+
+	start = time.Now()
+	out, err = CommandRunner{Argv: []string{"sh", "-c", "yes; sleep 30"}}.
+		Run(ctx, Request{Dir: dir, MaxOutputBytes: 1000})
+	if !errors.Is(err, ErrOutputTooLarge) || len(out.Stdout) != 1000 {
+		t.Errorf("error = %v, stdout length = %d; want ErrOutputTooLarge and 1000 bytes", err, len(out.Stdout))
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Errorf("output cap took %s: the agent was not stopped", elapsed)
 	}
 
 	if _, err := (CommandRunner{Argv: []string{"raun-no-such-command"}}).Run(ctx, Request{Dir: dir}); err == nil {

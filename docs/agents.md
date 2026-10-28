@@ -5,6 +5,7 @@ Raun does not call LLM providers itself. An agent is a command that you configur
 ## Configuration
 
 ```yaml
+version: 2
 language: en                 # language agents write knowledge in
 analysis:
   quorum: 2
@@ -15,12 +16,17 @@ analysis:
         kind: command
         argv: ["my-agent", "--json"]
         timeout: 20m
+        max_output_bytes: 16777216  # default 16 MiB; 0 = no limit
+        report_retries: 1           # default 1; 0 = never ask again
+        report_grace: 2m            # default 2m; 0 = no retry after a timeout
     - id: beta
       runner: { kind: command, argv: ["my-other-agent"], timeout: 20m }
 lead:                          # required with several analysts
   instructions: builtin:lead
   runner: { kind: command, argv: ["my-agent", "--json"], timeout: 20m }
 ```
+
+The configuration format is version 2. Raun refuses a version 1 file: set `version: 2`, the rest of a version 1 file is still valid.
 
 Analysts run in parallel and independently. When several reports are valid, the lead consolidates them. A run with a single valid report skips the lead and creates one item per interpretation. If fewer than `quorum` reports are valid, or if the lead fails, the run fails and writes nothing to the knowledge base.
 
@@ -31,15 +37,40 @@ Analysts run in parallel and independently. When several reports are valid, the 
 | | |
 |---|---|
 | stdin | The full prompt (Markdown). |
-| stdout | One JSON object: the report. Logs and Markdown fences around it are tolerated; Raun takes the last top-level JSON object. |
+| stdout | One JSON object: the report. Logs, Markdown fences and wrappers are tolerated (see [Reading the answer](#reading-the-answer)). At most `runner.max_output_bytes`: an agent that prints more is stopped and fails. |
 | stderr | Free; saved with the run's raw artifacts. |
 | exit code | Must be 0. Anything else counts as a failure. |
 | working directory | A disposable copy of the analyzed commit. |
 | environment | Inherited, plus `RAUN_RUN_ID` and `RAUN_ROLE` (`analyst` or `lead`). |
-| timeout | `runner.timeout`; the whole process group is killed when it expires. |
+| timeout | `runner.timeout`; the whole process group is killed when it expires. What the agent printed before is still read (see [Missing answers](#missing-answers)). |
 
 The working directory is a plain copy of the commit, outside the repository. It contains no `.git` and nothing from `.raun/` except the context files. Agents therefore cannot read the knowledge base, earlier conclusions, or the configuration that would tell them which agents take part. They cannot modify the repository either. Any file an agent changes in its copy is listed in the run manifest (`snapshot_changes`).
 
+
+## Reading the answer
+
+Raun reads an analyst's report and the lead's consolidation the same way:
+
+- Every top-level JSON object in stdout is a candidate. Starting from the last one, the first that has a top-level `version` key is the answer.
+- A candidate without `version` may carry the answer as text in one of its string values: a tool that wraps its final message in a JSON envelope, or a stream of JSON lines whose last message holds the report. Raun searches those strings the same way, a few levels deep. It knows no particular tool.
+- A candidate that does not parse is repaired first. A backslash that starts no valid escape (`\d`, `C:\Users`) is doubled, and raw control characters inside strings are escaped.
+
+The answer found is then decoded strictly and validated as usual. What Raun decoded is saved as `report.json` (or `consolidation.json` for the lead) with the raw artifacts.
+
+## Missing answers
+
+An analyst or the lead that leaves no valid answer is not always lost:
+
+- **Stopped by its timeout.** Raun reads what the agent printed before it was stopped. If that holds a valid answer, it is kept with a warning, and the manifest marks the agent `salvaged: true`. It counts toward the quorum like any other report. If the answer was cut while it was being printed, Raun closes it after its last complete array element and validates the result. An element cut in its middle is dropped.
+- **No valid answer, but something to build one from.** This covers an agent that exits with code 0 having answered in prose, stopped at "now let me write the JSON", or broken the contract, and an agent stopped by its timeout without a usable answer. Raun asks it again, at most `runner.report_retries` times. The retry runs on the same copy of the commit. Its prompt starts with `# Raun report retry` and holds:
+  - the problems found, with their field paths;
+  - the last 64 KiB of what the agent printed;
+  - the original prompt from its `## Project` section on (project facts, knowledge types, the reports for the lead, and the output contract).
+
+  The agent is told not to start over. A retry has the agent's `timeout`, or `report_grace` when the attempt before it was stopped by its timeout, since that timeout is already spent. `report_grace: 0` disables the retry after a timeout. A retry stopped by its timeout is salvaged in the same way.
+- **Failed for good.** An agent that printed almost nothing (under 64 bytes) is not asked again: there is nothing to build an answer from, and the likely cause (a prompt over the model's context window, a refused API call) would not change. Neither is an agent that exits with a non-zero code or exceeds `max_output_bytes`. An interrupted run is not retried either.
+
+The manifest counts the retries in `report_retries`. Retry prompts and outputs are kept with the raw artifacts as `prompt.retry<n>.md`, `stdout.retry<n>.txt` and `stderr.retry<n>.txt`.
 ## Analyst report contract (v1)
 
 ```json
@@ -78,7 +109,7 @@ The working directory is a plain copy of the commit, outside the repository. It 
 - **Questions** are points the agent could not settle. `about` lists interpretation ids, or is empty for project-wide questions.
 - Ids are unique across the report. Unknown fields are rejected.
 
-An invalid report fails the agent, and the run continues if the quorum is still met. `raun run` prints every contract violation with its field path, for example `interpretations[1].requirement.kind: ...`.
+An invalid report fails the agent once its retries are spent (see [Missing answers](#missing-answers)), and the run continues if the quorum is still met. `raun run` prints every contract violation with its field path, for example `interpretations[1].requirement.kind: ...`.
 
 ## What Raun does with a report
 

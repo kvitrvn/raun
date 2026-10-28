@@ -77,39 +77,11 @@ type Question struct {
 	About []string `json:"about"`
 }
 
-// ErrNoJSON reports an output that contains no JSON object.
-var ErrNoJSON = errors.New("no JSON object found in agent output")
-
-// ExtractJSON returns the last top-level JSON object in out. Agents may
-// print logs or wrap the object in a Markdown fence around it.
-func ExtractJSON(out []byte) ([]byte, error) {
-	var last []byte
-	for i := 0; i < len(out); {
-		j := bytes.IndexByte(out[i:], '{')
-		if j < 0 {
-			break
-		}
-		start := i + j
-		dec := json.NewDecoder(bytes.NewReader(out[start:]))
-		var raw json.RawMessage
-		if err := dec.Decode(&raw); err != nil {
-			i = start + 1
-			continue
-		}
-		end := start + int(dec.InputOffset())
-		last = out[start:end]
-		i = end
-	}
-	if last == nil {
-		return nil, ErrNoJSON
-	}
-	return last, nil
-}
-
 // ParseReport extracts, strictly decodes and validates an analyst report.
-// Interpretations must use one of the allowed knowledge types.
-func ParseReport(out []byte, allowed []knowledge.Type) (*Report, []byte, error) {
-	data, err := ExtractJSON(out)
+// Interpretations must use one of the allowed knowledge types. salvage is
+// set for the output of an agent stopped before it finished (see Extract).
+func ParseReport(out []byte, allowed []knowledge.Type, salvage bool) (*Report, []byte, error) {
+	data, err := Extract(out, salvage)
 	if err != nil {
 		return nil, nil, err
 	}

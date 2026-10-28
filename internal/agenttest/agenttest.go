@@ -6,6 +6,7 @@
 package agenttest
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -46,7 +47,36 @@ const (
 	LeadUnknownRef = "lead-unknown-ref"
 	// LeadDrop leaves an interpretation out.
 	LeadDrop = "lead-drop"
+	// LeadDropThenLead leaves an interpretation out, then consolidates
+	// like Lead when asked again.
+	LeadDropThenLead = "lead-drop-then-lead"
+
+	// TimeoutAfterReport prints Report, then hangs until it is stopped.
+	TimeoutAfterReport = "timeout-after-report"
+	// TimeoutTruncated prints Report cut in its second question, then
+	// hangs until it is stopped.
+	TimeoutTruncated = "timeout-truncated"
+	// HangThenReport prints its reasoning and hangs; asked again, it
+	// prints Report.
+	HangThenReport = "hang-then-report"
+	// Backslash prints Report with an unescaped backslash in a statement.
+	Backslash = "backslash"
+	// Envelope prints Report as text inside another JSON object.
+	Envelope = "envelope"
+	// Stream prints JSON lines events, one of which carries Report.
+	Stream = "stream"
+	// ProseThenReport answers in prose, then prints Report when asked
+	// again.
+	ProseThenReport = "prose-then-report"
+	// Silent prints almost nothing.
+	Silent = "silent"
+	// Flood prints a megabyte before Report.
+	Flood = "flood"
 )
+
+// Prose is what ProseThenReport and HangThenReport print instead of a
+// report: long enough to be asked again.
+const Prose = "I have read the billing package and the docs. Now let me write the JSON report with my findings."
 
 // Argv returns the agent command running the fake agent with a scenario.
 func Argv(scenario string) []string {
@@ -64,8 +94,9 @@ func MaybeRun() {
 func fake(scenario string) int {
 	data, _ := io.ReadAll(os.Stdin)
 	prompt := string(data)
-	task := strings.Contains(prompt, "# Raun analysis task") || strings.Contains(prompt, "# Raun consolidation task")
-	if strings.HasPrefix(scenario, Lead) {
+	retry := strings.HasPrefix(prompt, "# Raun report retry")
+	task := retry || strings.Contains(prompt, "# Raun analysis task") || strings.Contains(prompt, "# Raun consolidation task")
+	if strings.HasPrefix(scenario, Lead) && !retry {
 		task = strings.Contains(prompt, "# Raun consolidation task")
 	}
 	if !task || os.Getenv("RAUN_RUN_ID") == "" {
@@ -84,7 +115,13 @@ func fake(scenario string) int {
 	switch scenario {
 	case Dissent:
 		fmt.Println(DissentReport)
-	case Lead, LeadUnknownRef, LeadDrop:
+	case Lead, LeadUnknownRef, LeadDrop, LeadDropThenLead:
+		if scenario == LeadDropThenLead {
+			scenario = LeadDrop
+			if retry {
+				scenario = Lead
+			}
+		}
 		out, err := consolidate(prompt, scenario)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "fake lead:", err)
@@ -107,6 +144,36 @@ func fake(scenario string) int {
 		return 2
 	case Hang:
 		time.Sleep(time.Minute)
+	case TimeoutAfterReport:
+		fmt.Println(Report)
+		time.Sleep(time.Minute)
+	case TimeoutTruncated:
+		fmt.Print(Report[:strings.Index(Report, "Is there an API")])
+		time.Sleep(time.Minute)
+	case HangThenReport, ProseThenReport:
+		if retry {
+			fmt.Println(Report)
+			break
+		}
+		fmt.Println(Prose)
+		if scenario == HangThenReport {
+			time.Sleep(time.Minute)
+		}
+	case Backslash:
+		fmt.Println(strings.Replace(Report, "Update rejects issued invoices.", `Update rejects issued invoices (it matches \d+ ids).`, 1))
+	case Envelope:
+		text, _ := json.Marshal("Here is my report:\n```json\n" + Report + "\n```")
+		fmt.Printf(`{"type": "result", "is_error": false, "result": %s}`+"\n", text)
+	case Stream:
+		text, _ := json.Marshal(Report)
+		fmt.Println(`{"event": "start"}`)
+		fmt.Printf(`{"event": "message", "role": "assistant", "text": %s}`+"\n", text)
+		fmt.Println(`{"event": "end", "usage": {"tokens": 10}}`)
+	case Silent:
+		fmt.Println("ok")
+	case Flood:
+		fmt.Println(strings.Repeat("x", 1<<20))
+		fmt.Println(Report)
 	default:
 		fmt.Fprintf(os.Stderr, "fake agent: unknown scenario %q\n", scenario)
 		return 5
@@ -196,6 +263,9 @@ const DissentReport = `{
 type Agent struct {
 	ID   string
 	Argv []string
+	// Runner holds extra runner settings, as YAML flow mapping entries
+	// such as "max_output_bytes: 1024".
+	Runner string
 }
 
 // Config returns a configuration with a single agent running argv.
@@ -214,7 +284,7 @@ func TeamConfig(timeout string, leadArgv []string, agents ...Agent) string {
 		return strings.Join(quoted, ", ")
 	}
 	var b strings.Builder
-	b.WriteString(`version: 1
+	b.WriteString(`version: 2
 language: en
 sources:
   exclude: ["vendor/**", ".raun/**"]
@@ -225,7 +295,11 @@ analysis:
   agents:
 `)
 	for _, a := range agents {
-		fmt.Fprintf(&b, "    - id: %s\n      runner: { argv: [%s], timeout: %s }\n", a.ID, quote(a.Argv), timeout)
+		extra := ""
+		if a.Runner != "" {
+			extra = ", " + a.Runner
+		}
+		fmt.Fprintf(&b, "    - id: %s\n      runner: { argv: [%s], timeout: %s%s }\n", a.ID, quote(a.Argv), timeout, extra)
 	}
 	if leadArgv != nil {
 		fmt.Fprintf(&b, "lead:\n  runner: { argv: [%s], timeout: %s }\n", quote(leadArgv), timeout)

@@ -20,19 +20,22 @@ import (
 )
 
 // CurrentVersion is the only configuration format version this build reads.
-const CurrentVersion = 1
+const CurrentVersion = 2
 
 // Defaults applied when a field is omitted.
 const (
-	DefaultTimeout      = 20 * time.Minute
-	DefaultQuorum       = 2
-	DefaultMaxLines     = 40
-	DefaultLanguage     = "en"
-	DefaultRunnerKind   = RunnerCommand
-	BuiltinAnalyst      = "builtin:analyst"
-	BuiltinLead         = "builtin:lead"
-	BuiltinReconciler   = "builtin:reconciler"
-	builtinInstructions = "builtin:"
+	DefaultTimeout        = 20 * time.Minute
+	DefaultMaxOutputBytes = 16 << 20
+	DefaultReportRetries  = 1
+	DefaultReportGrace    = 2 * time.Minute
+	DefaultQuorum         = 2
+	DefaultMaxLines       = 40
+	DefaultLanguage       = "en"
+	DefaultRunnerKind     = RunnerCommand
+	BuiltinAnalyst        = "builtin:analyst"
+	BuiltinLead           = "builtin:lead"
+	BuiltinReconciler     = "builtin:reconciler"
+	builtinInstructions   = "builtin:"
 )
 
 // MaxAgents is the largest number of analysts; the lead sees them
@@ -106,11 +109,21 @@ type Role struct {
 	Runner       Runner `yaml:"runner"`
 }
 
-// Runner describes how an agent is executed.
+// Runner describes how an agent is executed. The pointer fields tell an
+// omitted key (default) from an explicit 0 (disabled); applyDefaults sets
+// them all.
 type Runner struct {
 	Kind    string   `yaml:"kind"`
 	Argv    []string `yaml:"argv"`
 	Timeout Duration `yaml:"timeout"`
+	// MaxOutputBytes bounds the agent's stdout; 0 means no limit.
+	MaxOutputBytes *int64 `yaml:"max_output_bytes"`
+	// ReportRetries is how many times an agent that left no valid report
+	// is asked again for it; 0 disables it.
+	ReportRetries *int `yaml:"report_retries"`
+	// ReportGrace is the time given to a retry after a timeout; 0 disables
+	// the retry after a timeout.
+	ReportGrace *Duration `yaml:"report_grace"`
 }
 
 // Duration is a time.Duration written as a Go duration string ("20m").
@@ -210,6 +223,15 @@ func (r *Runner) applyDefaults() {
 	}
 	if r.Timeout == 0 {
 		r.Timeout = Duration(DefaultTimeout)
+	}
+	if r.MaxOutputBytes == nil {
+		r.MaxOutputBytes = new(int64(DefaultMaxOutputBytes))
+	}
+	if r.ReportRetries == nil {
+		r.ReportRetries = new(DefaultReportRetries)
+	}
+	if r.ReportGrace == nil {
+		r.ReportGrace = new(Duration(DefaultReportGrace))
 	}
 }
 
@@ -331,6 +353,15 @@ func validateRole(field string, r Role) []error {
 	}
 	if r.Runner.Timeout < 0 {
 		add("runner.timeout", "must not be negative")
+	}
+	if p := r.Runner.MaxOutputBytes; p != nil && *p < 0 {
+		add("runner.max_output_bytes", "must not be negative")
+	}
+	if p := r.Runner.ReportRetries; p != nil && *p < 0 {
+		add("runner.report_retries", "must not be negative")
+	}
+	if p := r.Runner.ReportGrace; p != nil && *p < 0 {
+		add("runner.report_grace", "must not be negative")
 	}
 	return errs
 }

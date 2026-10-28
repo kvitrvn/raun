@@ -154,19 +154,26 @@ func TestRunTamperingAgent(t *testing.T) {
 
 func TestRunAgentFailures(t *testing.T) {
 	tests := []struct {
-		scenario string
-		timeout  string
-		wantErr  string
+		name, scenario string
+		timeout        string
+		runner         string
+		wantErr        string
+		wantRetries    int
 	}{
-		{agenttest.Garbage, "10s", "invalid report: no JSON object"},
-		{agenttest.BadContract, "10s", `unknown field "confidence"`},
-		{agenttest.Crash, "10s", "exited with code 2"},
-		{agenttest.Hang, "500ms", "agent timed out"},
+		{"garbage", agenttest.Garbage, "10s", "", "printed almost nothing (32 bytes): invalid report: no JSON object", 0},
+		{"bad contract", agenttest.BadContract, "10s", "", `unknown field "confidence"`, 1},
+		{"crash", agenttest.Crash, "10s", "", "exited with code 2", 0},
+		{"hang", agenttest.Hang, "500ms", "", "printed almost nothing (0 bytes): agent timed out", 0},
+		{"silent", agenttest.Silent, "10s", "", "printed almost nothing (2 bytes)", 0},
+		{"flood", agenttest.Flood, "10s", "max_output_bytes: 4096", "agent output too large: over 4096 bytes", 0},
+		{"retries disabled", agenttest.ProseThenReport, "10s", "report_retries: 0", "invalid report: no JSON object", 0},
+		{"grace disabled", agenttest.HangThenReport, "1s", "report_grace: 0s", "agent timed out after 1s, with no valid answer", 0},
 	}
 	for _, tt := range tests {
-		t.Run(tt.scenario, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			fx := agenttest.NewProject(t, agenttest.Argv(tt.scenario))
-			fx.Write(".raun/config.yaml", agenttest.Config(agenttest.Argv(tt.scenario), tt.timeout))
+			fx.Write(".raun/config.yaml", agenttest.TeamConfig(tt.timeout, nil,
+				agenttest.Agent{ID: "alpha", Argv: agenttest.Argv(tt.scenario), Runner: tt.runner}))
 
 			m, err := execute(t, fx.Dir, Options{})
 			if !errors.Is(err, ErrRunFailed) {
@@ -175,7 +182,7 @@ func TestRunAgentFailures(t *testing.T) {
 			if m.Status != StatusFailed || !strings.Contains(m.Error, "quorum not met") {
 				t.Errorf("manifest status = %s, error = %q", m.Status, m.Error)
 			}
-			if a := m.Agents[0]; a.Status != AgentFailed || !strings.Contains(a.Error, tt.wantErr) {
+			if a := m.Agents[0]; a.Status != AgentFailed || !strings.Contains(a.Error, tt.wantErr) || a.ReportRetries != tt.wantRetries || a.Salvaged {
 				t.Errorf("agent record = %+v", a)
 			}
 			if _, err := os.Stat(filepath.Join(workspace.RunsDir(fx.Dir), m.ID, "manifest.yaml")); err != nil {
@@ -183,6 +190,64 @@ func TestRunAgentFailures(t *testing.T) {
 			}
 			if _, err := os.Stat(workspace.KnowledgeDir(fx.Dir)); !errors.Is(err, os.ErrNotExist) {
 				t.Error("a failed run wrote knowledge")
+			}
+		})
+	}
+}
+
+// TestRunRecoveredReports covers answers Raun reads although the agent did
+// not print a bare report: stopped by its timeout, malformed, wrapped, or
+// given only when asked again.
+func TestRunRecoveredReports(t *testing.T) {
+	tests := []struct {
+		scenario      string
+		timeout       string
+		runner        string
+		wantSalvaged  bool
+		wantRetries   int
+		wantQuestions int
+	}{
+		{agenttest.TimeoutAfterReport, "1s", "", true, 0, 1},
+		{agenttest.TimeoutTruncated, "1s", "", true, 0, 0},
+		{agenttest.HangThenReport, "1s", "report_grace: 10s", false, 1, 1},
+		{agenttest.ProseThenReport, "10s", "", false, 1, 1},
+		{agenttest.Backslash, "10s", "", false, 0, 1},
+		{agenttest.Envelope, "10s", "", false, 0, 1},
+		{agenttest.Stream, "10s", "", false, 0, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.scenario, func(t *testing.T) {
+			fx := agenttest.NewProject(t, agenttest.Argv(tt.scenario))
+			fx.Write(".raun/config.yaml", agenttest.TeamConfig(tt.timeout, nil,
+				agenttest.Agent{ID: "alpha", Argv: agenttest.Argv(tt.scenario), Runner: tt.runner}))
+
+			m, err := execute(t, fx.Dir, Options{})
+			if err != nil {
+				t.Fatalf("Execute() error = %v", err)
+			}
+			a := m.Agents[0]
+			if m.Version != 2 || a.Status != AgentOK || a.Salvaged != tt.wantSalvaged || a.ReportRetries != tt.wantRetries {
+				t.Errorf("manifest version %d, agent record = %+v", m.Version, a)
+			}
+			if len(m.Items) != 3 || len(m.Questions) != tt.wantQuestions {
+				t.Errorf("items = %v, questions = %+v", m.Items, m.Questions)
+			}
+
+			raw := filepath.Join(workspace.RunsDir(fx.Dir), m.ID, "raw", "alpha")
+			retry, err := os.ReadFile(filepath.Join(raw, "prompt.retry1.md"))
+			if tt.wantRetries == 0 {
+				if err == nil {
+					t.Error("a retry prompt was written without a retry")
+				}
+				return
+			}
+			for _, want := range []string{"# Raun report retry", "invalid report: no JSON object", agenttest.Prose, "## Output contract"} {
+				if !strings.Contains(string(retry), want) {
+					t.Errorf("retry prompt lacks %q:\n%s", want, retry)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(raw, "stdout.retry1.txt")); err != nil {
+				t.Errorf("retry output not kept: %v", err)
 			}
 		})
 	}
@@ -366,6 +431,21 @@ func TestRunTeamLeadFailures(t *testing.T) {
 				t.Error("a run whose lead failed wrote knowledge")
 			}
 		})
+	}
+}
+
+func TestRunTeamLeadAskedAgain(t *testing.T) {
+	fx := team(t, 2, agenttest.LeadDropThenLead, agenttest.Valid, agenttest.Dissent)
+	m, err := execute(t, fx.Dir, Options{})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if m.Lead.Status != AgentOK || m.Lead.ReportRetries != 1 || m.Consolidation.Items != 3 {
+		t.Errorf("lead record = %+v, consolidation = %+v", m.Lead, m.Consolidation)
+	}
+	retry, err := os.ReadFile(filepath.Join(workspace.RunsDir(fx.Dir), m.ID, "raw", "lead", "prompt.retry1.md"))
+	if err != nil || !strings.Contains(string(retry), "every interpretation must be placed") || !strings.Contains(string(retry), "## Analyst reports") {
+		t.Errorf("lead retry prompt = %s, %v", retry, err)
 	}
 }
 

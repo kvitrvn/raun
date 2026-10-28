@@ -13,7 +13,7 @@ import (
 )
 
 const validConfig = `
-version: 1
+version: 2
 sources:
   exclude: ["vendor/**"]
   context: [".raun/context.md"]
@@ -24,7 +24,7 @@ analysis:
       runner: { argv: ["agent-a"] }
     - id: beta
       instructions: prompts/beta.md
-      runner: { kind: command, argv: ["agent-b", "--json"], timeout: 5m }
+      runner: { kind: command, argv: ["agent-b", "--json"], timeout: 5m, max_output_bytes: 0, report_retries: 3, report_grace: 0s }
 lead:
   runner: { argv: ["lead"] }
 `
@@ -60,6 +60,23 @@ func TestParseValid(t *testing.T) {
 	if got := time.Duration(cfg.Analysis.Agents[1].Runner.Timeout); got != 5*time.Minute {
 		t.Errorf("timeout = %v, want 5m", got)
 	}
+	if got := *alpha.Runner.MaxOutputBytes; got != DefaultMaxOutputBytes {
+		t.Errorf("default max_output_bytes = %d, want %d", got, DefaultMaxOutputBytes)
+	}
+	if got := *alpha.Runner.ReportRetries; got != DefaultReportRetries {
+		t.Errorf("default report_retries = %d, want %d", got, DefaultReportRetries)
+	}
+	if got := time.Duration(*alpha.Runner.ReportGrace); got != DefaultReportGrace {
+		t.Errorf("default report_grace = %v, want %v", got, DefaultReportGrace)
+	}
+	// An explicit 0 disables, it does not fall back to the default.
+	beta := cfg.Analysis.Agents[1].Runner
+	if *beta.MaxOutputBytes != 0 || *beta.ReportRetries != 3 || *beta.ReportGrace != 0 {
+		t.Errorf("explicit runner settings = %d, %d, %v", *beta.MaxOutputBytes, *beta.ReportRetries, *beta.ReportGrace)
+	}
+	if lead := cfg.Lead.Runner; lead.ReportRetries == nil || *lead.ReportRetries != DefaultReportRetries {
+		t.Errorf("lead report_retries not defaulted")
+	}
 	if cfg.Lead == nil || cfg.Lead.Instructions != BuiltinLead {
 		t.Errorf("lead instructions not defaulted: %+v", cfg.Lead)
 	}
@@ -70,7 +87,7 @@ func TestParseValid(t *testing.T) {
 
 func TestParseSingleAgentDefaultsQuorumToOne(t *testing.T) {
 	cfg, err := Parse(strings.NewReader(`
-version: 1
+version: 2
 types: [persona]
 analysis:
   agents:
@@ -102,13 +119,13 @@ func TestParseInvalid(t *testing.T) {
 		},
 		{
 			name:     "unknown top-level field",
-			yaml:     "version: 1\nagents: []\n",
+			yaml:     "version: 2\nagents: []\n",
 			wantText: "field agents not found",
 		},
 		{
 			name: "unknown nested field",
 			yaml: `
-version: 1
+version: 2
 types: [persona]
 analysis:
   agents:
@@ -120,7 +137,7 @@ analysis:
 		{
 			name: "bad duration",
 			yaml: `
-version: 1
+version: 2
 types: [persona]
 analysis:
   agents:
@@ -137,7 +154,7 @@ analysis:
 		{
 			name: "bad types",
 			yaml: `
-version: 1
+version: 2
 types: [persona, epic, persona]
 analysis:
   agents:
@@ -149,7 +166,7 @@ analysis:
 		{
 			name: "bad agents",
 			yaml: `
-version: 1
+version: 2
 types: [persona]
 analysis:
   quorum: 5
@@ -162,7 +179,7 @@ analysis:
       runner: { argv: ["x"] }
     - id: b
       instructions: ../outside.md
-      runner: { argv: ["x"], timeout: -1m }
+      runner: { argv: ["x"], timeout: -1m, max_output_bytes: -1, report_retries: -1, report_grace: -1s }
 `,
 			wantFields: []string{
 				"analysis.quorum",
@@ -173,12 +190,15 @@ analysis:
 				"analysis.agents[3].id",
 				"analysis.agents[3].instructions",
 				"analysis.agents[3].runner.timeout",
+				"analysis.agents[3].runner.max_output_bytes",
+				"analysis.agents[3].runner.report_retries",
+				"analysis.agents[3].runner.report_grace",
 			},
 		},
 		{
 			name: "bad sources and roles",
 			yaml: `
-version: 2
+version: 1
 language: French
 evidence: { max_lines: -3 }
 sources:

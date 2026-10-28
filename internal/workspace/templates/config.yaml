@@ -1,5 +1,5 @@
 # Raun configuration.
-version: 1
+version: 2
 
 # Language agents write knowledge in (e.g. en, fr). Quoted excerpts always
 # keep their original language.

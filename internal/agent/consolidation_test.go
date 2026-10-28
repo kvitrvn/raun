@@ -31,7 +31,7 @@ const validConsolidation = `{
 }`
 
 func TestParseConsolidationValid(t *testing.T) {
-	c, _, err := ParseConsolidation([]byte(validConsolidation), allTypes, shown)
+	c, _, err := ParseConsolidation([]byte(validConsolidation), allTypes, shown, false)
 	if err != nil {
 		t.Fatalf("ParseConsolidation() error = %v", err)
 	}
@@ -64,7 +64,7 @@ func TestParseConsolidationInvalid(t *testing.T) {
 			if in == validConsolidation {
 				t.Fatal("replacement did not apply")
 			}
-			_, _, err := ParseConsolidation([]byte(in), allTypes, shown)
+			_, _, err := ParseConsolidation([]byte(in), allTypes, shown, false)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("error = %v, want it to contain %q", err, tt.want)
 			}

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"text/template"
+	"unicode/utf8"
 
 	"github.com/kvitrvn/raun/internal/knowledge"
 )
@@ -17,9 +18,17 @@ import (
 var templates embed.FS
 
 var (
-	task = template.Must(template.ParseFS(templates, "templates/task.md.tmpl"))
-	lead = template.Must(template.ParseFS(templates, "templates/lead.md.tmpl"))
+	task  = template.Must(template.ParseFS(templates, "templates/task.md.tmpl"))
+	lead  = template.Must(template.ParseFS(templates, "templates/lead.md.tmpl"))
+	retry = template.Must(template.ParseFS(templates, "templates/retry.md.tmpl"))
 )
+
+// RetryHeading starts every retry prompt.
+const RetryHeading = "# Raun report retry"
+
+// MaxRetryOutput bounds how much of an agent's previous output a retry
+// prompt shows: its end, where an answer would be.
+const MaxRetryOutput = 64 << 10
 
 // Builtin returns the built-in instructions with the given name
 // (the part after "builtin:" in the configuration).
@@ -91,4 +100,72 @@ func (l Lead) Render() (string, error) {
 		return "", fmt.Errorf("render lead prompt: %w", err)
 	}
 	return b.String(), nil
+}
+
+// Retry holds what a retry prompt is built from: the prompt an agent was
+// given, what was wrong with its answer, and what it printed.
+type Retry struct {
+	// Task is the full prompt of the first attempt. The retry keeps it from
+	// its "## Project" section on: facts, types, input and output contract.
+	Task string
+	// Problems explains why the output was rejected, one line per problem.
+	Problems string
+	// Output is the agent's previous stdout; only its end is shown.
+	Output []byte
+}
+
+// Render returns the retry prompt.
+func (r Retry) Render() (string, error) {
+	task := r.Task
+	if i := strings.Index(task, "\n## Project"); i >= 0 {
+		task = task[i+1:]
+	}
+	output := r.Output
+	cut := len(output) > MaxRetryOutput
+	if cut {
+		output = output[len(output)-MaxRetryOutput:]
+		// Start on a rune boundary.
+		for len(output) > 0 && !utf8.RuneStart(output[0]) {
+			output = output[1:]
+		}
+	}
+	var problems []string
+	for line := range strings.SplitSeq(strings.TrimSpace(r.Problems), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			problems = append(problems, line)
+		}
+	}
+	text := strings.ToValidUTF8(string(output), "\uFFFD")
+	var b strings.Builder
+	err := retry.Execute(&b, struct {
+		Task, Output, Fence string
+		Problems            []string
+		Cut                 bool
+		Shown               int
+	}{
+		Task:     strings.TrimSpace(task),
+		Output:   strings.TrimRight(text, "\n"),
+		Fence:    fence(text),
+		Problems: problems,
+		Cut:      cut,
+		Shown:    len(output),
+	})
+	if err != nil {
+		return "", fmt.Errorf("render retry prompt: %w", err)
+	}
+	return b.String(), nil
+}
+
+// fence returns a Markdown code fence longer than any backtick run in s.
+func fence(s string) string {
+	longest, run := 0, 0
+	for _, c := range s {
+		if c == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	return strings.Repeat("`", max(3, longest+1))
 }

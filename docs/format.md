@@ -1,4 +1,4 @@
-# File formats (v1)
+# File formats
 
 This page specifies the knowledge files and the run manifests. The agent report contract is in [agents.md](agents.md).
 
@@ -133,16 +133,16 @@ Humans act through `raun accept`, `reject` and `reopen` (status changes, which n
 
 # Run manifests
 
-Each run writes `.raun/runs/<run-id>/manifest.yaml`. The run ID is the UTC start time plus a random suffix, for example `20261007-093000-k3x9`. Manifests are meant to be versioned with the knowledge base. Raw artifacts (`prompt.md`, `stdout.txt`, `stderr.txt`, `report.json` per agent) go to `runs/<run-id>/raw/`, which `.raun/.gitignore` keeps out of Git.
+Each run writes `.raun/runs/<run-id>/manifest.yaml`. The run ID is the UTC start time plus a random suffix, for example `20261007-093000-k3x9`. Manifests are meant to be versioned with the knowledge base. Raw artifacts (`prompt.md`, `stdout.txt`, `stderr.txt`, `report.json` per agent, plus `prompt.retry<n>.md`, `stdout.retry<n>.txt` and `stderr.retry<n>.txt` for each retry) go to `runs/<run-id>/raw/`, which `.raun/.gitignore` keeps out of Git.
 
 | Field | Content |
 |---|---|
-| `version` | Format version, `1`. |
+| `version` | Manifest format version, `2`. Version 1 manifests, written before retries existed, have the same fields without `salvaged` and `report_retries`. |
 | `id`, `status`, `error` | Run ID; `succeeded` or `failed`, with the reason. |
 | `started_at`, `finished_at` | UTC. |
 | `commit` | The analyzed commit. |
 | `raun_version`, `config_sha256`, `language`, `types`, `quorum` | The conditions of the run. |
-| `agents[]` | Per agent: `id`, `role`, `instructions` and their `instructions_sha256`, `argv`, `prompt_sha256`, `status` (`ok`/`failed`), `error`, `exit_code`, `duration`, `snapshot_changes`, and for a valid report a `report` summary (counts, evidence outcomes, `rejected_evidence` with reasons). |
+| `agents[]` | Per agent: `id`, `role`, `instructions` and their `instructions_sha256`, `argv`, `prompt_sha256`, `status` (`ok`/`failed`), `error`, `exit_code`, `duration` (all attempts), `salvaged` (the answer was read from the output of an agent stopped by its timeout), `report_retries` (how many times it was asked again for its answer; see [agents.md](agents.md#missing-answers)), `snapshot_changes`, and for a valid report a `report` summary (counts, evidence outcomes, `rejected_evidence` with reasons). |
 | `anonymization` | With a lead: which agent each label (`A`, `B`, …) shown to the lead stands for. |
 | `lead` | With a lead: its record, like an agent's. |
 | `consolidation` | `method` (`identity` for a single valid report, `lead` otherwise), `items`, `merged` (items backed by several interpretations), `contested`. |

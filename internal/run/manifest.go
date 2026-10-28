@@ -11,7 +11,7 @@ import (
 )
 
 // ManifestVersion is the run manifest format version.
-const ManifestVersion = 1
+const ManifestVersion = 2
 
 // Run statuses.
 const (
@@ -77,6 +77,12 @@ type AgentRecord struct {
 	Error              string   `yaml:"error,omitempty"`
 	ExitCode           int      `yaml:"exit_code"`
 	Duration           string   `yaml:"duration"`
+	// Salvaged marks an answer read from the output of an agent stopped by
+	// its timeout.
+	Salvaged bool `yaml:"salvaged,omitempty"`
+	// ReportRetries counts the times the agent was asked again for its
+	// answer.
+	ReportRetries int `yaml:"report_retries,omitempty"`
 	// SnapshotChanges lists files the agent changed in its copy.
 	SnapshotChanges []string       `yaml:"snapshot_changes,omitempty"`
 	Report          *ReportSummary `yaml:"report,omitempty"`

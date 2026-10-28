@@ -4,6 +4,7 @@
 package run
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -159,12 +160,12 @@ type runner struct {
 func (r *runner) execute(ctx context.Context, m *Manifest, agents []config.Agent, store *knowledge.Store, now func() time.Time) error {
 	// Analysts work in parallel and independently.
 	recs := make([]AgentRecord, len(agents))
-	outputs := make([][]byte, len(agents))
+	parsed := make([]*agent.Report, len(agents))
 	errs := make([]error, len(agents))
 	var wg sync.WaitGroup
 	for i, a := range agents {
 		wg.Go(func() {
-			recs[i], outputs[i], errs[i] = r.analyze(ctx, a)
+			recs[i], parsed[i], errs[i] = r.analyze(ctx, a)
 		})
 	}
 	wg.Wait()
@@ -173,20 +174,18 @@ func (r *runner) execute(ctx context.Context, m *Manifest, agents []config.Agent
 		return err
 	}
 
-	// Contract and evidence checks run sequentially (the verifier caches).
+	// Evidence checks run sequentially (the verifier caches).
 	var reports []consolidate.CheckedReport
 	for i := range agents {
-		if outputs[i] == nil {
+		if parsed[i] == nil {
 			continue
 		}
-		report, ok, err := r.checkReport(ctx, &recs[i], outputs[i])
+		report, err := r.checkReport(ctx, &recs[i], parsed[i])
 		if err != nil {
 			m.Agents = recs
 			return err
 		}
-		if ok {
-			reports = append(reports, report)
-		}
+		reports = append(reports, report)
 	}
 	m.Agents = recs
 	if len(reports) < m.Quorum {
@@ -248,7 +247,7 @@ func (r *runner) execute(ctx context.Context, m *Manifest, agents []config.Agent
 // analyze runs one analyst. It returns the agent's stdout, or nil if the
 // agent failed (the record says why). Only infrastructure problems return
 // an error.
-func (r *runner) analyze(ctx context.Context, a config.Agent) (AgentRecord, []byte, error) {
+func (r *runner) analyze(ctx context.Context, a config.Agent) (AgentRecord, *agent.Report, error) {
 	rec := AgentRecord{ID: a.ID, Role: RoleAnalyst, Instructions: a.Instructions, Argv: a.Runner.Argv, Status: AgentFailed}
 	instructions, err := r.instructions(a.Instructions)
 	if err != nil {
@@ -267,34 +266,38 @@ func (r *runner) analyze(ctx context.Context, a config.Agent) (AgentRecord, []by
 		return rec, nil, err
 	}
 	r.logf("%s: analyzing", a.ID)
-	out, err := r.invoke(ctx, &rec, instructions, text, a.Runner)
-	return rec, out, err
+	var report *agent.Report
+	ok, err := r.invoke(ctx, &rec, instructions, text, a.Runner, func(out []byte, salvage bool) error {
+		var data []byte
+		var err error
+		report, data, err = agent.ParseReport(out, r.types, salvage)
+		if data != nil {
+			if err := os.WriteFile(filepath.Join(r.rawDir, rec.ID, "report.json"), data, 0o644); err != nil {
+				return &infraError{err}
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("invalid report: %w", err)
+		}
+		return nil
+	})
+	if !ok {
+		report = nil
+	}
+	return rec, report, err
 }
 
-// checkReport validates an analyst's output against the contract, then
-// classifies and verifies its citations. ok is false when the report is
-// invalid (recorded as an agent failure).
-func (r *runner) checkReport(ctx context.Context, rec *AgentRecord, stdout []byte) (consolidate.CheckedReport, bool, error) {
-	report, data, err := agent.ParseReport(stdout, r.types)
-	if data != nil {
-		if err := os.WriteFile(filepath.Join(r.rawDir, rec.ID, "report.json"), data, 0o644); err != nil {
-			return consolidate.CheckedReport{}, false, err
-		}
-	}
-	if err != nil {
-		r.fail(rec, "invalid report: %v", err)
-		return consolidate.CheckedReport{}, false, nil
-	}
-
+// checkReport classifies and verifies the citations of a valid report.
+func (r *runner) checkReport(ctx context.Context, rec *AgentRecord, report *agent.Report) (consolidate.CheckedReport, error) {
 	checked, summary, err := r.check(ctx, report)
 	if err != nil {
-		return consolidate.CheckedReport{}, false, err
+		return consolidate.CheckedReport{}, err
 	}
 	rec.Status = AgentOK
 	rec.Report = summary
 	r.logf("%s: %d interpretation(s), evidence %d verified, %d relocated, %d invalid",
 		rec.ID, summary.Interpretations, summary.Evidence.Verified, summary.Evidence.Relocated, summary.Evidence.Invalid)
-	return consolidate.CheckedReport{Agent: rec.ID, Report: report, Citations: checked}, true, nil
+	return consolidate.CheckedReport{Agent: rec.ID, Report: report, Citations: checked}, nil
 }
 
 // lead asks the lead to consolidate the reports, anonymized. Any lead
@@ -330,21 +333,25 @@ func (r *runner) lead(ctx context.Context, m *Manifest, reports []consolidate.Ch
 	}
 
 	r.logf("lead: consolidating %d reports", len(reports))
-	out, err := r.invoke(ctx, &rec, instructions, text, l.Runner)
+	var c *agent.Consolidation
+	ok, err := r.invoke(ctx, &rec, instructions, text, l.Runner, func(out []byte, salvage bool) error {
+		var data []byte
+		var err error
+		c, data, err = agent.ParseConsolidation(out, r.types, refs, salvage)
+		if data != nil {
+			if err := os.WriteFile(filepath.Join(r.rawDir, rec.ID, "consolidation.json"), data, 0o644); err != nil {
+				return &infraError{err}
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("invalid consolidation: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		return consolidate.Plan{}, err
 	}
-	if out == nil {
-		return consolidate.Plan{}, fmt.Errorf("%w: lead failed: %s", ErrRunFailed, rec.Error)
-	}
-	c, data, err := agent.ParseConsolidation(out, r.types, refs)
-	if data != nil {
-		if err := os.WriteFile(filepath.Join(r.rawDir, rec.ID, "consolidation.json"), data, 0o644); err != nil {
-			return consolidate.Plan{}, err
-		}
-	}
-	if err != nil {
-		r.fail(&rec, "invalid consolidation: %v", err)
+	if !ok {
 		return consolidate.Plan{}, fmt.Errorf("%w: lead failed: %s", ErrRunFailed, rec.Error)
 	}
 	plan, err := consolidate.FromLead(c, labels)
@@ -355,62 +362,139 @@ func (r *runner) lead(ctx context.Context, m *Manifest, reports []consolidate.Ch
 	return plan, nil
 }
 
-// invoke runs one agent on a fresh snapshot, saving its prompt and output
-// under raw/<rec.ID>/. It returns stdout, or nil if the agent failed (the
-// record says why). Only infrastructure problems return an error.
-func (r *runner) invoke(ctx context.Context, rec *AgentRecord, instructions, text string, cfg config.Runner) ([]byte, error) {
+// minRetryOutput is the least an agent must have printed to be asked again
+// for its answer: below it, there is nothing to build an answer from.
+const minRetryOutput = 64
+
+// infraError wraps an infrastructure failure met while parsing an answer
+// (writing a raw artifact), so that it aborts the run instead of failing
+// the agent.
+type infraError struct{ err error }
+
+func (e *infraError) Error() string { return e.err.Error() }
+func (e *infraError) Unwrap() error { return e.err }
+
+// invoke runs one agent on a fresh snapshot, saving its prompts and
+// outputs under raw/<rec.ID>/. parse checks an output against the contract;
+// salvage is set for an agent stopped by its timeout. An agent that printed
+// something but no valid answer is asked again for it, up to
+// cfg.ReportRetries times, on the same snapshot (see docs/agents.md).
+//
+// ok is false when the agent failed; the record says why. Only
+// infrastructure problems return an error.
+func (r *runner) invoke(ctx context.Context, rec *AgentRecord, instructions, text string, cfg config.Runner, parse func(out []byte, salvage bool) error) (ok bool, err error) {
 	rec.InstructionsSHA256 = digest([]byte(instructions))
 	rec.PromptSHA256 = digest([]byte(text))
 
 	raw := filepath.Join(r.rawDir, rec.ID)
 	if err := os.MkdirAll(raw, 0o755); err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(filepath.Join(raw, "prompt.md"), []byte(text), 0o644); err != nil {
-		return nil, err
+		return false, err
 	}
 
 	snap, err := snapshot.Create(ctx, r.repo, r.commit, "raun-"+r.runID+"-"+rec.ID+"-", r.hidden)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
 	defer func() { _ = snap.Remove() }()
 
 	ag, err := newRunner(cfg)
 	if err != nil {
-		return nil, err
+		return false, err
 	}
-	out, runErr := ag.Run(ctx, agent.Request{
-		RunID:   r.runID,
-		Role:    rec.Role,
-		Prompt:  text,
-		Dir:     snap.Dir,
-		Timeout: time.Duration(cfg.Timeout),
-	})
-	rec.ExitCode = out.ExitCode
-	rec.Duration = out.Duration.Round(time.Millisecond).String()
-	if err := errors.Join(
-		os.WriteFile(filepath.Join(raw, "stdout.txt"), out.Stdout, 0o644),
-		os.WriteFile(filepath.Join(raw, "stderr.txt"), out.Stderr, 0o644),
-	); err != nil {
-		return nil, err
+
+	ok, err = r.attempts(ctx, rec, ag, raw, snap.Dir, text, cfg, parse)
+	if err != nil {
+		return false, err
 	}
 	if rec.SnapshotChanges, err = snap.Changes(); err != nil {
-		return nil, err
+		return false, err
 	}
 	if len(rec.SnapshotChanges) > 0 {
 		r.logf("%s: warning: the agent changed %d file(s) in its copy", rec.ID, len(rec.SnapshotChanges))
 	}
+	return ok, nil
+}
 
-	switch {
-	case runErr != nil:
-		r.fail(rec, "%v", runErr)
-		return nil, nil
-	case out.ExitCode != 0:
-		r.fail(rec, "exited with code %d", out.ExitCode)
-		return nil, nil
+// attempts runs the first attempt and the retries of invoke.
+func (r *runner) attempts(ctx context.Context, rec *AgentRecord, ag agent.Runner, raw, dir, text string, cfg config.Runner, parse func([]byte, bool) error) (bool, error) {
+	task := text
+	timeout := time.Duration(cfg.Timeout)
+	var total time.Duration
+	for n := 0; ; n++ {
+		suffix := ""
+		if n > 0 {
+			suffix = fmt.Sprintf(".retry%d", n)
+		}
+		if err := os.WriteFile(filepath.Join(raw, "prompt"+suffix+".md"), []byte(text), 0o644); err != nil {
+			return false, err
+		}
+		out, runErr := ag.Run(ctx, agent.Request{
+			RunID:          r.runID,
+			Role:           rec.Role,
+			Prompt:         text,
+			Dir:            dir,
+			Timeout:        timeout,
+			MaxOutputBytes: *cfg.MaxOutputBytes,
+		})
+		total += out.Duration
+		rec.ExitCode = out.ExitCode
+		rec.Duration = total.Round(time.Millisecond).String()
+		if err := errors.Join(
+			os.WriteFile(filepath.Join(raw, "stdout"+suffix+".txt"), out.Stdout, 0o644),
+			os.WriteFile(filepath.Join(raw, "stderr"+suffix+".txt"), out.Stderr, 0o644),
+		); err != nil {
+			return false, err
+		}
+
+		timedOut := errors.Is(runErr, agent.ErrTimeout)
+		switch {
+		case runErr != nil && !timedOut:
+			r.fail(rec, "%v", runErr)
+			return false, nil
+		case !timedOut && out.ExitCode != 0:
+			r.fail(rec, "exited with code %d", out.ExitCode)
+			return false, nil
+		}
+
+		perr := parse(out.Stdout, timedOut)
+		if infra, ok := errors.AsType[*infraError](perr); ok {
+			return false, infra.err
+		}
+		if perr == nil {
+			if timedOut {
+				rec.Salvaged = true
+				r.logf("%s: warning: %v; keeping the answer it printed before it was stopped", rec.ID, runErr)
+			}
+			return true, nil
+		}
+
+		problem := perr
+		if timedOut {
+			problem = fmt.Errorf("%w, with no valid answer: %w", runErr, perr)
+		}
+		size := len(bytes.TrimSpace(out.Stdout))
+		switch {
+		case size < minRetryOutput:
+			r.fail(rec, "printed almost nothing (%d bytes): %v", size, problem)
+			return false, nil
+		case n >= *cfg.ReportRetries, timedOut && *cfg.ReportGrace == 0, ctx.Err() != nil:
+			r.fail(rec, "%v", problem)
+			return false, nil
+		}
+
+		if timedOut {
+			timeout = time.Duration(*cfg.ReportGrace)
+		} else {
+			timeout = time.Duration(cfg.Timeout)
+		}
+		var err error
+		text, err = prompt.Retry{Task: task, Problems: perr.Error(), Output: out.Stdout}.Render()
+		if err != nil {
+			return false, err
+		}
+		rec.ReportRetries++
+		r.logf("%s: no valid answer (%s); asking again", rec.ID, firstLine(problem.Error()))
 	}
-	return out.Stdout, nil
 }
 
 func (r *runner) fail(rec *AgentRecord, format string, args ...any) {

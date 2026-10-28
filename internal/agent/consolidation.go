@@ -52,9 +52,10 @@ type Position struct {
 
 // ParseConsolidation extracts, strictly decodes and validates a lead
 // consolidation. interpretations maps every reference shown to the lead
-// (such as "A.i1") to its knowledge type.
-func ParseConsolidation(out []byte, allowed []knowledge.Type, interpretations map[string]knowledge.Type) (*Consolidation, []byte, error) {
-	data, err := ExtractJSON(out)
+// (such as "A.i1") to its knowledge type. salvage is set for the output of
+// a lead stopped before it finished (see Extract).
+func ParseConsolidation(out []byte, allowed []knowledge.Type, interpretations map[string]knowledge.Type, salvage bool) (*Consolidation, []byte, error) {
+	data, err := Extract(out, salvage)
 	if err != nil {
 		return nil, nil, err
 	}

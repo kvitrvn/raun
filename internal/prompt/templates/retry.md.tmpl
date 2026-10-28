@@ -1,0 +1,15 @@
+# Raun report retry
+
+You were given the task below and you already worked on it, but your output holds no valid answer. Do not start the task over. Print exactly one JSON object that follows the output contract below, built from what you already found. Use your tools only to check a line number or an excerpt you are unsure of.
+
+## Problems with your output
+
+{{range .Problems}}- {{.}}
+{{end}}
+## End of your output{{if .Cut}} (its last {{.Shown}} bytes){{end}}
+
+{{.Fence}}text
+{{.Output}}
+{{.Fence}}
+
+{{.Task}}
