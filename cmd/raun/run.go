@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	raunrun "github.com/kvitrvn/raun/internal/run"
 	"github.com/kvitrvn/raun/internal/workspace"
@@ -19,7 +22,14 @@ func cmdRun(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	m, err := raunrun.Execute(context.Background(), raunrun.Options{
+	// Ctrl+C or SIGTERM stops the agents, which run in their own process
+	// groups and do not get the terminal's signal. A second one exits at
+	// once.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	context.AfterFunc(ctx, stop)
+
+	m, err := raunrun.Execute(ctx, raunrun.Options{
 		Dir:         *dir,
 		Commit:      *commit,
 		Agent:       *agentID,

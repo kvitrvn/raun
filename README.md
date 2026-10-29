@@ -38,6 +38,8 @@ git add .raun && git commit -m "chore: configure raun"
 raun run                     # HEAD must be committed (or use -commit); -agent runs a single agent
 ```
 
+Ctrl+C stops a run and its agents; the failed run keeps its manifest.
+
 Each analyst works on its own disposable copy of the commit, without Git history or the knowledge base. Raun verifies every citation. The lead then merges the analyses, seeing them anonymized, and keeps disagreements visible. Items are written as `proposed` (or `contested`) under `.raun/knowledge/`, with a manifest under `.raun/runs/`.
 
 Browse the knowledge base:

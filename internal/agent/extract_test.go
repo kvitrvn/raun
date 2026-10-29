@@ -19,29 +19,31 @@ func TestExtract(t *testing.T) {
 		out     string
 		salvage bool
 		want    string
+		err     error // when want is empty
 	}{
-		{"bare", answer, false, answer},
-		{"versioned object preferred over a later one", answer + "\n{\"usage\": 3}", false, answer},
-		{"invalid escape repaired", `{"version": 1, "s": "matches \d+ in C:\Users"}`, false, `{"version": 1, "s": "matches \\d+ in C:\\Users"}`},
-		{"control characters repaired", "{\"version\": 1, \"s\": \"a\nb\tc\x01\"}", false, `{"version": 1, "s": "a\nb\tc\u0001"}`},
-		{"valid escapes kept", `{"version": 1, "s": "\"\\\/\b\f\n\r\t\u00e9"}`, false, `{"version": 1, "s": "\"\\\/\b\f\n\r\t\u00e9"}`},
-		{"envelope", `{"type": "result", "result": ` + quoted("Done:\n```json\n"+answer+"\n```") + `}`, false, answer},
-		{"nested envelope", `{"a": {"b": [` + quoted(`{"text": `+quoted(answer)+`}`) + `]}}`, false, answer},
-		{"json lines", "{\"event\": \"start\"}\n{\"event\": \"text\", \"text\": " + quoted(answer) + "}\n{\"event\": \"end\"}\n", false, answer},
-		{"last answer of a stream wins", `{"t": ` + quoted(`{"version": 0}`) + "}\n{\"t\": " + quoted(answer) + "}", false, answer},
-		{"truncated in an element", answer[:strings.Index(answer, `"b"`)], true, `{"version": 1, "items": [{"id": "k1", "title": "a"}]}`},
-		{"truncated in a string", answer[:strings.Index(answer, `"b"`)+2], true, `{"version": 1, "items": [{"id": "k1", "title": "a"}]}`},
-		{"truncated after an array opens", `{"version": 1, "items": [`, true, `{"version": 1, "items": []}`},
-		{"complete answer preferred to salvage", answer + "\n{\"version\": 2, \"items\": [", true, answer},
-		{"truncated, not salvaged", "log " + answer[:40], false, ""},
-		{"no versioned object: last one", `{"a": 1} {"a": 2}`, false, `{"a": 2}`},
+		{"bare", answer, false, answer, nil},
+		{"versioned object preferred over a later one", answer + "\n{\"usage\": 3}", false, answer, nil},
+		{"invalid escape repaired", `{"version": 1, "s": "matches \d+ in C:\Users"}`, false, `{"version": 1, "s": "matches \\d+ in C:\\Users"}`, nil},
+		{"control characters repaired", "{\"version\": 1, \"s\": \"a\nb\tc\x01\"}", false, `{"version": 1, "s": "a\nb\tc\u0001"}`, nil},
+		{"valid escapes kept", `{"version": 1, "s": "\"\\\/\b\f\n\r\t\u00e9"}`, false, `{"version": 1, "s": "\"\\\/\b\f\n\r\t\u00e9"}`, nil},
+		{"envelope", `{"type": "result", "result": ` + quoted("Done:\n```json\n"+answer+"\n```") + `}`, false, answer, nil},
+		{"nested envelope", `{"a": {"b": [` + quoted(`{"text": `+quoted(answer)+`}`) + `]}}`, false, answer, nil},
+		{"json lines", "{\"event\": \"start\"}\n{\"event\": \"text\", \"text\": " + quoted(answer) + "}\n{\"event\": \"end\"}\n", false, answer, nil},
+		{"last answer of a stream wins", `{"t": ` + quoted(`{"version": 0}`) + "}\n{\"t\": " + quoted(answer) + "}", false, answer, nil},
+		{"truncated in an element", answer[:strings.Index(answer, `"b"`)], true, `{"version": 1, "items": [{"id": "k1", "title": "a"}]}`, nil},
+		{"truncated in a string", answer[:strings.Index(answer, `"b"`)+2], true, `{"version": 1, "items": [{"id": "k1", "title": "a"}]}`, nil},
+		{"truncated after an array opens", `{"version": 1, "items": [`, true, `{"version": 1, "items": []}`, nil},
+		{"complete answer preferred to salvage", answer + "\n{\"version\": 2, \"items\": [", true, answer, nil},
+		{"truncated, not salvaged", "log " + answer[:40], false, "", ErrInvalidJSON},
+		{"invalid answer, not an object nested in it", `{"version": 1, "items": [{"id": "k1", "title": "a}, {"id": "k2", "title": "b"}]}`, false, "", ErrInvalidJSON},
+		{"no versioned object: last one", `{"a": 1} {"a": 2}`, false, `{"a": 2}`, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := Extract([]byte(tt.out), tt.salvage)
 			if tt.want == "" {
-				if !errors.Is(err, ErrNoJSON) {
-					t.Errorf("Extract() = %s, %v; want ErrNoJSON", got, err)
+				if !errors.Is(err, tt.err) {
+					t.Errorf("Extract() = %s, %v; want %v", got, err, tt.err)
 				}
 				return
 			}
@@ -50,6 +52,33 @@ func TestExtract(t *testing.T) {
 			}
 			if !json.Valid(got) {
 				t.Errorf("Extract() returned invalid JSON: %s", got)
+			}
+		})
+	}
+}
+
+func TestExtractInvalidAnswer(t *testing.T) {
+	tests := []struct {
+		name, out, want string
+	}{
+		// The raw tab and the invalid escape of line 3 are repaired: the
+		// column must still be counted in what the agent printed.
+		{
+			"string left open",
+			"log line\n{\"version\": 1,\n \"s\": \"a\tb\\d\",\n \"items\": [{\"id\": \"k1\", \"title\": \"a}, {\"id\": \"k2\"}]}\n",
+			`line 4, column 41: invalid character 'i' after object key:value pair, at the end of "a\tb\\d\",\n \"items\": [{\"id\": \"k1\", \"title\": \"a}, {\"i"`,
+		},
+		{
+			"truncated",
+			`{"version": 1, "items": [{"id": "k1", "títle"`,
+			`line 1, column 46: unexpected end of the output, at the end of "{\"version\": 1, \"items\": [{\"id\": \"k1\", \"títle\""`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Extract([]byte(tt.out), false)
+			if !errors.Is(err, ErrInvalidJSON) || !strings.HasSuffix(err.Error(), tt.want) {
+				t.Errorf("Extract() error = %v\nwant ErrInvalidJSON ending with %s", err, tt.want)
 			}
 		})
 	}

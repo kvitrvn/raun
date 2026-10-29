@@ -48,6 +48,10 @@ var ErrTimeout = errors.New("agent timed out")
 // Request.MaxOutputBytes on stdout.
 var ErrOutputTooLarge = errors.New("agent output too large")
 
+// ErrInterrupted reports an agent stopped because its caller's context was
+// canceled, as when the run is interrupted.
+var ErrInterrupted = errors.New("interrupted")
+
 // CommandRunner runs an external command: the prompt on stdin, the report
 // as a JSON object on stdout.
 type CommandRunner struct {
@@ -56,8 +60,9 @@ type CommandRunner struct {
 
 // Run starts the command in req.Dir and waits for it. A non-zero exit code
 // is reported in Output, not as an error; errors mean the command could not
-// run, timed out or printed too much. The whole process group is killed in
-// the last two cases, and Output keeps what was printed until then.
+// run, timed out, printed too much or was interrupted by ctx. The whole
+// process group is killed in the last three cases, and Output keeps what
+// was printed until then.
 func (r CommandRunner) Run(ctx context.Context, req Request) (Output, error) {
 	if len(r.Argv) == 0 {
 		return Output{}, errors.New("command runner: empty argv")
@@ -89,6 +94,9 @@ func (r CommandRunner) Run(ctx context.Context, req Request) (Output, error) {
 	}
 	if ctx.Err() == context.DeadlineExceeded {
 		return out, fmt.Errorf("%w after %s", ErrTimeout, req.Timeout)
+	}
+	if ctx.Err() == context.Canceled {
+		return out, ErrInterrupted
 	}
 	var exit *exec.ExitError
 	if err != nil && !errors.As(err, &exit) {

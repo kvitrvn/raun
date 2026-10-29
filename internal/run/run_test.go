@@ -13,6 +13,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/kvitrvn/raun/internal/agent"
 	"github.com/kvitrvn/raun/internal/agenttest"
 	"github.com/kvitrvn/raun/internal/gittest"
 	"github.com/kvitrvn/raun/internal/knowledge"
@@ -192,6 +193,48 @@ func TestRunAgentFailures(t *testing.T) {
 				t.Error("a failed run wrote knowledge")
 			}
 		})
+	}
+}
+
+func TestRunInterrupted(t *testing.T) {
+	fx := agenttest.NewProject(t, agenttest.Argv(agenttest.Hang))
+	fx.Write(".raun/config.yaml", agenttest.Config(agenttest.Argv(agenttest.Hang), "1m"))
+
+	// Interrupt the run while the agent runs: its prompt is written just
+	// before it starts.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		for ctx.Err() == nil {
+			if started, _ := filepath.Glob(filepath.Join(workspace.RunsDir(fx.Dir), "*", "raw", "alpha", "prompt.md")); len(started) > 0 {
+				time.AfterFunc(300*time.Millisecond, cancel)
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	start := time.Now()
+	m, err := Execute(ctx, Options{Dir: fx.Dir, Now: fixedNow, RaunVersion: "test"})
+	if !errors.Is(err, ErrRunFailed) || !errors.Is(err, agent.ErrInterrupted) {
+		t.Fatalf("Execute() error = %v, want an interrupted run", err)
+	}
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Errorf("interruption took %s: the agent was not stopped", elapsed)
+	}
+	if m.Status != StatusFailed || m.Error != "run failed: interrupted" {
+		t.Errorf("manifest status = %s, error = %q", m.Status, m.Error)
+	}
+	if a := m.Agents[0]; a.Status != AgentFailed || a.Error != "interrupted" || a.ReportRetries != 0 {
+		t.Errorf("agent record = %+v", a)
+	}
+	if _, err := os.Stat(filepath.Join(workspace.RunsDir(fx.Dir), m.ID, "manifest.yaml")); err != nil {
+		t.Errorf("interrupted run has no manifest: %v", err)
+	}
+	if _, err := os.Stat(workspace.KnowledgeDir(fx.Dir)); !errors.Is(err, os.ErrNotExist) {
+		t.Error("an interrupted run wrote knowledge")
+	}
+	if left, _ := filepath.Glob(filepath.Join(os.TempDir(), "raun-"+m.ID+"-*")); len(left) > 0 {
+		t.Errorf("snapshots left behind: %v", left)
 	}
 }
 

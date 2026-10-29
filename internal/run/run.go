@@ -130,6 +130,10 @@ func Execute(ctx context.Context, opts Options) (*Manifest, error) {
 	}
 
 	runErr := r.execute(ctx, m, agents, store, existing, now)
+	if runErr != nil && ctx.Err() != nil {
+		// Whatever failed (a quorum, the lead), the interruption caused it.
+		runErr = fmt.Errorf("%w: %w", ErrRunFailed, agent.ErrInterrupted)
+	}
 	m.FinishedAt = now().UTC().Truncate(time.Second)
 	if runErr != nil {
 		m.Status = StatusFailed

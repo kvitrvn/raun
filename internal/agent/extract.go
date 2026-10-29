@@ -6,10 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"unicode/utf8"
 )
 
 // ErrNoJSON reports an output that contains no JSON object.
 var ErrNoJSON = errors.New("no JSON object found in agent output")
+
+// ErrInvalidJSON reports an answer, an object that opens with a "version"
+// key, that is not valid JSON even once repaired.
+var ErrInvalidJSON = errors.New("the answer is not valid JSON")
 
 // maxEnvelopeDepth bounds how deep Extract looks for a report carried as
 // text inside other JSON objects.
@@ -30,11 +35,14 @@ func ExtractJSON(out []byte) ([]byte, error) {
 //     "version" key is the answer. A candidate without one may carry the
 //     answer as text in one of its string values (an envelope, or one event
 //     of a JSON lines stream); those are searched the same way.
-//   - Without such an object, the last candidate is returned, so that the
-//     contract violation can be reported.
 //   - With salvage, set for an agent stopped before it finished, an answer
 //     cut while it was being printed is closed after its last complete
 //     value, when no complete answer exists.
+//   - Without such an object, an answer that does not parse even once
+//     repaired fails with ErrInvalidJSON and the place of its first syntax
+//     error, rather than yielding an object nested in it.
+//   - Otherwise the last candidate is returned, so that the contract
+//     violation can be reported.
 //
 // Nothing here knows any agent tool. The result is strictly decoded and
 // validated by the caller.
@@ -49,6 +57,9 @@ func Extract(out []byte, salvage bool) ([]byte, error) {
 		if closed := closeTruncated(out); closed != nil {
 			return closed, nil
 		}
+	}
+	if err := invalidAnswer(out); err != nil {
+		return nil, err
 	}
 	if len(objs) == 0 {
 		return nil, ErrNoJSON
@@ -125,40 +136,105 @@ func objectEnd(b []byte) (int, bool) {
 // Windows path) and raw control characters (a newline in an excerpt).
 func repair(b []byte) []byte {
 	var out bytes.Buffer
+	repairEach(b, func(_ int, s []byte) { out.Write(s) })
+	return out.Bytes()
+}
+
+// repairEach calls emit, in order, with what repair writes for the byte of
+// b at offset at (two bytes for a valid escape).
+func repairEach(b []byte, emit func(at int, s []byte)) {
 	inString := false
 	for i := 0; i < len(b); i++ {
 		c := b[i]
 		switch {
 		case !inString:
 			inString = c == '"'
-			out.WriteByte(c)
+			emit(i, b[i:i+1])
 		case c == '"':
 			inString = false
-			out.WriteByte(c)
+			emit(i, b[i:i+1])
 		case c == '\\':
 			if i+1 < len(b) && validEscape(b[i+1:]) {
-				out.WriteByte(c)
-				out.WriteByte(b[i+1])
+				emit(i, b[i:i+2])
 				i++
 			} else {
-				out.WriteString(`\\`)
+				emit(i, []byte(`\\`))
 			}
 		case c < 0x20:
 			switch c {
 			case '\n':
-				out.WriteString(`\n`)
+				emit(i, []byte(`\n`))
 			case '\r':
-				out.WriteString(`\r`)
+				emit(i, []byte(`\r`))
 			case '\t':
-				out.WriteString(`\t`)
+				emit(i, []byte(`\t`))
 			default:
-				fmt.Fprintf(&out, `\u%04x`, c)
+				emit(i, fmt.Appendf(nil, `\u%04x`, c))
 			}
 		default:
-			out.WriteByte(c)
+			emit(i, b[i:i+1])
 		}
 	}
-	return out.Bytes()
+}
+
+// invalidAnswer returns an ErrInvalidJSON error that locates the first
+// syntax error of the last answer of out once repaired, or nil when out
+// holds no answer or the answer parses. The place is given in out, with
+// the text before it, since an agent asked again sees its output's tail.
+func invalidAnswer(out []byte) error {
+	start := answerStart(out)
+	if start < 0 {
+		return nil
+	}
+	b := out[start:]
+	fixed := repair(b)
+	var raw json.RawMessage
+	err := json.NewDecoder(bytes.NewReader(fixed)).Decode(&raw)
+	if err == nil {
+		return nil
+	}
+	at := len(fixed) // where the error is, in fixed
+	reason := "unexpected end of the output"
+	if syn, ok := errors.AsType[*json.SyntaxError](err); ok {
+		at, reason = int(syn.Offset)-1, syn.Error()
+	}
+	// Back to the byte of out that repair turned into fixed[at].
+	pos, written := len(out), 0
+	repairEach(b, func(i int, s []byte) {
+		if written <= at && at < written+len(s) {
+			pos = start + i
+		}
+		written += len(s)
+	})
+
+	lineStart := bytes.LastIndexByte(out[:pos], '\n') + 1
+	line := bytes.Count(out[:pos], []byte{'\n'}) + 1
+	column := utf8.RuneCount(out[lineStart:pos]) + 1
+	from := max(0, pos-nearBytes)
+	for from < pos && !utf8.RuneStart(out[from]) {
+		from++
+	}
+	to := pos
+	if to < len(out) {
+		_, size := utf8.DecodeRune(out[to:])
+		to += size
+	}
+	return fmt.Errorf("%w: line %d, column %d: %s, at the end of %q", ErrInvalidJSON, line, column, reason, out[from:to])
+}
+
+// nearBytes is how much of the output before a syntax error its message
+// quotes.
+const nearBytes = 48
+
+// answerStart returns the offset of the last `{` of out that opens a
+// "version" key, or -1.
+func answerStart(out []byte) int {
+	for i := bytes.LastIndexByte(out, '{'); i >= 0; i = bytes.LastIndexByte(out[:i], '{') {
+		if rest := bytes.TrimLeft(out[i+1:], " \t\r\n"); bytes.HasPrefix(rest, []byte(`"version"`)) {
+			return i
+		}
+	}
+	return -1
 }
 
 // validEscape reports whether b (what follows a backslash) is a JSON escape.
@@ -248,13 +324,7 @@ func stringValues(doc []byte) []string {
 // being printed, closed after its last complete value, or nil. The answer
 // starts at the last `{` opening a "version" key.
 func closeTruncated(out []byte) []byte {
-	start := -1
-	for i := bytes.LastIndexByte(out, '{'); i >= 0; i = bytes.LastIndexByte(out[:i], '{') {
-		if rest := bytes.TrimLeft(out[i+1:], " \t\r\n"); bytes.HasPrefix(rest, []byte(`"version"`)) {
-			start = i
-			break
-		}
-	}
+	start := answerStart(out)
 	if start < 0 {
 		return nil
 	}

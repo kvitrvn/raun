@@ -139,6 +139,18 @@ func TestCommandRunner(t *testing.T) {
 		t.Errorf("output cap took %s: the agent was not stopped", elapsed)
 	}
 
+	start = time.Now()
+	interrupted, cancel := context.WithCancel(ctx)
+	time.AfterFunc(200*time.Millisecond, cancel)
+	out, err = CommandRunner{Argv: []string{"sh", "-c", "echo partial; sleep 30 & sleep 30"}}.
+		Run(interrupted, Request{Dir: dir, Timeout: time.Minute})
+	if !errors.Is(err, ErrInterrupted) || string(out.Stdout) != "partial\n" {
+		t.Errorf("error = %v, stdout = %q; want ErrInterrupted and the output printed before", err, out.Stdout)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Errorf("interruption took %s: child processes were not killed", elapsed)
+	}
+
 	if _, err := (CommandRunner{Argv: []string{"raun-no-such-command"}}).Run(ctx, Request{Dir: dir}); err == nil {
 		t.Error("missing command: Run() error = nil")
 	}

@@ -33,6 +33,8 @@ The configuration format is version 2. Raun refuses a version 1 file: set `versi
 
 Analysts run in parallel and independently. When several reports are valid, the lead consolidates them. A run with a single valid report skips the lead and creates one item per interpretation. When the knowledge base already holds items, the reconciler then matches the run's items against them (see [Running again](#running-again)). If fewer than `quorum` reports are valid, or if the lead or the reconciler fails, the run fails and writes nothing to the knowledge base.
 
+Ctrl+C or SIGTERM interrupts a run. Raun kills every agent's process group, removes the copies of the commit, and writes the manifest of a failed run (`interrupted`), with nothing written to the knowledge base. A second Ctrl+C exits at once. A process that leaves its group, such as a tool's background service, is out of Raun's reach.
+
 `instructions` only replaces the job description. Raun always appends the project facts, the knowledge types and the output contract, so custom instructions cannot break the contract.
 
 ## Command protocol (`kind: command`)
@@ -57,6 +59,7 @@ Raun reads an analyst's report, the lead's consolidation and the reconciler's an
 - Every top-level JSON object in stdout is a candidate. Starting from the last one, the first that has a top-level `version` key is the answer.
 - A candidate without `version` may carry the answer as text in one of its string values: a tool that wraps its final message in a JSON envelope, or a stream of JSON lines whose last message holds the report. Raun searches those strings the same way, a few levels deep. It knows no particular tool.
 - A candidate that does not parse is repaired first. A backslash that starts no valid escape (`\d`, `C:\Users`) is doubled, and raw control characters inside strings are escaped.
+- An answer that still does not parse once repaired, such as one with a string left open, fails with its first syntax error: line and column in stdout, and the text just before it. Raun does not fall back on an object nested in the broken answer.
 
 The answer found is then decoded strictly and validated as usual. What Raun decoded is saved as `report.json` (`consolidation.json` for the lead, `reconciliation.json` for the reconciler) with the raw artifacts.
 
