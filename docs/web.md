@@ -39,10 +39,11 @@ item. `/knowledge` shows the first listed item; `/knowledge/{id}` names the item
   validated, needs-review, contested, proposed, rejected; then ID alphabetically.
   A page beyond the last page shows the last page. Invalid filter values return 400.
 - The detail presents business content, related items (a requirement's personas
-  in their declared order, a persona's requirements by ID), interpretations,
-  numbered evidence excerpts, every position of each disagreement, resolutions
-  and status history, newest first. Section tabs lead to each part. Missing
-  persona references are explicitly marked.
+  in their declared order, a persona's requirements by ID), interpretations
+  grouped by run (newest run first), numbered evidence excerpts (stale evidence
+  first, each with the run that cited it first), every position of each
+  disagreement, and the item's Activity, newest first. Section tabs lead to each
+  part. Missing persona references are explicitly marked.
 - Related items include rejected items, with their status visible. Evidence
   citations link to anchors within the same detail page.
 - Below 1180px wide, the sidebar opens as a sheet; below 1024px, `/knowledge`
@@ -59,7 +60,42 @@ The complete knowledge base is read once per GET page request through
 partial results are not presented as a complete base. Empty bases, empty search
 results and missing items have distinct messages. A missing item keeps the list
 and reports the error in the detail column. Removing `.raun/` while the
-server is running produces a visible error.
+server is running produces a visible error. Run manifests are read with the
+knowledge base, and an invalid manifest also fails the page and names its file.
+
+## Runs
+
+The browser reads the run manifests (`.raun/runs/<id>/manifest.yaml`), never
+their raw artifacts. A run directory without a manifest is ignored.
+
+- The sidebar lists the 8 most recent runs, newest first, with their start time
+  (UTC), commit and outcome (`12 new · 33 updated`, or why the run failed). The
+  command palette lists every run.
+- A run's view (`run=<id>`, every status) lists the items it created, updated or
+  left unchanged because they changed during the run. Its card shows the run ID,
+  start time, duration, the commit compared with the previous succeeded run, each
+  agent (failed agents and retries included), what the reconciler matched, how
+  much evidence went stale, the items not updated with their reason, and the
+  run's project-wide questions. Chips narrow the list to one kind of change
+  (`change=`); kinds the run did not make are named instead.
+- Rows and the detail mark what the **active run** did: the run of the view, or
+  else the latest succeeded run. Rows show `New`, `+N support`, `Stale evidence`,
+  `Conflict`, `Needs review`, `Found again` (a rejected item, which stays
+  rejected) and `Not updated`, and count the runs backing the item. The detail
+  shows the runs that saw the item, and a "Changed by the run" banner.
+- Activity merges, newest first, what each run did to the item (created or
+  interpretations and evidence added, stale evidence, status changes, conflicts),
+  human decisions, and resolutions of open points. A run without a manifest shows
+  its status changes only.
+
+These changes are derived; no file records them per item. A run's interpretations,
+evidence first cited by its interpretations or disagreement positions, status
+changes and the manifest's lists (`items`, `updated`, `needs_review`,
+`rejected_supported`, `skipped`) are exact. A conflict belongs to the run of its
+last position. Stale evidence is only known to be stale now: the banner shows the
+stale evidence of the items the run updated, and the manifest's count gives how
+much evidence that run made stale. Uncertainties and questions are not attributed
+to runs.
 
 
 ## Human decisions
@@ -135,9 +171,11 @@ and are not part of the versioned knowledge format.
 ## Navigation and local resources
 
 `/` redirects to `/knowledge`. The list and details accept `q`, `type`, `status`
-(`pending` by default, `all` or a knowledge status) and `page`. Details live at
-`/knowledge/{id}`; sections use `#sec-overview`, `#sec-interp`, `#sec-evidence`,
-`#sec-points` and `#sec-history`; citations use `#evidence-{id}`.
+(`pending` by default, `all` or a knowledge status), `run` (a run ID), `change`
+(`new`, `updated`, `stale`, `conflict`, `needs-review`, `rejected-again` or
+`skipped`; it requires `run`) and `page`. An unknown run returns 400. Details live
+at `/knowledge/{id}`; sections use `#sec-overview`, `#sec-interp`, `#sec-evidence`,
+`#sec-points` and `#sec-history` (Activity); citations use `#evidence-{id}`.
 
 Every page and form works without JavaScript. HTMX enhances links and forms
 by replacing the application region and updating browser history; live search
@@ -164,7 +202,7 @@ in addition to refusing non-loopback Host and cross-site fetch metadata.
 POST forms accept only `csrf`, `revision`, `author`, `reason` and the optional
 `next`, once each, as URL-encoded body fields (maximum 64 KiB). Unknown, duplicate
 and query fields are refused. `next` must be `/knowledge/{id}` with only `q`, `type`,
-`status` and `page` parameters; anything else is refused before a write, so a form
+`status`, `run`, `change` and `page` parameters; anything else is refused before a write, so a form
 cannot redirect outside the browser. Browser-supplied target statuses or actor types are never accepted.
 Responses use `422` for invalid input or disallowed decisions, `409` for conflicts,
 `404` for a missing item, `403` for forbidden access (including read-only mode),
@@ -229,7 +267,9 @@ enhancements listed above.
 
 ## Verification
 
-Go tests cover filtering (including the pending view), counts and progress,
+Go tests cover filtering (including the pending view and run views), the
+attribution of changes to runs, Activity, run manifests that are missing or
+invalid, counts and progress,
 pagination, the split view and its links, HTML and fragments, missing items in the
 shell, all recorded statuses and source kinds, disagreement positions, human
 decisions and the next item, `next` validation, escaping, absence of inline styles,
@@ -255,6 +295,9 @@ from `internal/knowledge/testdata/`. Check:
    unresolved disagreements, error focus and retained input.
 8. Two tabs with the same item, then a CLI update between display and submission;
    conflicts require review, never a silent retry.
-9. Reload and back/forward after decisions, with the new status, one human
+9. On a knowledge base with two runs: the sidebar runs, the run card and its
+   chips, row badges, the detail's banner, interpretations grouped by run and
+   Activity; a failed run; a workspace without `.raun/runs`.
+10. Reload and back/forward after decisions, with the new status, one human
    history event, the next pending item and its notification; `-read-only`
    hides forms and refuses manual POSTs.

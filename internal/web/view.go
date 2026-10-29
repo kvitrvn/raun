@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/kvitrvn/raun/internal/knowledge"
+	"github.com/kvitrvn/raun/internal/run"
 )
 
 // Presentation helpers for the templates. Labels follow the browser design.
@@ -93,7 +94,22 @@ func typeIcon(t knowledge.Type) string {
 }
 
 func itemMeta(it *knowledge.Item) string {
-	return fmt.Sprintf("%d interp · %d ev", len(it.Support), len(it.Evidence))
+	meta := fmt.Sprintf("%d interp · %d ev", len(it.Support), len(it.Evidence))
+	if n := len(seenRuns(it)); n > 1 {
+		meta = plural(n, "run") + " · " + meta
+	}
+	return meta
+}
+
+// seenRuns lists the runs whose analysis backs the item, oldest first.
+func seenRuns(it *knowledge.Item) []string {
+	var runs []string
+	for _, s := range it.Support {
+		if !slices.Contains(runs, s.Run) {
+			runs = append(runs, s.Run)
+		}
+	}
+	return runs
 }
 
 func yamlPath(it *knowledge.Item) string {
@@ -236,12 +252,6 @@ func initials(name string) string {
 	return s
 }
 
-func newestFirst(events []knowledge.Event) []knowledge.Event {
-	out := slices.Clone(events)
-	slices.Reverse(out)
-	return out
-}
-
 // lastDecision returns the human event that set the current status.
 func lastDecision(it *knowledge.Item) *knowledge.Event {
 	for i := len(it.History) - 1; i >= 0; i-- {
@@ -269,3 +279,237 @@ func terminalText(it *knowledge.Item) string {
 func blockedLabel(ids []string) string {
 	return "Resolve " + strings.Join(ids, ", ") + " to validate"
 }
+
+// runLabel names a run by its start time, "Oct 29 · 12:54".
+func runLabel(m *run.Manifest) string { return m.StartedAt.UTC().Format("Jan 2 · 15:04") }
+
+// runRef names a run by its manifest's start time, or by its ID when its
+// manifest is missing.
+func runRef(index *runIndex, id string) string {
+	if m := index.get(id); m != nil {
+		return runLabel(m)
+	}
+	return id
+}
+
+func runDuration(m *run.Manifest) string {
+	return m.FinishedAt.Sub(m.StartedAt).Round(time.Second).String()
+}
+
+// runError is the reason a run failed, without the "run failed" prefix.
+func runError(m *run.Manifest) string {
+	reason, _, _ := strings.Cut(m.Error, "\n")
+	return strings.TrimPrefix(reason, "run failed: ")
+}
+
+// runDigest summarizes a run in the sidebar.
+func runDigest(m *run.Manifest) string {
+	if m.Status != run.StatusSucceeded {
+		return "failed: " + runError(m)
+	}
+	var parts []string
+	if n := len(m.Items); n > 0 {
+		parts = append(parts, strconv.Itoa(n)+" new")
+	}
+	if n := len(m.Updated); n > 0 {
+		parts = append(parts, strconv.Itoa(n)+" updated")
+	}
+	if len(parts) == 0 {
+		return "no changes"
+	}
+	return strings.Join(parts, " · ")
+}
+
+func runTone(m *run.Manifest) string {
+	if m.Status == run.StatusSucceeded {
+		return "tone-verified"
+	}
+	return "tone-invalid"
+}
+
+// commitRange shows the commit a run analyzed after the previous one.
+func commitRange(previous, m *run.Manifest) string {
+	if previous == nil || previous.Commit == m.Commit {
+		return shortCommit(m.Commit)
+	}
+	return shortCommit(previous.Commit) + " → " + shortCommit(m.Commit)
+}
+
+// runAgents lists every agent of a run: analysts, then the lead and the
+// reconciler.
+func runAgents(m *run.Manifest) []run.AgentRecord {
+	agents := slices.Clone(m.Agents)
+	for _, rec := range []*run.AgentRecord{m.Lead, m.Reconciler} {
+		if rec != nil {
+			agents = append(agents, *rec)
+		}
+	}
+	return agents
+}
+
+func agentTitle(rec run.AgentRecord) string {
+	title := rec.Role + " · " + rec.Status
+	if rec.ReportRetries > 0 {
+		title += " · asked again " + plural(rec.ReportRetries, "time")
+	}
+	if rec.Salvaged {
+		title += " · salvaged after its timeout"
+	}
+	if rec.Error != "" {
+		title += " · " + rec.Error
+	}
+	return title
+}
+
+var changeLabels = map[string]string{
+	changeNew:           "New",
+	changeUpdated:       "Updated",
+	changeStale:         "Stale evidence",
+	changeConflict:      "Conflict",
+	changeNeedsReview:   "Needs review",
+	changeRejectedAgain: "Found again",
+	changeSkipped:       "Not updated",
+}
+
+var changeTones = map[string]string{
+	changeNew:           "new",
+	changeUpdated:       "support",
+	changeStale:         "stale",
+	changeConflict:      "contested",
+	changeNeedsReview:   "needs-review",
+	changeRejectedAgain: "rejected",
+	changeSkipped:       "rejected",
+}
+
+type changeBadge struct{ Label, Tone string }
+
+// changeBadges summarizes what the active run did to an item in its row.
+func changeBadges(c itemChanges) []changeBadge {
+	var badges []changeBadge
+	add := func(kind, label string) {
+		badges = append(badges, changeBadge{Label: label, Tone: changeTones[kind]})
+	}
+	switch {
+	case c.New:
+		add(changeNew, changeLabels[changeNew])
+	case c.Updated && len(c.Support) > 0:
+		add(changeUpdated, "+"+strconv.Itoa(len(c.Support))+" support")
+	case c.Updated && len(c.Stale) == 0:
+		add(changeUpdated, changeLabels[changeUpdated])
+	}
+	for _, kind := range changeKinds[2:] {
+		if c.has(kind) {
+			add(kind, changeLabels[kind])
+		}
+	}
+	return badges
+}
+
+// newestGroupsFirst orders support groups from the latest run.
+func newestGroupsFirst(groups []supportGroup) []supportGroup {
+	out := slices.Clone(groups)
+	slices.Reverse(out)
+	return out
+}
+
+// evidenceOrder lists stale evidence first, the rest in file order.
+func evidenceOrder(it *knowledge.Item) []knowledge.Evidence {
+	out := slices.Clone(it.Evidence)
+	slices.SortStableFunc(out, func(a, b knowledge.Evidence) int {
+		return cmpBool(b.State == knowledge.EvidenceStale, a.State == knowledge.EvidenceStale)
+	})
+	return out
+}
+
+func cmpBool(a, b bool) int {
+	switch {
+	case a == b:
+		return 0
+	case a:
+		return 1
+	}
+	return -1
+}
+
+// creation returns the event that created the item, if the run recorded it.
+func creation(events []knowledge.Event) *knowledge.Event {
+	for _, e := range events {
+		if e.From == "" {
+			return &e
+		}
+	}
+	return nil
+}
+
+func positionLabel(r *knowledge.Resolution) string {
+	if r.Position == nil {
+		return ""
+	}
+	return "Kept position " + strconv.Itoa(*r.Position+1)
+}
+
+// runList returns at most limit runs (0: all), newest first.
+func (m pageModel) runList(limit int) []*run.Manifest {
+	if m.Runs == nil || m.Counts == nil {
+		return nil
+	}
+	return m.Runs.Index.newestFirst(limit)
+}
+
+// listTitle names the list: its status view, or the run it shows.
+func (m pageModel) listTitle() string {
+	if m.Filters.Run != "" && m.Runs != nil && m.Runs.Active != nil {
+		title := "Run of " + runLabel(m.Runs.Active)
+		if m.Filters.Change != "" {
+			title += " · " + changeLabels[m.Filters.Change]
+		}
+		return title
+	}
+	return viewTitle(m.Filters.Status)
+}
+
+func agentTone(rec run.AgentRecord) string {
+	if rec.Status == run.AgentOK {
+		return "verified"
+	}
+	return "invalid"
+}
+
+// runNote states the run-level numbers that no item filter shows.
+func runNote(m *run.Manifest) string {
+	r := m.Reconciliation
+	if r == nil {
+		return ""
+	}
+	note := fmt.Sprintf("%s matched among %s", plural(r.Matched, "result"), plural(r.Candidates, "existing item"))
+	if r.StaleEvidence > 0 {
+		note += fmt.Sprintf(" · %d evidence went stale", r.StaleEvidence)
+	}
+	return note
+}
+
+// runs returns the workspace's runs, or nil.
+func (m pageModel) runs() *runIndex {
+	if m.Runs == nil {
+		return nil
+	}
+	return m.Runs.Index
+}
+
+// noChanges names the kinds of change the active run did not make, which
+// get no filter chip: "No conflict · needs review · …".
+func (v *runView) noChanges() string {
+	var none []string
+	for _, kind := range changeKinds[2:] {
+		if v.count(kind) == 0 {
+			none = append(none, strings.ToLower(changeLabels[kind]))
+		}
+	}
+	if len(none) == 0 {
+		return ""
+	}
+	return "No " + strings.Join(none, ", ")
+}
+
+// maxCitations is how many evidence a change list links before counting.
+const maxCitations = 8

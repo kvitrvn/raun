@@ -140,9 +140,15 @@ func (h *handler) decisionError(w http.ResponseWriter, r *http.Request, d *decis
 	d.Error = err.Error()
 	d.Blocked = d.Blocked || status != http.StatusUnprocessableEntity
 	m := pageModel{Title: "Cannot record decision", Decision: d, Filters: d.filters}
-	items, loadErr := h.load()
+	items, index, loadErr := h.load()
 	if loadErr == nil {
-		m = listModel(items, d.filters)
+		// A run that no longer exists only loses the run view.
+		runs, err := newRunView(index, items, d.filters.Run)
+		if err != nil {
+			d.filters = d.filters.withRun("")
+			runs, _ = newRunView(index, items, "")
+		}
+		m = listModel(items, runs, d.filters)
 		m.Title, m.Decision, m.Explicit = "Cannot record decision", d, true
 		for _, it := range items {
 			if it.ID == d.ID {

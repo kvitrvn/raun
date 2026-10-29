@@ -23,7 +23,10 @@ const (
 
 type filters struct {
 	Query, Type, Status string
-	Page                int
+	// Run lists the items a run created or updated; Change narrows them to
+	// one kind of change (see changeKinds).
+	Run, Change string
+	Page        int
 }
 
 type statusCount struct {
@@ -70,6 +73,8 @@ type pageModel struct {
 	NotFound string
 	Palette  []*knowledge.Item
 	Decision *decisionModel
+	// Runs is the active run with its changes; nil when runs cannot be read.
+	Runs *runView
 }
 
 type itemLink struct {
@@ -79,7 +84,7 @@ type itemLink struct {
 }
 
 func parseFilters(q url.Values) (filters, error) {
-	f := filters{Query: strings.TrimSpace(q.Get("q")), Type: q.Get("type"), Status: q.Get("status"), Page: 1}
+	f := filters{Query: strings.TrimSpace(q.Get("q")), Type: q.Get("type"), Status: q.Get("status"), Run: q.Get("run"), Change: q.Get("change"), Page: 1}
 	if f.Type != "" && !slices.Contains(knowledge.Types, knowledge.Type(f.Type)) {
 		return f, fmt.Errorf("type: unknown type %q", f.Type)
 	}
@@ -88,6 +93,12 @@ func parseFilters(q url.Values) (filters, error) {
 	}
 	if f.Status != statusPending && f.Status != statusAll && !slices.Contains(knowledge.Statuses, knowledge.Status(f.Status)) {
 		return f, fmt.Errorf("status: unknown status %q", f.Status)
+	}
+	if f.Change != "" && !slices.Contains(changeKinds, f.Change) {
+		return f, fmt.Errorf("change: unknown change %q", f.Change)
+	}
+	if f.Change != "" && f.Run == "" {
+		return f, errors.New("change: requires run")
 	}
 	if p := q.Get("page"); p != "" {
 		n, err := strconv.Atoi(p)
@@ -99,9 +110,17 @@ func parseFilters(q url.Values) (filters, error) {
 	return f, nil
 }
 
-func (f filters) match(it *knowledge.Item) bool {
+// match reports whether f lists it. With f.Run, runs is the view of that
+// run.
+func (f filters) match(it *knowledge.Item, runs *runView) bool {
 	if f.Type != "" && string(it.Type) != f.Type {
 		return false
+	}
+	if f.Run != "" {
+		c := runs.changes(it.ID)
+		if !c.any() || f.Change != "" && !c.has(f.Change) {
+			return false
+		}
 	}
 	switch f.Status {
 	case statusPending, "":
@@ -118,10 +137,10 @@ func (f filters) match(it *knowledge.Item) bool {
 }
 
 // filtered returns every item matching f, in list order.
-func filtered(items []*knowledge.Item, f filters) []*knowledge.Item {
+func filtered(items []*knowledge.Item, runs *runView, f filters) []*knowledge.Item {
 	var out []*knowledge.Item
 	for _, it := range items {
-		if f.match(it) {
+		if f.match(it, runs) {
 			out = append(out, it)
 		}
 	}
@@ -171,9 +190,9 @@ func growFactor(n, total int) int {
 	return max(1, (n*100+total/2)/total)
 }
 
-func listModel(items []*knowledge.Item, f filters) pageModel {
-	m := pageModel{Title: viewTitle(f.Status), Filters: f, Empty: len(items) == 0, Counts: countItems(items)}
-	all := filtered(items, f)
+func listModel(items []*knowledge.Item, runs *runView, f filters) pageModel {
+	m := pageModel{Title: viewTitle(f.Status), Filters: f, Empty: len(items) == 0, Counts: countItems(items), Runs: runs}
+	all := filtered(items, runs, f)
 	m.Total = len(all)
 	m.Pages = max(1, (m.Total+pageSize-1)/pageSize)
 	// Clamp before multiplication, including machine-sized page values.
@@ -244,8 +263,8 @@ func relatedItems(it *knowledge.Item, items []*knowledge.Item) []itemLink {
 
 // nextPending returns the next item awaiting a decision after the current
 // one in the filtered list, wrapping around, or the current item itself.
-func nextPending(items []*knowledge.Item, f filters, current string) (string, int) {
-	all := filtered(items, f)
+func nextPending(items []*knowledge.Item, runs *runView, f filters, current string) (string, int) {
+	all := filtered(items, runs, f)
 	i := slices.IndexFunc(all, func(it *knowledge.Item) bool { return it.ID == current })
 	order := append(slices.Clone(all[i+1:]), all[:max(i, 0)]...)
 	for _, it := range order {
@@ -270,6 +289,12 @@ func (f filters) query() url.Values {
 	}
 	if f.Status != statusPending && f.Status != "" {
 		q.Set("status", f.Status)
+	}
+	if f.Run != "" {
+		q.Set("run", f.Run)
+	}
+	if f.Change != "" {
+		q.Set("change", f.Change)
 	}
 	if f.Page > 1 {
 		q.Set("page", strconv.Itoa(f.Page))
@@ -299,6 +324,21 @@ func (f filters) withStatus(s string) filters {
 	return f
 }
 
+// withRun lists what run id changed, whatever the status; an empty id
+// leaves the run view.
+func (f filters) withRun(id string) filters {
+	f.Run, f.Change, f.Page = id, "", 1
+	if id != "" {
+		f.Status = statusAll
+	}
+	return f
+}
+
+func (f filters) withChange(change string) filters {
+	f.Change, f.Page = change, 1
+	return f
+}
+
 func (f filters) withPage(page int) filters {
 	f.Page = page
 	return f
@@ -324,7 +364,7 @@ func parseNext(raw string) (string, filters, error) {
 		return "", filters{}, errNext
 	}
 	for key, values := range q {
-		if !slices.Contains([]string{"q", "type", "status", "page"}, key) || len(values) != 1 {
+		if !slices.Contains([]string{"q", "type", "status", "run", "change", "page"}, key) || len(values) != 1 {
 			return "", filters{}, errNext
 		}
 	}

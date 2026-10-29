@@ -63,20 +63,132 @@ templ detail(m pageModel) {
 					{ yamlPath(it) }
 				}
 			</div>
+			if runs := seenRuns(it); len(runs) > 0 {
+				<div class="seen-runs">
+					<span class="seen-runs-label">Seen in { plural(len(runs), "run") }</span>
+					for _, id := range runs {
+						@runChip(m, id)
+					}
+				</div>
+			}
 		</header>
+		if c := m.Runs.changes(it.ID); c.any() {
+			<aside class="run-banner" aria-labelledby="run-banner-title">
+				<div class="run-banner-head">
+					@ui.Icon("refresh-cw", ui.IconProps{Size: 14, Class: "run-banner-icon"})
+					<span id="run-banner-title" class="run-banner-title">
+						Changed by the run of
+						<a href={ templ.SafeURL(m.Filters.withRun(c.Run.ID).url(it.ID)) }>{ runLabel(c.Run) }</a>
+					</span>
+					<span class="detail-spacer"></span>
+					<span class="mono-meta" title={ c.Run.Commit }>{ shortCommit(c.Run.Commit) }</span>
+				</div>
+				@changeList(it, c)
+			</aside>
+		}
 		@ui.TabsList(ui.TabsLine, "Sections", "section-tabs") {
 			@sectionTab("overview", "Overview", 0, false)
 			@sectionTab("interp", "Interpretations", len(it.Support), false)
 			@sectionTab("evidence", "Evidence", len(it.Evidence), false)
 			@sectionTab("points", "Open points", unresolvedPoints(it), it.HasUnresolvedDisagreement())
-			@sectionTab("history", "History", len(it.History), false)
+			@sectionTab("history", "Activity", len(activities(it, m.runs())), false)
 		}
 		@overview(m)
-		@interpretations(it)
-		@evidence(it)
+		@interpretations(m)
+		@evidence(m)
 		@openPoints(it)
-		@history(it)
+		@activityList(m)
 	</div>
+}
+
+// runChip links to the view of a run, or names a run without a manifest.
+templ runChip(m pageModel, id string) {
+	if m.runs().get(id) != nil {
+		<a
+			href={ templ.SafeURL(m.Filters.withRun(id).url(m.selectedID())) }
+			class="run-chip"
+			title={ id }
+			if m.Runs.Active != nil && m.Runs.Active.ID == id {
+				data-active
+			}
+		>
+			@ui.Icon("refresh-cw", ui.IconProps{Size: 12})
+			{ runRef(m.runs(), id) }
+		</a>
+	} else {
+		<span class="run-chip" title="This run has no manifest">
+			@ui.Icon("refresh-cw", ui.IconProps{Size: 12})
+			{ id }
+		</span>
+	}
+}
+
+// changeList states what one run did to the item.
+templ changeList(it *knowledge.Item, c itemChanges) {
+	<ul class="change-list">
+		if c.New {
+			<li>
+				if e := creation(c.Events); e != nil {
+					Created as { statusLabel(e.To) }
+				} else {
+					Created
+				}
+				from { plural(len(c.Support), "interpretation") } ({ strings.Join(c.Agents, ", ") })
+				with { strconv.Itoa(len(c.Evidence)) } evidence
+			</li>
+		} else {
+			if len(c.Support) > 0 {
+				<li>+{ plural(len(c.Support), "interpretation") } from { strings.Join(c.Agents, ", ") }</li>
+			}
+			if len(c.Evidence) > 0 {
+				<li>
+					+{ strconv.Itoa(len(c.Evidence)) } evidence at { shortCommit(c.Run.Commit) }
+					@someCitations(c.Evidence)
+				</li>
+			}
+			if c.Updated && len(c.Support) == 0 {
+				<li>Evidence checked again at { shortCommit(c.Run.Commit) }, without new support</li>
+			}
+		}
+		if len(c.Stale) > 0 {
+			<li class="change-warn">
+				Stale evidence: held at its commit, no longer at a later analyzed commit
+				@someCitations(c.Stale)
+			</li>
+		}
+		for _, e := range c.Events {
+			if e.From != "" {
+				<li>
+					<span class="history-transition">
+						{ statusLabel(e.From) } →
+						<span class={ "history-to tone-" + string(e.To) }>
+							<span class="status-dot history-to-dot"></span>
+							{ statusLabel(e.To) }
+						</span>
+					</span>
+					if e.Reason != "" {
+						<span class="change-reason">{ e.Reason }</span>
+					}
+				</li>
+			}
+		}
+		if len(c.Conflicts) > 0 {
+			<li class="change-warn">
+				Conflict with the existing content
+				<span class="citations">
+					for _, id := range c.Conflicts {
+						<a href={ templ.SafeURL("#point-" + id) } class="cite" hx-boost="false">{ id }</a>
+					}
+				</span>
+			</li>
+		}
+		if c.RejectedAgain {
+			<li>Found again while rejected; it stays rejected</li>
+		}
+		if c.Skipped != "" {
+			<li class="change-warn">Not updated: { c.Skipped }</li>
+		}
+	</ul>
 }
 
 // copyChip shows text that app.js makes copyable; without JavaScript it is plain text.
@@ -175,13 +287,33 @@ templ overview(m pageModel) {
 	</section>
 }
 
-templ interpretations(it *knowledge.Item) {
+templ interpretations(m pageModel) {
+	{{ it := m.Item }}
 	<section id="sec-interp" class="detail-section" aria-labelledby="interp-heading">
 		<div class="section-heading">
 			<h3 id="interp-heading">Agent interpretations</h3>
 			<span class="section-note">{ agentCount(it) }</span>
 		</div>
-		for _, s := range it.Support {
+		for _, g := range newestGroupsFirst(supportGroups(it, m.runs())) {
+			<div class="run-group-head">
+				@runChip(m, g.RunID)
+				if g.Run != nil {
+					<span class="mono-meta" title={ g.Run.Commit }>{ shortCommit(g.Run.Commit) }</span>
+				}
+				<span class="run-group-count">{ plural(len(g.Support), "interpretation") }</span>
+				if m.Runs != nil && m.Runs.Active != nil && m.Runs.Active.ID == g.RunID {
+					@ui.Badge(ui.BadgeProps{Tone: "new", Class: "badge-change"}) {
+						This run
+					}
+				}
+			</div>
+			@supportCards(g.Support)
+		}
+	</section>
+}
+
+templ supportCards(support []knowledge.Support) {
+		for _, s := range support {
 			@ui.Card(ui.CardProps{Article: true, Class: "interpretation"}) {
 				<div class="interpretation-meta">
 					<span class="agent-chip">
@@ -198,7 +330,7 @@ templ interpretations(it *knowledge.Item) {
 						}
 					}
 					<span class="detail-spacer"></span>
-					<span class="mono-meta">{ s.Run } · { s.Interpretation }</span>
+					<span class="mono-meta" title={ "Run " + s.Run }>{ s.Interpretation }</span>
 				</div>
 				<p class="interpretation-statement">{ s.Statement }</p>
 				if len(s.Observations) == 0 {
@@ -214,7 +346,14 @@ templ interpretations(it *knowledge.Item) {
 				</ul>
 			}
 		}
-	</section>
+}
+
+// someCitations links the first cited evidence and counts the others.
+templ someCitations(ids []string) {
+	@citations(ids[:min(len(ids), maxCitations)])
+	if len(ids) > maxCitations {
+		<span class="change-more">+{ strconv.Itoa(len(ids) - maxCitations) } more</span>
+	}
 }
 
 templ citations(ids []string) {
@@ -225,13 +364,17 @@ templ citations(ids []string) {
 	</span>
 }
 
-templ evidence(it *knowledge.Item) {
+templ evidence(m pageModel) {
+	{{
+		it := m.Item
+		first := firstCitingRuns(it)
+	}}
 	<section id="sec-evidence" class="detail-section" aria-labelledby="evidence-heading">
 		<div class="section-heading section-heading-wrap">
 			<h3 id="evidence-heading">Evidence</h3>
 			<span class="section-note">Recorded states — viewing does not re-verify. Run <code class="inline-code">raun verify</code> to check again.</span>
 		</div>
-		for _, e := range it.Evidence {
+		for _, e := range evidenceOrder(it) {
 			@ui.Card(ui.CardProps{Article: true, ID: "evidence-" + e.ID, Class: "evidence", Attrs: templ.Attributes{"tabindex": "-1", "data-evidence": e.ID}}) {
 				<div class="evidence-header">
 					<span class="evidence-id">{ e.ID }</span>
@@ -250,6 +393,9 @@ templ evidence(it *knowledge.Item) {
 						<span class="sr-only">Commit </span>
 						{ shortCommit(e.Commit) }
 					</span>
+					if id, ok := first[e.ID]; ok {
+						<span class="evidence-run" title={ "First cited by run " + id }>{ runRef(m.runs(), id) }</span>
+					}
 				</div>
 				<pre class="excerpt" role="region" aria-label={ "Excerpt " + e.ID } tabindex="0"><code>
 					for _, line := range excerptLines(e, 0) {
@@ -347,15 +493,18 @@ templ commandLine(cmd string) {
 	</div>
 }
 
-templ history(it *knowledge.Item) {
+templ activityList(m pageModel) {
+	{{ it := m.Item }}
 	<section id="sec-history" class="detail-section detail-history" aria-labelledby="history-heading">
-		<h3 id="history-heading" class="section-title">History</h3>
+		<h3 id="history-heading" class="section-title">Activity</h3>
 		<ol class="history">
-			for _, e := range newestFirst(it.History) {
+			for _, a := range activities(it, m.runs()) {
 				<li class="history-event">
 					<div class="history-rail">
-						if e.Actor == knowledge.ActorHuman {
-							<span class="history-avatar" data-actor="human" title="Human decision">{ initials(e.By) }</span>
+						if a.Human != nil {
+							<span class="history-avatar" data-actor="human" title="Human decision">{ initials(a.Human.By) }</span>
+						} else if a.Point != nil {
+							<span class="history-avatar" data-actor="human" title="Human resolution">{ initials(a.Point.Resolution.By) }</span>
 						} else {
 							<span class="history-avatar" data-actor="run" title="Analysis run">
 								@ui.Icon("bot", ui.IconProps{Size: 13})
@@ -364,27 +513,68 @@ templ history(it *knowledge.Item) {
 						<span class="history-line"></span>
 					</div>
 					<div class="history-body">
-						<div class="history-row">
-							<span class="history-by">{ e.By }</span>
-							<span class="history-transition">
-								if e.From != "" {
-									{ statusLabel(e.From) } →
-								} else {
-									Created as
-								}
-								<span class={ "history-to tone-" + string(e.To) }>
-									<span class="status-dot history-to-dot"></span>
-									{ statusLabel(e.To) }
+						if e := a.Human; e != nil {
+							<div class="history-row">
+								<span class="history-by">{ e.By }</span>
+								@transition(*e)
+								@activityTime(a.At)
+							</div>
+							if e.Reason != "" {
+								<p class="history-reason">“{ e.Reason }”</p>
+							}
+						} else if p := a.Point; p != nil {
+							<div class="history-row">
+								<span class="history-by">{ p.Resolution.By }</span>
+								<span class="history-transition">
+									Resolved
+									<a href={ templ.SafeURL("#point-" + p.ID) } class="cite" hx-boost="false">{ p.ID }</a>
+									if label := positionLabel(p.Resolution); label != "" {
+										· { label }
+									}
 								</span>
-							</span>
-							<time class="history-at" datetime={ e.At.UTC().Format(time.RFC3339) }>{ formatTime(e.At) }</time>
-						</div>
-						if e.Reason != "" {
-							<p class="history-reason">“{ e.Reason }”</p>
+								@activityTime(a.At)
+							</div>
+							<p class="history-reason">“{ p.Resolution.Note }”</p>
+						} else if c := a.Run; c != nil {
+							<div class="history-row">
+								<a href={ templ.SafeURL(m.Filters.withRun(c.Run.ID).url(it.ID)) } class="history-by" title={ c.Run.ID }>Run of { runLabel(c.Run) }</a>
+								<span class="mono-meta" title={ c.Run.Commit }>{ shortCommit(c.Run.Commit) }</span>
+								@activityTime(a.At)
+							</div>
+							@changeList(it, *c)
+						} else {
+							for _, e := range a.RunEvents {
+								<div class="history-row">
+									<span class="history-by">{ e.By }</span>
+									@transition(e)
+									@activityTime(e.At)
+								</div>
+								if e.Reason != "" {
+									<p class="history-reason">“{ e.Reason }”</p>
+								}
+							}
 						}
 					</div>
 				</li>
 			}
 		</ol>
 	</section>
+}
+
+templ transition(e knowledge.Event) {
+	<span class="history-transition">
+		if e.From != "" {
+			{ statusLabel(e.From) } →
+		} else {
+			Created as
+		}
+		<span class={ "history-to tone-" + string(e.To) }>
+			<span class="status-dot history-to-dot"></span>
+			{ statusLabel(e.To) }
+		</span>
+	</span>
+}
+
+templ activityTime(at time.Time) {
+	<time class="history-at" datetime={ at.UTC().Format(time.RFC3339) }>{ formatTime(at) }</time>
 }

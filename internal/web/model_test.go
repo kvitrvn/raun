@@ -49,7 +49,7 @@ func TestListFilters(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			m := listModel(items, f)
+			m := listModel(items, nil, f)
 			var ids []string
 			for _, it := range m.Items {
 				ids = append(ids, it.ID)
@@ -115,7 +115,7 @@ func TestPagination(t *testing.T) {
 	}{
 		{1, 50, "persona-000001", 1}, {2, 50, "persona-000051", 2}, {3, 2, "persona-000101", 3}, {int(^uint(0) >> 1), 2, "persona-000101", 3},
 	} {
-		m := listModel(items, filters{Page: tt.page})
+		m := listModel(items, nil, filters{Page: tt.page})
 		if len(m.Items) != tt.count || m.Items[0].ID != tt.first || m.Filters.Page != tt.actual || m.Pages != 3 || m.Total != 102 {
 			t.Fatalf("pagination: %+v", m)
 		}
@@ -154,6 +154,10 @@ func TestFilterURLs(t *testing.T) {
 		// Changing a filter keeps the shown item, the other filters, and returns to page 1.
 		{f.withStatus("validated").url("requirement-8fz2mc"), "/knowledge/requirement-8fz2mc?q=invoice&status=validated&type=requirement"},
 		{f.withType("").url("requirement-8fz2mc"), "/knowledge/requirement-8fz2mc?q=invoice"},
+		// A run lists every status; leaving it keeps the other filters.
+		{f.withRun("run-b2").url(""), "/knowledge?q=invoice&run=run-b2&status=all&type=requirement"},
+		{f.withRun("run-b2").withChange("stale").url(""), "/knowledge?change=stale&q=invoice&run=run-b2&status=all&type=requirement"},
+		{f.withRun("run-b2").withChange("stale").withRun("").url(""), "/knowledge?q=invoice&status=all&type=requirement"},
 	} {
 		if tt.got != tt.want {
 			t.Errorf("url = %q, want %q", tt.got, tt.want)
@@ -162,7 +166,7 @@ func TestFilterURLs(t *testing.T) {
 }
 
 func TestInvalidFilters(t *testing.T) {
-	for _, query := range []string{"type=unknown", "status=unknown", "status=decided", "page=0", "page=-1", "page=no", "page=99999999999999999999999999"} {
+	for _, query := range []string{"type=unknown", "status=unknown", "status=decided", "page=0", "page=-1", "page=no", "page=99999999999999999999999999", "change=new", "run=r&change=unknown"} {
 		q, err := url.ParseQuery(query)
 		if err != nil {
 			t.Fatal(err)
@@ -183,7 +187,7 @@ func TestTypeAndStatusOrder(t *testing.T) {
 		{ID: "persona-bbbbbb", Type: knowledge.TypePersona, Status: knowledge.StatusValidated},
 		{ID: "persona-aaaaaa", Type: knowledge.TypePersona, Status: knowledge.StatusValidated},
 	}
-	m := listModel(items, filters{Page: 1, Status: "all"})
+	m := listModel(items, nil, filters{Page: 1, Status: "all"})
 	var ids []string
 	for _, it := range m.Items {
 		ids = append(ids, it.ID)
@@ -220,7 +224,7 @@ func TestNextPending(t *testing.T) {
 		// The only pending item stays.
 		{filters{Status: "proposed", Page: 1}, "persona-bbbbbb", "persona-bbbbbb"},
 	} {
-		if got, page := nextPending(items, tt.f, tt.current); got != tt.want || page != 1 {
+		if got, page := nextPending(items, nil, tt.f, tt.current); got != tt.want || page != 1 {
 			t.Errorf("next after %s in %+v = %s (page %d), want %s", tt.current, tt.f, got, page, tt.want)
 		}
 	}
@@ -228,7 +232,7 @@ func TestNextPending(t *testing.T) {
 	for i := range 60 {
 		many = append(many, &knowledge.Item{ID: fmt.Sprintf("persona-%06d", i), Type: knowledge.TypePersona, Status: knowledge.StatusProposed})
 	}
-	if id, page := nextPending(many, filters{Status: statusPending, Page: 1}, "persona-000049"); id != "persona-000050" || page != 2 {
+	if id, page := nextPending(many, nil, filters{Status: statusPending, Page: 1}, "persona-000049"); id != "persona-000050" || page != 2 {
 		t.Fatalf("next = %s page %d", id, page)
 	}
 }
@@ -240,6 +244,7 @@ func TestParseNext(t *testing.T) {
 	}{
 		{"/knowledge/persona-k3x9q2", "persona-k3x9q2", filters{Status: statusPending, Page: 1}},
 		{"/knowledge/requirement-8fz2mc?q=a+%26+b&type=requirement&status=all&page=2", "requirement-8fz2mc", filters{Query: "a & b", Type: "requirement", Status: statusAll, Page: 2}},
+		{"/knowledge/persona-k3x9q2?run=run-b2&change=needs-review&status=all", "persona-k3x9q2", filters{Status: statusAll, Run: "run-b2", Change: "needs-review", Page: 1}},
 	} {
 		id, f, err := parseNext(tt.raw)
 		if err != nil || id != tt.id || f != tt.f {
@@ -260,6 +265,8 @@ func TestParseNext(t *testing.T) {
 		"/knowledge/persona-k3x9q2?q=a&q=b",
 		"/knowledge/persona-k3x9q2?status=decided",
 		"/knowledge/persona-k3x9q2?page=0",
+		"/knowledge/persona-k3x9q2?change=new",
+		"/knowledge/persona-k3x9q2?run=a&run=b",
 		"javascript:alert(1)",
 		"knowledge/persona-k3x9q2",
 	} {

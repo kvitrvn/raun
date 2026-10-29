@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/kvitrvn/raun/internal/knowledge"
+	"github.com/kvitrvn/raun/internal/run"
 	"github.com/kvitrvn/raun/internal/web/ui"
 )
 
@@ -100,6 +101,18 @@ templ sidebar(m pageModel) {
 					@navItem(m, m.Filters.withStatus(string(knowledge.StatusNeedsReview)).url(m.selectedID()), m.Filters.Status == string(knowledge.StatusNeedsReview), "refresh-cw", "Needs review", func(c *counts) int { return c.status(knowledge.StatusNeedsReview) })
 				}
 			}
+			if runs := m.runList(sidebarRuns); len(runs) > 0 {
+				@ui.SidebarGroup() {
+					@ui.SidebarGroupLabel("nav-runs") {
+						Runs
+					}
+					@ui.SidebarMenu("nav-runs") {
+						for _, r := range runs {
+							@runNavItem(m, r)
+						}
+					}
+				}
+			}
 		}
 		@ui.SidebarFooter("") {
 			<span class="sidebar-mode">
@@ -129,6 +142,21 @@ templ navItem(m pageModel, href string, active bool, icon, label string, count f
 					{ strconv.Itoa(count(m.Counts)) }
 				}
 			}
+		}
+	}
+}
+
+templ runNavItem(m pageModel, r *run.Manifest) {
+	@ui.SidebarMenuItem() {
+		@ui.SidebarMenuButton(m.Filters.withRun(r.ID).url(m.selectedID()), m.Filters.Run == r.ID && m.Counts != nil) {
+			<span class={ "status-dot sidebar-run-dot " + runTone(r) } title={ r.Status }></span>
+			<span class="sidebar-run" title={ r.ID }>
+				<span class="sidebar-run-label">
+					{ runLabel(r) }
+					<span class="sidebar-run-commit">{ shortCommit(r.Commit) }</span>
+				</span>
+				<span class="sidebar-run-digest">{ runDigest(r) }</span>
+			</span>
 		}
 	}
 }
@@ -187,6 +215,18 @@ templ palette(m pageModel) {
 				@paletteView(m.Filters.withType("").withStatus(string(knowledge.StatusContested)).url(m.selectedID()), "split", "Contested")
 				@paletteView(m.Filters.withType("").withStatus(string(knowledge.StatusNeedsReview)).url(m.selectedID()), "refresh-cw", "Needs review")
 				@paletteView(m.Filters.withType("").withStatus(statusAll).url(m.selectedID()), "layout-list", "All knowledge")
+			}
+			if runs := m.runList(0); len(runs) > 0 {
+				@ui.CommandGroup("command-runs", "Runs") {
+					for _, r := range runs {
+						@ui.CommandItem(m.Filters.withRun(r.ID).url(m.selectedID()), "run "+r.ID+" "+runLabel(r)) {
+							@ui.Icon("refresh-cw")
+							<span class={ "status-dot command-item-dot " + runTone(r) }></span>
+							<span class="command-item-label">Run { runLabel(r) } · { runDigest(r) }</span>
+							<span class="command-item-hint">{ shortCommit(r.Commit) }</span>
+						}
+					}
+				}
 			}
 			for _, t := range knowledge.Types {
 				if hasType(m.Palette, t) {

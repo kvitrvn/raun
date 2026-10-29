@@ -72,6 +72,8 @@ raun run                     # on an existing knowledge base, the reconciler mat
 raun review                  # validated items whose ground changed are back as needs-review
 ```
 
+In `raun serve`, each run in the sidebar lists what it created and changed; rows, the detail's banner and its Activity show what the latest run did to each item.
+
 The reconciler tells which existing item each new result describes. Raun attaches the new support and evidence to that item without rewriting its content, and creates the rest as new proposals. A validated item moves to `needs-review` when one of its citations no longer holds at the new commit, or when the new results disagree with it. Rejected items stay rejected. See [docs/agents.md](docs/agents.md#running-again).
 
 The knowledge base is made of plain YAML files under `.raun/`. You review and version them with Git, like code.

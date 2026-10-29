@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/kvitrvn/raun/internal/knowledge"
+	"github.com/kvitrvn/raun/internal/run"
 	"github.com/kvitrvn/raun/internal/workspace"
 )
 
@@ -84,11 +85,20 @@ func checkWorkspace(root string) error {
 	return nil
 }
 
-func (h *handler) load() ([]*knowledge.Item, error) {
+// load reads the knowledge base and the run manifests.
+func (h *handler) load() ([]*knowledge.Item, *runIndex, error) {
 	if err := checkWorkspace(h.root); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return h.store.List()
+	items, err := h.store.List()
+	if err != nil {
+		return nil, nil, err
+	}
+	manifests, err := run.ReadManifests(workspace.RunsDir(h.root))
+	if err != nil {
+		return nil, nil, err
+	}
+	return items, &runIndex{Runs: manifests}, nil
 }
 
 func (h *handler) list(w http.ResponseWriter, r *http.Request) {
@@ -97,12 +107,17 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 		h.render(w, r, http.StatusBadRequest, pageModel{Title: "Invalid filters", Error: err.Error()})
 		return
 	}
-	items, err := h.load()
+	items, index, err := h.load()
 	if err != nil {
 		h.render(w, r, http.StatusInternalServerError, pageModel{Title: "Cannot read knowledge", Error: err.Error()})
 		return
 	}
-	m, err := h.shell(items, f, nil)
+	runs, err := newRunView(index, items, f.Run)
+	if err != nil {
+		h.render(w, r, http.StatusBadRequest, pageModel{Title: "Invalid filters", Error: err.Error()})
+		return
+	}
+	m, err := h.shell(items, runs, f, nil)
 	if err != nil {
 		h.render(w, r, http.StatusInternalServerError, pageModel{Title: "Cannot read knowledge", Error: err.Error()})
 		return
@@ -116,20 +131,25 @@ func (h *handler) detail(w http.ResponseWriter, r *http.Request) {
 		h.render(w, r, http.StatusBadRequest, pageModel{Title: "Invalid filters", Error: err.Error()})
 		return
 	}
-	items, err := h.load()
+	items, index, err := h.load()
 	if err != nil {
 		h.render(w, r, http.StatusInternalServerError, pageModel{Title: "Cannot read knowledge", Error: err.Error()})
+		return
+	}
+	runs, err := newRunView(index, items, f.Run)
+	if err != nil {
+		h.render(w, r, http.StatusBadRequest, pageModel{Title: "Invalid filters", Error: err.Error()})
 		return
 	}
 	id := r.PathValue("id")
 	i := slices.IndexFunc(items, func(it *knowledge.Item) bool { return it.ID == id })
 	if i < 0 {
-		m := listModel(items, f)
+		m := listModel(items, runs, f)
 		m.Title, m.Explicit, m.NotFound = "Knowledge item not found", true, fmt.Sprintf("No knowledge item with ID %q.", id)
 		h.render(w, r, http.StatusNotFound, m)
 		return
 	}
-	m, err := h.shell(items, f, items[i])
+	m, err := h.shell(items, runs, f, items[i])
 	if err != nil {
 		h.render(w, r, http.StatusInternalServerError, pageModel{Title: "Cannot read knowledge", Error: err.Error()})
 		return
@@ -139,8 +159,8 @@ func (h *handler) detail(w http.ResponseWriter, r *http.Request) {
 
 // shell lists items with f and details it, by default the first listed item.
 // The decision form of a pending item leads to the next one awaiting a decision.
-func (h *handler) shell(items []*knowledge.Item, f filters, it *knowledge.Item) (pageModel, error) {
-	m := listModel(items, f)
+func (h *handler) shell(items []*knowledge.Item, runs *runView, f filters, it *knowledge.Item) (pageModel, error) {
+	m := listModel(items, runs, f)
 	m.Explicit = it != nil
 	if it == nil {
 		if len(m.Items) == 0 {
@@ -156,7 +176,7 @@ func (h *handler) shell(items []*knowledge.Item, f filters, it *knowledge.Item) 
 		if err != nil {
 			return m, err
 		}
-		next, page := nextPending(items, f, it.ID)
+		next, page := nextPending(items, runs, f, it.ID)
 		m.Decision = &decisionModel{ID: it.ID, CSRF: h.csrf, Revision: revision, Next: f.withPage(page).url(next)}
 	}
 	return m, nil

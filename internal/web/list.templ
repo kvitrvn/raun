@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/kvitrvn/raun/internal/run"
 	"github.com/kvitrvn/raun/internal/web/ui"
 )
 
@@ -11,9 +12,12 @@ templ listColumn(m pageModel) {
 	<section class="list-column" aria-labelledby="list-title">
 		<div class="list-header">
 			<div class="list-heading">
-				<h1 id="list-title">{ viewTitle(m.Filters.Status) }</h1>
+				<h1 id="list-title">{ m.listTitle() }</h1>
 				<span class="list-subtitle">{ m.listSubtitle() }</span>
 			</div>
+			if r := m.Runs; r != nil && m.Filters.Run != "" && r.Active != nil {
+				@runCard(m, r)
+			}
 			@progress(m.Counts)
 			@searchForm(m)
 			@ui.TabsList(ui.TabsDefault, "Status", "status-tabs") {
@@ -62,6 +66,16 @@ templ listColumn(m pageModel) {
 							@ui.ItemDescription("") {
 								{ businessText(it) }
 							}
+							if badges := changeBadges(m.Runs.changes(it.ID)); len(badges) > 0 {
+								<span class="row-changes">
+									<span class="sr-only">Changed by the run of { runLabel(m.Runs.Active) }:</span>
+									for _, b := range badges {
+										@ui.Badge(ui.BadgeProps{Tone: b.Tone, Class: "badge-change"}) {
+											{ b.Label }
+										}
+									}
+								</span>
+							}
 							@ui.ItemFooter("") {
 								@ui.Icon(typeIcon(it.Type), ui.IconProps{Size: 12})
 								<span>{ it.ID }</span>
@@ -109,6 +123,97 @@ templ listColumn(m pageModel) {
 			}
 		</div>
 	</section>
+}
+
+templ runCard(m pageModel, v *runView) {
+	{{ r := v.Active }}
+	@ui.Card(ui.CardProps{Class: "run-card", Attrs: templ.Attributes{"aria-label": "Run " + r.ID}}) {
+		<div class="run-card-head">
+			@ui.Icon("refresh-cw", ui.IconProps{Size: 14, Class: "run-card-icon"})
+			<span class="run-card-id" data-copy={ r.ID } data-copy-label="Copy run ID" title={ r.ID }>{ r.ID }</span>
+			<span class="detail-spacer"></span>
+			<a href={ templ.SafeURL(m.Filters.withRun("").url(m.selectedID())) } class="run-card-close" title="Leave the run view" aria-label="Leave the run view">
+				@ui.Icon("x", ui.IconProps{Size: 14})
+			</a>
+		</div>
+		<div class="run-card-meta">
+			<span>{ formatTime(r.StartedAt) }</span>
+			<span aria-hidden="true">·</span>
+			<span>{ runDuration(r) }</span>
+			<span aria-hidden="true">·</span>
+			<span class="run-card-commits" title={ r.Commit }>
+				@ui.Icon("git-commit-horizontal", ui.IconProps{Size: 13})
+				{ commitRange(v.Index.previous(r), r) }
+			</span>
+		</div>
+		<div class="run-card-agents">
+			for _, rec := range runAgents(r) {
+				<span class={ "agent-chip agent-chip-sm run-agent tone-" + agentTone(rec) } title={ agentTitle(rec) }>
+					<span class="status-dot run-agent-dot"></span>
+					{ rec.ID }
+					if rec.ReportRetries > 0 {
+						<span class="run-agent-retries">↻{ strconv.Itoa(rec.ReportRetries) }</span>
+					}
+				</span>
+			}
+		</div>
+		if r.Status != run.StatusSucceeded {
+			<p class="run-card-error" role="note">Failed: { runError(r) }. A failed run writes nothing to the knowledge base.</p>
+		} else {
+			<nav class="run-card-changes" aria-label="Changes of this run">
+				for _, kind := range changeKinds {
+					if v.count(kind) > 0 {
+						@changeChip(m, v, kind)
+					}
+				}
+			</nav>
+			if none := v.noChanges(); none != "" {
+				<p class="run-card-none">{ none }</p>
+			}
+			if note := runNote(r); note != "" {
+				<p class="run-card-note">{ note }</p>
+			}
+			if rc := r.Reconciliation; rc != nil && len(rc.Skipped) > 0 {
+				<ul class="run-card-skipped">
+					for _, sk := range rc.Skipped {
+						<li><a href={ templ.SafeURL(m.Filters.url(sk.Item)) }>{ sk.Item }</a> not updated: { sk.Reason }</li>
+					}
+				</ul>
+			}
+		}
+		if len(r.Questions) > 0 {
+			<details class="run-card-questions">
+				<summary>{ plural(len(r.Questions), "project question") }</summary>
+				<ul>
+					for _, q := range r.Questions {
+						<li><span class="run-question-agent">{ q.Agent }</span> { q.Question }</li>
+					}
+				</ul>
+			</details>
+		}
+	}
+}
+
+// changeChip filters the run's items on one kind of change; the active
+// chip leaves the filter.
+templ changeChip(m pageModel, v *runView, kind string) {
+	{{
+		target := m.Filters.withChange(kind)
+		if m.Filters.Change == kind {
+			target = m.Filters.withChange("")
+		}
+	}}
+	<a
+		href={ templ.SafeURL(target.url(m.selectedID())) }
+		class={ "change-chip tone-" + changeTones[kind] }
+		if m.Filters.Change == kind {
+			aria-current="true"
+		}
+	>
+		<span class="change-chip-dot status-dot"></span>
+		{ changeLabels[kind] }
+		<span class="change-chip-count">{ strconv.Itoa(v.count(kind)) }</span>
+	</a>
 }
 
 templ progress(c *counts) {
@@ -173,6 +278,12 @@ templ searchForm(m pageModel) {
 		}
 		if m.Filters.Status != statusPending {
 			<input type="hidden" name="status" value={ m.Filters.Status }/>
+		}
+		if m.Filters.Run != "" {
+			<input type="hidden" name="run" value={ m.Filters.Run }/>
+		}
+		if m.Filters.Change != "" {
+			<input type="hidden" name="change" value={ m.Filters.Change }/>
 		}
 	</form>
 }

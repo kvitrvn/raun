@@ -2,9 +2,12 @@ package run
 
 import (
 	"bytes"
+	"cmp"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"go.yaml.in/yaml/v3"
@@ -181,4 +184,47 @@ func (m *Manifest) write(path string) error {
 		return err
 	}
 	return os.WriteFile(path, buf.Bytes(), 0o644)
+}
+
+// ReadManifests reads the manifest of every run under runsDir, oldest
+// first (by start time, then ID). A missing directory holds no runs, and a
+// run directory without a manifest (a run stopped before writing it) is
+// skipped. Manifests are decoded strictly; one that does not decode, or has
+// an unknown version, is an error naming its file.
+func ReadManifests(runsDir string) ([]*Manifest, error) {
+	entries, err := os.ReadDir(runsDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read runs: %w", err)
+	}
+	var manifests []*Manifest
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		path := filepath.Join(runsDir, e.Name(), "manifest.yaml")
+		data, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read manifest: %w", err)
+		}
+		var m Manifest
+		dec := yaml.NewDecoder(bytes.NewReader(data))
+		dec.KnownFields(true)
+		if err := dec.Decode(&m); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		if m.Version < 1 || m.Version > ManifestVersion {
+			return nil, fmt.Errorf("%s: version: must be between 1 and %d, got %d", path, ManifestVersion, m.Version)
+		}
+		manifests = append(manifests, &m)
+	}
+	slices.SortFunc(manifests, func(a, b *Manifest) int {
+		return cmp.Or(a.StartedAt.Compare(b.StartedAt), cmp.Compare(a.ID, b.ID))
+	})
+	return manifests, nil
 }
