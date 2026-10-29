@@ -11,7 +11,7 @@ import (
 )
 
 // ManifestVersion is the run manifest format version.
-const ManifestVersion = 2
+const ManifestVersion = 3
 
 // Run statuses.
 const (
@@ -21,8 +21,9 @@ const (
 
 // Agent roles.
 const (
-	RoleAnalyst = "analyst"
-	RoleLead    = "lead"
+	RoleAnalyst    = "analyst"
+	RoleLead       = "lead"
+	RoleReconciler = "reconciler"
 )
 
 // Consolidation methods.
@@ -59,8 +60,15 @@ type Manifest struct {
 	Anonymization map[string]string     `yaml:"anonymization,omitempty"`
 	Lead          *AgentRecord          `yaml:"lead,omitempty"`
 	Consolidation *ConsolidationSummary `yaml:"consolidation,omitempty"`
+	// Reconciler is the reconciler's record, when the run had existing
+	// items to match.
+	Reconciler *AgentRecord `yaml:"reconciler,omitempty"`
+	// Reconciliation describes how the run updated existing items.
+	Reconciliation *ReconciliationSummary `yaml:"reconciliation,omitempty"`
 	// Items lists the knowledge items this run created.
 	Items []string `yaml:"items,omitempty"`
+	// Updated lists the existing knowledge items this run changed.
+	Updated []string `yaml:"updated,omitempty"`
 	// Questions are agent questions not attached to any item.
 	Questions []QuestionRecord `yaml:"questions,omitempty"`
 }
@@ -96,6 +104,35 @@ type ConsolidationSummary struct {
 	Merged int `yaml:"merged"`
 	// Contested counts items created with a disagreement.
 	Contested int `yaml:"contested"`
+}
+
+// ReconciliationSummary describes how a run on an existing knowledge base
+// updated its items.
+type ReconciliationSummary struct {
+	// Candidates counts the existing items shown to the reconciler.
+	Candidates int `yaml:"candidates"`
+	// Matched counts the run's items attached to an existing item.
+	Matched int `yaml:"matched"`
+	// Conflicts counts the matched items the reconciler found to contradict
+	// the existing content.
+	Conflicts int `yaml:"conflicts"`
+	// StaleEvidence counts the existing evidence that stopped holding at the
+	// analyzed commit.
+	StaleEvidence int `yaml:"stale_evidence"`
+	// NeedsReview lists the validated items moved to needs-review.
+	NeedsReview []string `yaml:"needs_review,omitempty"`
+	// RejectedSupported lists the rejected items the run found again; they
+	// stay rejected.
+	RejectedSupported []string `yaml:"rejected_supported,omitempty"`
+	// Skipped lists the items left unchanged because they changed during
+	// the run.
+	Skipped []SkippedItem `yaml:"skipped,omitempty"`
+}
+
+// SkippedItem is an existing item a run did not update.
+type SkippedItem struct {
+	Item   string `yaml:"item"`
+	Reason string `yaml:"reason"`
 }
 
 // ReportSummary counts what a valid report contained and how its evidence

@@ -64,7 +64,10 @@ type Plan struct {
 type PlannedItem struct {
 	// Key identifies the item within the plan; requirement persona links
 	// use keys.
-	Key         string
+	Key string
+	// ID, when set, is the knowledge ID Build gives the item instead of a
+	// new one: reconciliation sets it for items matching an existing item.
+	ID          string
 	Type        knowledge.Type
 	Title       string
 	Persona     *agent.PersonaContent
@@ -130,16 +133,20 @@ func Identity(reports []CheckedReport) Plan {
 	return p
 }
 
-// Build assembles the planned items. newID allocates item IDs. Items with
-// a disagreement are moved to contested by the run.
+// Build assembles the planned items, in plan order. newID allocates the
+// IDs of items whose ID is not set. Items with a disagreement are moved to
+// contested by the run.
 func Build(runID, commit string, at time.Time, reports []CheckedReport, plan Plan, newID func(knowledge.Type) (string, error)) (Result, error) {
 	at = at.UTC().Truncate(time.Second)
 
 	ids := map[string]string{}
 	for _, pi := range plan.Items {
-		id, err := newID(pi.Type)
-		if err != nil {
-			return Result{}, err
+		id := pi.ID
+		if id == "" {
+			var err error
+			if id, err = newID(pi.Type); err != nil {
+				return Result{}, err
+			}
 		}
 		ids[pi.Key] = id
 	}
@@ -186,7 +193,6 @@ func buildItem(runID, commit string, at time.Time, reports []CheckedReport, pi P
 		it.Requirement = req
 	}
 
-	ev := &evidenceSet{item: it, commit: commit}
 	refEvidence := map[Ref][]string{}
 	for _, ref := range pi.Support {
 		if ref.Report < 0 || ref.Report >= len(reports) {
@@ -199,7 +205,7 @@ func buildItem(runID, commit string, at time.Time, reports []CheckedReport, pi P
 		}
 		in := r.Report.Interpretations[i]
 
-		support, evIDs, dropped := buildSupport(runID, r, in, ev)
+		support, evIDs, dropped := buildSupport(runID, commit, r, in, it)
 		it.Support = append(it.Support, support)
 		refEvidence[ref] = evIDs
 		if len(dropped) > 0 {
@@ -208,11 +214,11 @@ func buildItem(runID, commit string, at time.Time, reports []CheckedReport, pi P
 			if support.Nature != in.Nature {
 				summary += ". Its interpretation was downgraded to a hypothesis."
 			}
-			addPoint(it, knowledge.OpenPoint{Kind: knowledge.PointUncertainty, Summary: summary, RaisedBy: RaisedByRaun})
+			it.AddPoint(knowledge.OpenPoint{Kind: knowledge.PointUncertainty, Summary: summary, RaisedBy: RaisedByRaun})
 		}
 		for _, q := range r.Report.Questions {
 			if slices.Contains(q.About, in.ID) {
-				addPoint(it, knowledge.OpenPoint{Kind: knowledge.PointQuestion, Summary: q.Question, RaisedBy: r.Agent})
+				it.AddPoint(knowledge.OpenPoint{Kind: knowledge.PointQuestion, Summary: q.Question, RaisedBy: r.Agent})
 			}
 		}
 	}
@@ -233,13 +239,13 @@ func buildItem(runID, commit string, at time.Time, reports []CheckedReport, pi P
 			}
 			point.Positions = append(point.Positions, kp)
 		}
-		addPoint(it, point)
+		it.AddPoint(point)
 	}
 	for _, u := range pi.Uncertainties {
-		addPoint(it, knowledge.OpenPoint{Kind: knowledge.PointUncertainty, Summary: u, RaisedBy: RaisedByLead})
+		it.AddPoint(knowledge.OpenPoint{Kind: knowledge.PointUncertainty, Summary: u, RaisedBy: RaisedByLead})
 	}
 	for _, q := range pi.Questions {
-		addPoint(it, knowledge.OpenPoint{Kind: knowledge.PointQuestion, Summary: q, RaisedBy: RaisedByLead})
+		it.AddPoint(knowledge.OpenPoint{Kind: knowledge.PointQuestion, Summary: q, RaisedBy: RaisedByLead})
 	}
 
 	if len(pi.Disagreements) > 0 {
@@ -253,7 +259,7 @@ func buildItem(runID, commit string, at time.Time, reports []CheckedReport, pi P
 // buildSupport copies one interpretation into the item, keeping only
 // observations with valid evidence. It returns the support entry, the
 // evidence IDs it uses, and descriptions of the dropped observations.
-func buildSupport(runID string, r CheckedReport, in agent.Interpretation, ev *evidenceSet) (knowledge.Support, []string, []string) {
+func buildSupport(runID, commit string, r CheckedReport, in agent.Interpretation, it *knowledge.Item) (knowledge.Support, []string, []string) {
 	support := knowledge.Support{
 		Run:            runID,
 		Agent:          r.Agent,
@@ -274,7 +280,16 @@ func buildSupport(runID string, r CheckedReport, in agent.Interpretation, ev *ev
 				}
 				continue
 			}
-			id := ev.add(c)
+			id := it.AddEvidence(knowledge.Evidence{
+				Source:    c.Source,
+				Path:      c.Path,
+				Commit:    commit,
+				StartLine: c.Result.StartLine,
+				EndLine:   c.Result.EndLine,
+				Excerpt:   c.Result.Excerpt,
+				SHA256:    knowledge.HashExcerpt(c.Result.Excerpt),
+				State:     c.Result.State,
+			})
 			ids = append(ids, id)
 			if !slices.Contains(all, id) {
 				all = append(all, id)
@@ -290,44 +305,4 @@ func buildSupport(runID string, r CheckedReport, in agent.Interpretation, ev *ev
 		support.Nature = knowledge.NatureHypothesis
 	}
 	return support, all, dropped
-}
-
-// addPoint appends an open point, numbering it and skipping exact
-// duplicates (the same question asked by several agents, for instance).
-func addPoint(it *knowledge.Item, p knowledge.OpenPoint) {
-	for _, existing := range it.OpenPoints {
-		if existing.Kind == p.Kind && existing.Summary == p.Summary && p.Kind != knowledge.PointDisagreement {
-			return
-		}
-	}
-	p.ID = fmt.Sprintf("p%d", len(it.OpenPoints)+1)
-	it.OpenPoints = append(it.OpenPoints, p)
-}
-
-// evidenceSet adds evidence to an item, reusing the entry when two
-// citations land on the same lines.
-type evidenceSet struct {
-	item   *knowledge.Item
-	commit string
-}
-
-func (s *evidenceSet) add(c CheckedCitation) string {
-	for _, e := range s.item.Evidence {
-		if e.Path == c.Path && e.StartLine == c.Result.StartLine && e.EndLine == c.Result.EndLine {
-			return e.ID
-		}
-	}
-	id := fmt.Sprintf("e%d", len(s.item.Evidence)+1)
-	s.item.Evidence = append(s.item.Evidence, knowledge.Evidence{
-		ID:        id,
-		Source:    c.Source,
-		Path:      c.Path,
-		Commit:    s.commit,
-		StartLine: c.Result.StartLine,
-		EndLine:   c.Result.EndLine,
-		Excerpt:   c.Result.Excerpt,
-		SHA256:    knowledge.HashExcerpt(c.Result.Excerpt),
-		State:     c.Result.State,
-	})
-	return id
 }

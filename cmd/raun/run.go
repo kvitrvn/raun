@@ -34,7 +34,15 @@ func cmdRun(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	fmt.Fprintf(stdout, "Run %s: %d knowledge item(s) proposed.\n", m.ID, len(m.Items))
-	fmt.Fprintln(stdout, "Review them with: raun list -status proposed")
+	next := "raun list -status proposed"
+	if r := m.Reconciliation; r != nil {
+		fmt.Fprintf(stdout, "Run %s: %d knowledge item(s) proposed, %d updated (%d need review).\n", m.ID, len(m.Items), len(m.Updated), len(r.NeedsReview))
+		if len(r.NeedsReview) > 0 || len(r.Skipped) > 0 {
+			next = "raun review"
+		}
+	} else {
+		fmt.Fprintf(stdout, "Run %s: %d knowledge item(s) proposed.\n", m.ID, len(m.Items))
+	}
+	fmt.Fprintln(stdout, "Review them with: "+next)
 	return nil
 }

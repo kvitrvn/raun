@@ -56,6 +56,42 @@ func TestResolveCommit(t *testing.T) {
 	}
 }
 
+func TestIsAncestor(t *testing.T) {
+	ctx := context.Background()
+	fx := gittest.New(t)
+	fx.Write("f.txt", "1")
+	c1 := fx.Commit("one")
+	fx.Write("f.txt", "2")
+	c2 := fx.Commit("two")
+	fx.Git("checkout", "--quiet", "-b", "side", c1)
+	fx.Write("f.txt", "side")
+	side := fx.Commit("side")
+	r, err := Open(ctx, fx.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		ancestor, commit string
+		want             bool
+	}{
+		{c1, c2, true},
+		{c2, c2, true},
+		{c2, c1, false},
+		{c2, side, false},
+		{c1, side, true},
+	}
+	for _, tt := range tests {
+		got, err := r.IsAncestor(ctx, tt.ancestor, tt.commit)
+		if err != nil || got != tt.want {
+			t.Errorf("IsAncestor(%.7s, %.7s) = %v, %v; want %v", tt.ancestor, tt.commit, got, err, tt.want)
+		}
+	}
+	if _, err := r.IsAncestor(ctx, "0000000000000000000000000000000000000000", c2); !errors.Is(err, ErrUnknownCommit) {
+		t.Errorf("IsAncestor(unknown) error = %v, want ErrUnknownCommit", err)
+	}
+}
+
 func TestReadFile(t *testing.T) {
 	ctx := context.Background()
 	fx := gittest.New(t)

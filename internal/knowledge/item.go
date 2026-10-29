@@ -14,6 +14,7 @@ import (
 	"path"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -227,6 +228,51 @@ func (it *Item) HasUnresolvedDisagreement() bool {
 	return slices.ContainsFunc(it.OpenPoints, func(p OpenPoint) bool {
 		return p.Kind == PointDisagreement && p.Unresolved()
 	})
+}
+
+// AddEvidence adds an evidence and returns its ID. An entry citing the same
+// lines of the same file at the same commit is reused; a new entry is
+// numbered after the existing ones.
+func (it *Item) AddEvidence(e Evidence) string {
+	ids := make([]string, len(it.Evidence))
+	for i, x := range it.Evidence {
+		if x.Path == e.Path && x.Commit == e.Commit && x.StartLine == e.StartLine && x.EndLine == e.EndLine {
+			return x.ID
+		}
+		ids[i] = x.ID
+	}
+	e.ID = nextLocalID("e", ids)
+	it.Evidence = append(it.Evidence, e)
+	return e.ID
+}
+
+// AddPoint appends an open point, numbered after the existing ones, and
+// returns its ID. A question or uncertainty already recorded with the same
+// summary, resolved or not, is not added again (the same question asked by
+// several agents, for instance): AddPoint then returns its ID and false.
+func (it *Item) AddPoint(p OpenPoint) (string, bool) {
+	ids := make([]string, len(it.OpenPoints))
+	for i, x := range it.OpenPoints {
+		if x.Kind == p.Kind && x.Summary == p.Summary && p.Kind != PointDisagreement {
+			return x.ID, false
+		}
+		ids[i] = x.ID
+	}
+	p.ID = nextLocalID("p", ids)
+	it.OpenPoints = append(it.OpenPoints, p)
+	return p.ID, true
+}
+
+// nextLocalID returns prefix followed by one more than the highest number
+// among ids that start with prefix.
+func nextLocalID(prefix string, ids []string) string {
+	n := 0
+	for _, id := range ids {
+		if v, err := strconv.Atoi(strings.TrimPrefix(id, prefix)); err == nil && strings.HasPrefix(id, prefix) {
+			n = max(n, v)
+		}
+	}
+	return prefix + strconv.Itoa(n+1)
 }
 
 // HashExcerpt returns the hex SHA-256 of an evidence excerpt.

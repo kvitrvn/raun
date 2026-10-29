@@ -91,15 +91,15 @@ Full examples live in `internal/knowledge/testdata/`.
 | `status` | See [Statuses](#statuses). Always equals the `to` of the last `history` event. |
 | `persona` | Only for type `persona`: `description` (required), `goals[]`, `capabilities[]`. |
 | `requirement` | Only for type `requirement`: `statement` (required), `kind` (`business-rule`, `functional`, `constraint`), `rationale`, `personas[]` (persona IDs, which must exist). |
-| `support[]` | Agent interpretations backing the item, copied from agent reports: `run`, `agent`, `interpretation` (ID in the report), `statement`, `nature`, `observations[]`. |
+| `support[]` | Agent interpretations backing the item, copied from agent reports: `run`, `agent`, `interpretation` (ID in the report), `statement`, `nature`, `observations[]`. Later runs append to it and never change existing entries. |
 | `support[].nature` | `supported`: needs at least one observation. `hypothesis`: an inference the agent declared as such; observations optional. |
 | `support[].observations[]` | `statement` + `evidence[]` (at least one evidence ID from this file). |
 | `evidence[]` | `id` (`e1`, `e2`, …), `source` (`code`, `doc`, `human-context`), `path` (clean, relative to the repository root), `commit` (full hash), `start_line`, `end_line` (1-based, inclusive), `excerpt`, `sha256` (hex SHA-256 of `excerpt`), `state`. |
 | `evidence[].state` | Set by Raun, never by an agent. See [Evidence states](#evidence-states). |
-| `open_points[]` | `id` (`p1`, …), `kind` (`disagreement`, `uncertainty`, `question`), `summary`, `raised_by` (optional: an agent ID, `lead`, or `raun` for verification problems), `positions[]`, `resolution`. |
+| `open_points[]` | `id` (`p1`, …), `kind` (`disagreement`, `uncertainty`, `question`), `summary`, `raised_by` (optional: an agent ID, `lead`, `reconciler` for a conflict with the existing content, or `raun` for verification problems), `positions[]`, `resolution`. |
 | `open_points[].positions[]` | One side of a disagreement, kept as written: `statement`, `run`, `agents[]`, `evidence[]`. A disagreement has at least two positions. |
 | `open_points[].resolution` | Set by a human: `at`, `by`, `position` (0-based index of the retained position, optional), `note`. |
-| `history[]` | Every status change: `at` (UTC), `actor` (`human` or `run`), `by` (person name or run ID), `from` (absent on creation), `to`, `reason` (required for humans). |
+| `history[]` | Every status change: `at` (UTC), `actor` (`human` or `run`), `by` (person name or run ID), `from` (absent on creation), `to`, `reason` (required for humans; for a run, why the item's ground changed). |
 
 ## Evidence states
 
@@ -112,7 +112,7 @@ Raun checks evidence without any LLM. The excerpt must equal the cited lines as 
 | `invalid` | At the cited commit, the excerpt is not in the file, or the file is missing, binary or not a regular file, or the citation is too long. The agent's claim has no ground. |
 | `stale` | It held at the cited commit, but no longer at a later one (file deleted or excerpt changed). |
 
-`raun verify` reports both checks for every evidence: integrity at the cited commit and freshness at HEAD (or `-at <rev>`). It writes nothing. Only runs update states in files. Human context files must be committed to be citable.
+`raun verify` reports both checks for every evidence: integrity at the cited commit and freshness at HEAD (or `-at <rev>`). It writes nothing. Only runs update states in files: a run on an existing knowledge base checks the freshness of every evidence cited at an ancestor of the analyzed commit, marks the evidence that no longer holds `stale`, and sets stale evidence that holds again back to `verified` (see [agents.md](agents.md#running-again)). Human context files must be committed to be citable.
 
 ## Statuses
 
@@ -129,6 +129,8 @@ Raun checks evidence without any LLM. The excerpt must equal the cited lines as 
 
 A run can never validate or reject. An item cannot be `validated` while one of its disagreements is unresolved. Uncertainties and questions do not block validation.
 
+A run moves a `validated` item to `needs-review` when its ground changes: one of its evidence becomes `stale`, or the run adds a disagreement to it (from the lead, or a conflict with the existing content declared by the reconciler). It moves a `proposed` item to `contested` when it adds a disagreement. Support that only confirms an item changes nothing, and neither does a run that does not find an item again.
+
 Humans act through `raun accept`, `reject` and `reopen` (status changes, which need `-reason`) and through `raun resolve` (which needs `-note`). Every decision records its author. Resolving a disagreement may name the retained position, but it never changes the item's content. When the last disagreement of a `contested` item is resolved, the item goes back to `proposed` automatically. That change is recorded as a human event with the reason `disagreements resolved`.
 
 # Run manifests
@@ -137,7 +139,7 @@ Each run writes `.raun/runs/<run-id>/manifest.yaml`. The run ID is the UTC start
 
 | Field | Content |
 |---|---|
-| `version` | Manifest format version, `2`. Version 1 manifests, written before retries existed, have the same fields without `salvaged` and `report_retries`. |
+| `version` | Manifest format version, `3`. Version 2 manifests, written before reruns existed, have the same fields without `reconciler`, `reconciliation` and `updated`. Version 1 manifests, written before retries existed, also lack `salvaged` and `report_retries`. |
 | `id`, `status`, `error` | Run ID; `succeeded` or `failed`, with the reason. |
 | `started_at`, `finished_at` | UTC. |
 | `commit` | The analyzed commit. |
@@ -145,6 +147,9 @@ Each run writes `.raun/runs/<run-id>/manifest.yaml`. The run ID is the UTC start
 | `agents[]` | Per agent: `id`, `role`, `instructions` and their `instructions_sha256`, `argv`, `prompt_sha256`, `status` (`ok`/`failed`), `error`, `exit_code`, `duration` (all attempts), `salvaged` (the answer was read from the output of an agent stopped by its timeout), `report_retries` (how many times it was asked again for its answer; see [agents.md](agents.md#missing-answers)), `snapshot_changes`, and for a valid report a `report` summary (counts, evidence outcomes, `rejected_evidence` with reasons). |
 | `anonymization` | With a lead: which agent each label (`A`, `B`, …) shown to the lead stands for. |
 | `lead` | With a lead: its record, like an agent's. |
-| `consolidation` | `method` (`identity` for a single valid report, `lead` otherwise), `items`, `merged` (items backed by several interpretations), `contested`. |
+| `consolidation` | `method` (`identity` for a single valid report, `lead` otherwise), `items`, `merged` (items backed by several interpretations), `contested`. It counts the consolidated items, before reconciliation. |
+| `reconciler` | When the knowledge base held items of the configured types: the reconciler's record, like an agent's. |
+| `reconciliation` | On an existing knowledge base: `candidates` (existing items shown to the reconciler), `matched` (run items attached to an existing item), `conflicts`, `stale_evidence`, `needs_review` (validated items moved to needs-review), `rejected_supported` (rejected items found again; they stay rejected), `skipped` (`item` and `reason` of items left unchanged because they changed during the run). |
 | `items` | IDs of the knowledge items created. |
+| `updated` | IDs of the existing knowledge items changed. |
 | `questions` | Agent questions not attached to any item. |

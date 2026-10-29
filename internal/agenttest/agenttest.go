@@ -51,6 +51,14 @@ const (
 	// like Lead when asked again.
 	LeadDropThenLead = "lead-drop-then-lead"
 
+	// Reconciler matches new items to existing items with the same type and
+	// title, and declares a conflict when a requirement statement differs.
+	Reconciler = "reconciler"
+	// ReconcilerUnknownMatch matches an item that does not exist.
+	ReconcilerUnknownMatch = "reconciler-unknown-match"
+	// ReconcilerDrop leaves an item out.
+	ReconcilerDrop = "reconciler-drop"
+
 	// TimeoutAfterReport prints Report, then hangs until it is stopped.
 	TimeoutAfterReport = "timeout-after-report"
 	// TimeoutTruncated prints Report cut in its second question, then
@@ -95,9 +103,14 @@ func fake(scenario string) int {
 	data, _ := io.ReadAll(os.Stdin)
 	prompt := string(data)
 	retry := strings.HasPrefix(prompt, "# Raun report retry")
-	task := retry || strings.Contains(prompt, "# Raun analysis task") || strings.Contains(prompt, "# Raun consolidation task")
-	if strings.HasPrefix(scenario, Lead) && !retry {
+	task := retry || strings.Contains(prompt, "# Raun analysis task") || strings.Contains(prompt, "# Raun consolidation task") ||
+		strings.Contains(prompt, "# Raun reconciliation task")
+	switch {
+	case retry:
+	case strings.HasPrefix(scenario, Lead):
 		task = strings.Contains(prompt, "# Raun consolidation task")
+	case strings.HasPrefix(scenario, Reconciler):
+		task = strings.Contains(prompt, "# Raun reconciliation task")
 	}
 	if !task || os.Getenv("RAUN_RUN_ID") == "" {
 		fmt.Fprintln(os.Stderr, "fake agent: unexpected prompt or environment")
@@ -125,6 +138,13 @@ func fake(scenario string) int {
 		out, err := consolidate(prompt, scenario)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "fake lead:", err)
+			return 6
+		}
+		fmt.Println(out)
+	case Reconciler, ReconcilerUnknownMatch, ReconcilerDrop:
+		out, err := reconcile(prompt, scenario)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fake reconciler:", err)
 			return 6
 		}
 		fmt.Println(out)
@@ -276,13 +296,6 @@ func Config(argv []string, timeout string) string {
 // TeamConfig returns a configuration with the given analysts and, if
 // leadArgv is not nil, a lead.
 func TeamConfig(timeout string, leadArgv []string, agents ...Agent) string {
-	quote := func(argv []string) string {
-		quoted := make([]string, len(argv))
-		for i, a := range argv {
-			quoted[i] = fmt.Sprintf("%q", a)
-		}
-		return strings.Join(quoted, ", ")
-	}
 	var b strings.Builder
 	b.WriteString(`version: 2
 language: en
@@ -305,6 +318,19 @@ analysis:
 		fmt.Fprintf(&b, "lead:\n  runner: { argv: [%s], timeout: %s }\n", quote(leadArgv), timeout)
 	}
 	return b.String()
+}
+
+// WithReconciler adds a reconciler running argv to a configuration.
+func WithReconciler(config string, argv []string) string {
+	return config + fmt.Sprintf("reconciler:\n  runner: { argv: [%s], timeout: 10s }\n", quote(argv))
+}
+
+func quote(argv []string) string {
+	quoted := make([]string, len(argv))
+	for i, a := range argv {
+		quoted[i] = fmt.Sprintf("%q", a)
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // NewProject commits the fixture project, configured with a single agent

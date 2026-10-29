@@ -26,6 +26,7 @@ import (
 	"github.com/kvitrvn/raun/internal/gitx"
 	"github.com/kvitrvn/raun/internal/knowledge"
 	"github.com/kvitrvn/raun/internal/prompt"
+	"github.com/kvitrvn/raun/internal/reconcile"
 	"github.com/kvitrvn/raun/internal/snapshot"
 	"github.com/kvitrvn/raun/internal/source"
 	"github.com/kvitrvn/raun/internal/workspace"
@@ -81,14 +82,6 @@ func Execute(ctx context.Context, opts Options) (*Manifest, error) {
 	if err != nil {
 		return nil, err
 	}
-	store := knowledge.NewStore(workspace.KnowledgeDir(opts.Dir))
-	existing, err := store.List()
-	if err != nil {
-		return nil, err
-	}
-	if len(existing) > 0 {
-		return nil, fmt.Errorf("the knowledge base already holds %d item(s); running again on an existing base needs reconciliation, which is not implemented yet", len(existing))
-	}
 	agents, err := selectAgents(cfg, opts.Agent)
 	if err != nil {
 		return nil, err
@@ -96,6 +89,14 @@ func Execute(ctx context.Context, opts Options) (*Manifest, error) {
 	types := make([]knowledge.Type, len(cfg.Types))
 	for i, t := range cfg.Types {
 		types[i] = knowledge.Type(t)
+	}
+	store := knowledge.NewStore(workspace.KnowledgeDir(opts.Dir))
+	existing, err := store.List()
+	if err != nil {
+		return nil, err
+	}
+	if n := len(candidates(existing, types)); n > 0 && cfg.Reconciler == nil {
+		return nil, fmt.Errorf("the knowledge base holds %d item(s) of the configured types: add a `reconciler` section to match new results against them (see docs/agents.md)", n)
 	}
 
 	start := now().UTC().Truncate(time.Second)
@@ -128,7 +129,7 @@ func Execute(ctx context.Context, opts Options) (*Manifest, error) {
 		hidden:   hiddenFromAgents(cfg.Sources.Context),
 	}
 
-	runErr := r.execute(ctx, m, agents, store, now)
+	runErr := r.execute(ctx, m, agents, store, existing, now)
 	m.FinishedAt = now().UTC().Truncate(time.Second)
 	if runErr != nil {
 		m.Status = StatusFailed
@@ -157,7 +158,7 @@ type runner struct {
 	mu       sync.Mutex // serializes progress output
 }
 
-func (r *runner) execute(ctx context.Context, m *Manifest, agents []config.Agent, store *knowledge.Store, now func() time.Time) error {
+func (r *runner) execute(ctx context.Context, m *Manifest, agents []config.Agent, store *knowledge.Store, existing []*knowledge.Item, now func() time.Time) error {
 	// Analysts work in parallel and independently.
 	recs := make([]AgentRecord, len(agents))
 	parsed := make([]*agent.Report, len(agents))
@@ -204,6 +205,16 @@ func (r *runner) execute(ctx context.Context, m *Manifest, agents []config.Agent
 		m.Consolidation = &ConsolidationSummary{Method: MethodLead}
 	}
 
+	// Planned items describing an existing item take its ID.
+	var matches []reconcile.Match
+	if shown := candidates(existing, r.types); len(shown) > 0 && len(plan.Items) > 0 {
+		rec, err := r.reconcile(ctx, m, shown, plan, reports)
+		if err != nil {
+			return err
+		}
+		matches = reconcile.Assign(&plan, rec)
+	}
+
 	used := map[string]bool{}
 	newID := func(t knowledge.Type) (string, error) {
 		for {
@@ -214,20 +225,23 @@ func (r *runner) execute(ctx context.Context, m *Manifest, agents []config.Agent
 			}
 		}
 	}
-	res, err := consolidate.Build(r.runID, r.commit, now(), reports, plan, newID)
+	at := now()
+	res, err := consolidate.Build(r.runID, r.commit, at, reports, plan, newID)
 	if err != nil {
 		return err
 	}
-	for _, it := range res.Items {
+	var created []*knowledge.Item
+	for i, it := range res.Items {
+		if plan.Items[i].ID != "" {
+			continue
+		}
 		if err := it.Validate(); err != nil {
 			return fmt.Errorf("consolidated item %s is invalid: %w", it.ID, err)
 		}
+		created = append(created, it)
 	}
+	m.Consolidation.Items = len(res.Items)
 	for _, it := range res.Items {
-		if err := store.Save(it); err != nil {
-			return err
-		}
-		m.Items = append(m.Items, it.ID)
 		if len(it.Support) > 1 {
 			m.Consolidation.Merged++
 		}
@@ -235,13 +249,181 @@ func (r *runner) execute(ctx context.Context, m *Manifest, agents []config.Agent
 			m.Consolidation.Contested++
 		}
 	}
-	m.Consolidation.Items = len(res.Items)
+	r.logf("%d knowledge item(s) proposed, %d merged from several agents, %d contested",
+		len(res.Items), m.Consolidation.Merged, m.Consolidation.Contested)
+
+	if len(existing) > 0 {
+		if err := r.update(ctx, m, store, existing, reconcile.Attachments(res.Items, matches), at); err != nil {
+			return err
+		}
+		m.Reconciliation.Matched = len(matches)
+		for _, match := range matches {
+			if match.Conflict != "" {
+				m.Reconciliation.Conflicts++
+			}
+		}
+	}
+	for _, it := range created {
+		if err := store.Save(it); err != nil {
+			return err
+		}
+		m.Items = append(m.Items, it.ID)
+	}
 	for _, q := range res.Questions {
 		m.Questions = append(m.Questions, QuestionRecord{Agent: q.Agent, ID: q.ID, Question: q.Question})
 	}
-	r.logf("%d knowledge item(s) proposed, %d merged from several agents, %d contested",
-		len(res.Items), m.Consolidation.Merged, m.Consolidation.Contested)
+	if m.Reconciliation != nil {
+		r.logf("%d item(s) created, %d existing item(s) updated, %d need review, %d evidence stale",
+			len(m.Items), len(m.Updated), len(m.Reconciliation.NeedsReview), m.Reconciliation.StaleEvidence)
+	}
 	return nil
+}
+
+// update brings the run's results to the existing items: the attachments of
+// the reconciliation, and the freshness of their evidence at the analyzed
+// commit. Every change is computed and validated before anything is
+// written. Each item is then reread and updated under its lock, so that a
+// human decision taken during the run is kept; an item whose matched
+// content changed in the meantime is skipped.
+func (r *runner) update(ctx context.Context, m *Manifest, store *knowledge.Store, existing []*knowledge.Item, attach map[string][]reconcile.Attachment, at time.Time) error {
+	if m.Reconciliation == nil {
+		m.Reconciliation = &ReconciliationSummary{}
+	}
+	fresh, err := reconcile.CheckFreshness(ctx, existing, r.commit, r.verifier, r.repo)
+	if err != nil {
+		return err
+	}
+
+	// Dry run on the listed items, which are not saved. Apply never changes
+	// their content, which stays what the reconciler was shown.
+	var changed []*knowledge.Item
+	for _, it := range existing {
+		out, err := reconcile.Apply(it, attach[it.ID], fresh, r.runID, at)
+		if err != nil {
+			return fmt.Errorf("reconcile %s: %w", it.ID, err)
+		}
+		if !out.Changed {
+			continue
+		}
+		if err := it.Validate(); err != nil {
+			return fmt.Errorf("reconciled item %s is invalid: %w", it.ID, err)
+		}
+		changed = append(changed, it)
+	}
+
+	for _, listed := range changed {
+		skip := func(reason string) {
+			m.Reconciliation.Skipped = append(m.Reconciliation.Skipped, SkippedItem{Item: listed.ID, Reason: reason})
+			r.logf("%s: warning: not updated: %s", listed.ID, reason)
+		}
+		current, err := store.Get(listed.ID)
+		if errors.Is(err, knowledge.ErrNotFound) {
+			skip("it was removed during the run")
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if len(attach[listed.ID]) > 0 && !reconcile.SameContent(listed, current) {
+			skip("its content changed during the run")
+			continue
+		}
+		revision, err := knowledge.Revision(current)
+		if err != nil {
+			return err
+		}
+		from := current.Status
+		var out reconcile.Outcome
+		var status knowledge.Status
+		err = store.Update(listed.ID, revision, func(it *knowledge.Item) error {
+			var err error
+			out, err = reconcile.Apply(it, attach[it.ID], fresh, r.runID, at)
+			status = it.Status
+			return err
+		})
+		if errors.Is(err, knowledge.ErrConflict) {
+			skip("it changed during the run")
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		m.Updated = append(m.Updated, listed.ID)
+		m.Reconciliation.StaleEvidence += len(out.Stale)
+		if from == knowledge.StatusValidated && status == knowledge.StatusNeedsReview {
+			m.Reconciliation.NeedsReview = append(m.Reconciliation.NeedsReview, listed.ID)
+		}
+		if status == knowledge.StatusRejected && len(attach[listed.ID]) > 0 {
+			m.Reconciliation.RejectedSupported = append(m.Reconciliation.RejectedSupported, listed.ID)
+		}
+	}
+	return nil
+}
+
+// reconcile asks the reconciler which existing item each planned item
+// describes. Any reconciler failure fails the run: the knowledge base never
+// receives unreconciled results.
+func (r *runner) reconcile(ctx context.Context, m *Manifest, shown []*knowledge.Item, plan consolidate.Plan, reports []consolidate.CheckedReport) (*agent.Reconciliation, error) {
+	c := r.cfg.Reconciler
+	rec := AgentRecord{ID: RoleReconciler, Role: RoleReconciler, Instructions: c.Instructions, Argv: c.Runner.Argv, Status: AgentFailed}
+	defer func() { m.Reconciler = &rec }()
+	m.Reconciliation = &ReconciliationSummary{Candidates: len(shown)}
+
+	input, refs, err := reconcile.Input(shown, plan, reports)
+	if err != nil {
+		return nil, err
+	}
+	instructions, err := r.instructions(c.Instructions)
+	if err != nil {
+		return nil, err
+	}
+	text, err := prompt.Reconciler{
+		Instructions: instructions,
+		Commit:       r.commit,
+		Language:     r.cfg.Language,
+		Types:        r.types,
+		Items:        string(input),
+	}.Render()
+	if err != nil {
+		return nil, err
+	}
+
+	r.logf("reconciler: matching %d item(s) against %d existing", len(plan.Items), len(shown))
+	var out *agent.Reconciliation
+	ok, err := r.invoke(ctx, &rec, instructions, text, c.Runner, func(stdout []byte, salvage bool) error {
+		var data []byte
+		var err error
+		out, data, err = agent.ParseReconciliation(stdout, refs.Existing, refs.Items, salvage)
+		if data != nil {
+			if err := os.WriteFile(filepath.Join(r.rawDir, rec.ID, "reconciliation.json"), data, 0o644); err != nil {
+				return &infraError{err}
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("invalid reconciliation: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("%w: reconciler failed: %s", ErrRunFailed, rec.Error)
+	}
+	rec.Status = AgentOK
+	return out, nil
+}
+
+// candidates returns the existing items of the given types: those the
+// reconciler matches the run's results against.
+func candidates(items []*knowledge.Item, types []knowledge.Type) []*knowledge.Item {
+	var out []*knowledge.Item
+	for _, it := range items {
+		if slices.Contains(types, it.Type) {
+			out = append(out, it)
+		}
+	}
+	return out
 }
 
 // analyze runs one analyst. It returns the agent's stdout, or nil if the

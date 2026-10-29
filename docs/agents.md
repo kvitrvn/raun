@@ -24,11 +24,14 @@ analysis:
 lead:                          # required with several analysts
   instructions: builtin:lead
   runner: { kind: command, argv: ["my-agent", "--json"], timeout: 20m }
+reconciler:                    # required once the knowledge base holds items
+  instructions: builtin:reconciler
+  runner: { kind: command, argv: ["my-agent", "--json"], timeout: 20m }
 ```
 
 The configuration format is version 2. Raun refuses a version 1 file: set `version: 2`, the rest of a version 1 file is still valid.
 
-Analysts run in parallel and independently. When several reports are valid, the lead consolidates them. A run with a single valid report skips the lead and creates one item per interpretation. If fewer than `quorum` reports are valid, or if the lead fails, the run fails and writes nothing to the knowledge base.
+Analysts run in parallel and independently. When several reports are valid, the lead consolidates them. A run with a single valid report skips the lead and creates one item per interpretation. When the knowledge base already holds items, the reconciler then matches the run's items against them (see [Running again](#running-again)). If fewer than `quorum` reports are valid, or if the lead or the reconciler fails, the run fails and writes nothing to the knowledge base.
 
 `instructions` only replaces the job description. Raun always appends the project facts, the knowledge types and the output contract, so custom instructions cannot break the contract.
 
@@ -41,7 +44,7 @@ Analysts run in parallel and independently. When several reports are valid, the 
 | stderr | Free; saved with the run's raw artifacts. |
 | exit code | Must be 0. Anything else counts as a failure. |
 | working directory | A disposable copy of the analyzed commit. |
-| environment | Inherited, plus `RAUN_RUN_ID` and `RAUN_ROLE` (`analyst` or `lead`). |
+| environment | Inherited, plus `RAUN_RUN_ID` and `RAUN_ROLE` (`analyst`, `lead` or `reconciler`). |
 | timeout | `runner.timeout`; the whole process group is killed when it expires. What the agent printed before is still read (see [Missing answers](#missing-answers)). |
 
 The working directory is a plain copy of the commit, outside the repository. It contains no `.git` and nothing from `.raun/` except the context files. Agents therefore cannot read the knowledge base, earlier conclusions, or the configuration that would tell them which agents take part. They cannot modify the repository either. Any file an agent changes in its copy is listed in the run manifest (`snapshot_changes`).
@@ -49,23 +52,23 @@ The working directory is a plain copy of the commit, outside the repository. It 
 
 ## Reading the answer
 
-Raun reads an analyst's report and the lead's consolidation the same way:
+Raun reads an analyst's report, the lead's consolidation and the reconciler's answer the same way:
 
 - Every top-level JSON object in stdout is a candidate. Starting from the last one, the first that has a top-level `version` key is the answer.
 - A candidate without `version` may carry the answer as text in one of its string values: a tool that wraps its final message in a JSON envelope, or a stream of JSON lines whose last message holds the report. Raun searches those strings the same way, a few levels deep. It knows no particular tool.
 - A candidate that does not parse is repaired first. A backslash that starts no valid escape (`\d`, `C:\Users`) is doubled, and raw control characters inside strings are escaped.
 
-The answer found is then decoded strictly and validated as usual. What Raun decoded is saved as `report.json` (or `consolidation.json` for the lead) with the raw artifacts.
+The answer found is then decoded strictly and validated as usual. What Raun decoded is saved as `report.json` (`consolidation.json` for the lead, `reconciliation.json` for the reconciler) with the raw artifacts.
 
 ## Missing answers
 
-An analyst or the lead that leaves no valid answer is not always lost:
+An analyst, the lead or the reconciler that leaves no valid answer is not always lost:
 
 - **Stopped by its timeout.** Raun reads what the agent printed before it was stopped. If that holds a valid answer, it is kept with a warning, and the manifest marks the agent `salvaged: true`. It counts toward the quorum like any other report. If the answer was cut while it was being printed, Raun closes it after its last complete array element and validates the result. An element cut in its middle is dropped.
 - **No valid answer, but something to build one from.** This covers an agent that exits with code 0 having answered in prose, stopped at "now let me write the JSON", or broken the contract, and an agent stopped by its timeout without a usable answer. Raun asks it again, at most `runner.report_retries` times. The retry runs on the same copy of the commit. Its prompt starts with `# Raun report retry` and holds:
   - the problems found, with their field paths;
   - the last 64 KiB of what the agent printed;
-  - the original prompt from its `## Project` section on (project facts, knowledge types, the reports for the lead, and the output contract).
+  - the original prompt from its `## Project` section on (project facts, knowledge types, the reports for the lead or the items for the reconciler, and the output contract).
 
   The agent is told not to start over. A retry has the agent's `timeout`, or `report_grace` when the attempt before it was stopped by its timeout, since that timeout is already spent. `report_grace: 0` disables the retry after a timeout. A retry stopped by its timeout is salvaged in the same way.
 - **Failed for good.** An agent that printed almost nothing (under 64 bytes) is not asked again: there is nothing to build an answer from, and the likely cause (a prompt over the model's context window, a refused API call) would not change. Neither is an agent that exits with a non-zero code or exceeds `max_output_bytes`. An interrupted run is not retried either.
@@ -116,7 +119,7 @@ An invalid report fails the agent once its retries are spent (see [Missing answe
 1. **Classify each cited path.** `sources.context` files give `human-context`. Paths matching `sources.exclude` are rejected. Paths matching `sources.docs` give `doc`. Everything else is `code`.
 2. **Verify each citation** at the analyzed commit, without any LLM (see [format.md](format.md#evidence-states)). Raun stores the file's own text, not the agent's copy of it.
 3. **Drop invalid evidence.** An observation left without valid evidence is dropped. A `supported` interpretation that loses all its observations becomes a `hypothesis`. Both cases add an `uncertainty` open point that explains why.
-4. **Create one `proposed` item per interpretation.** Each question becomes a `question` open point on the items it is about. Project-wide questions go to the run manifest.
+4. **Create one `proposed` item per interpretation.** Each question becomes a `question` open point on the items it is about. Project-wide questions go to the run manifest. On a knowledge base that already holds items, the reconciler decides which of them are new (see [Running again](#running-again)).
 
 Nothing an agent writes is ever `validated`. Only a human can validate.
 
@@ -156,3 +159,36 @@ The lead groups and arbitrates. It never adds evidence and never discards an int
 - the contract has no field for evidence; unknown fields are rejected.
 
 Raun then builds each item from its supporting interpretations, using only verified evidence. It derives each position's agents and evidence from the interpretations behind it, so the lead cannot misattribute them. The same question asked by several agents is recorded once. An item with a disagreement is created `contested`. Open points carry `raised_by`: the agent ID, `lead`, or `raun` for verification problems.
+
+## Running again
+
+`raun run` on a knowledge base that already holds items of the configured types needs a `reconciler`; without one, the run stops before starting any agent. Analysts and the lead work as on a first run: they never see the knowledge base. The reconciler then tells which existing item each item of the run describes, and Raun updates the knowledge base:
+
+1. **Attach.** A run item matched to an existing item adds its support, its evidence and its open points to that item. Evidence citing the same lines at the same commit is shared, and a question, uncertainty or disagreement the item already records (with the same summary and, for a disagreement, the same position statements) is not added again. The existing title, content and support never change, whatever the item's status. A run item without a match becomes a new `proposed` item; its persona links may point to existing personas.
+2. **Conflicts.** When the reconciler declares that a run item contradicts the content it matches, Raun adds a disagreement raised by `reconciler`. Its first position is the item's content as created, with the run, agents and evidence that created it. Its second is the run item's content, with the run's agents and evidence. If no support of the creating run is left, the conflict becomes an `uncertainty`.
+3. **Freshness.** Every evidence of every existing item cited at an ancestor of the analyzed commit is checked again at that commit, without any LLM. Evidence that no longer holds becomes `stale`, with an `uncertainty` raised by `raun` that says why. Stale evidence that holds again goes back to `verified`.
+4. **Status.** A `validated` item with newly stale evidence or a new disagreement moves to `needs-review`, and a `proposed` item with a new disagreement to `contested`. The run event's `reason` says why. Other statuses stay: a `rejected` item that the run finds again keeps its new support and stays rejected, and the manifest lists it.
+
+Raun computes and validates every change before it writes anything. It then rereads each item and updates it under its lock, so that a human decision taken during the run is kept. An item whose matched content changed during the run is left as it is and listed in the manifest as `skipped`.
+
+## Reconciliation contract (v1)
+
+The reconciler receives two lists in its prompt, as JSON. `existing` holds the knowledge base items of the configured types: ID, type, title, content block, and the `interpretations` (support statements) behind them. It shows no agent, run, status, history or evidence. `new` holds the run's items, labeled `n1`, `n2`… in the same shape; their requirement `personas` use these labels.
+
+```json
+{
+  "version": 1,
+  "items": [
+    {"id": "n1", "match": "persona-k3x9q2", "conflict": ""},
+    {"id": "n2", "match": "requirement-8fz2mc", "conflict": "The docs now allow corrections within 24 hours."},
+    {"id": "n3", "match": "", "conflict": ""}
+  ]
+}
+```
+
+The reconciler only matches. Raun checks that:
+
+- every run item appears exactly once; several run items may match the same existing item;
+- `match` is empty (a new item) or the ID of an existing item of the same type;
+- `conflict` is empty unless the item has a match;
+- unknown fields are rejected: the contract has no field for content or evidence.

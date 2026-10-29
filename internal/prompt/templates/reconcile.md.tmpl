@@ -1,0 +1,51 @@
+# Raun reconciliation task
+
+{{.Instructions}}
+
+## Project
+
+- Commit analyzed by the run: {{.Commit}}
+- Write conflict summaries in this language: {{.Language}}.
+- `existing` lists the items of the knowledge base, by their ID. `new` lists the items the run produced, as `n1`, `n2`… In a requirement, `personas` uses the IDs of the same list.
+- `interpretations` are the analysts' statements behind each item.
+
+## Knowledge types
+{{- if .HasPersona}}
+
+### persona
+
+Content block `persona`: `description`, `goals`, `capabilities`.
+{{- end}}
+{{- if .HasRequirement}}
+
+### requirement
+
+Content block `requirement`: `statement`, `kind` (`business-rule`, `functional` or `constraint`), `rationale`, `personas`.
+{{- end}}
+
+## Items
+
+````json
+{{.Items}}
+````
+
+## Output contract
+
+Print exactly one JSON object on stdout, and nothing after it. Its shape:
+
+```json
+{
+  "version": 1,
+  "items": [
+    {"id": "n1", "match": "{{.ExampleType}}-k3x9q2", "conflict": ""},
+    {"id": "n2", "match": "", "conflict": ""}
+  ]
+}
+```
+
+Rules, checked by Raun without exception:
+
+- Every item of `new` appears exactly once.
+- `match` is the ID of an item of `existing` of the same type, or `""` when the knowledge base does not hold the new item yet.
+- `conflict` is `""` unless the new item contradicts the content of the item it matches. An item without a match has no conflict.
+- There is no field for content or evidence: you only match. No other fields are accepted.

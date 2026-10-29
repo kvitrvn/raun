@@ -29,9 +29,10 @@ internal/gitx        git through the `git` binary: resolve commits, read files a
 internal/evidence    deterministic evidence verification (integrity, freshness, relocation)
 internal/source      path classification (code / doc / human-context) and `**` globs
 internal/snapshot    disposable copy of a commit for one agent, with change detection
-internal/agent       Runner interface, `command` runner, report contract v1 and its validation
+internal/agent       Runner interface, `command` runner, report, consolidation and reconciliation contracts (v1)
 internal/prompt      embedded prompt templates; the output contract is always appended
 internal/consolidate plans (identity or lead grouping) -> knowledge items; anonymized lead input
+internal/reconcile   reruns: reconciler input, attachment to existing items, evidence freshness
 internal/run         run pipeline and manifest
 internal/report      Markdown view of the knowledge base (`raun report`); never read back
 internal/web         local knowledge browser and human decisions; embedded templ/CSS/JS/fonts (`raun serve`)
@@ -40,8 +41,6 @@ internal/agenttest   fake agent (the test binary itself) and matching fixture pr
 docs/agents.md       agent command protocol and report contract
 docs/format.md       knowledge files and run manifests
 ```
-
-Planned package: `reconcile`. Don't create it before its roadmap step.
 
 ## Domain invariants
 
@@ -52,6 +51,7 @@ These invariants are the core of the product. Never weaken them:
 - Disagreements between agents are stored as-is, never averaged or dropped.
 - Agents analyze independently: they never see the knowledge base, the configuration or each other's output.
 - The lead groups and arbitrates on anonymized reports. It never adds evidence and never discards an interpretation; Raun derives positions' agents and evidence itself.
+- The reconciler only matches a run's items to existing items. It sees their content, never agents, runs or statuses. A rerun appends support, evidence and open points; it never rewrites an existing item's content or support.
 - Provider neutrality: no LLM provider, model or vendor API is named or imported in code. Agents are reached through the agent contract (`runner.kind`). Concrete commands belong in docs and examples only.
 - On-disk formats (config, knowledge files, agent contract) carry a `version` field. Changing one is a design decision: ask the owner first, then update `docs/`.
 

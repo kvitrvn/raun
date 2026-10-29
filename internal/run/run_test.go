@@ -226,7 +226,7 @@ func TestRunRecoveredReports(t *testing.T) {
 				t.Fatalf("Execute() error = %v", err)
 			}
 			a := m.Agents[0]
-			if m.Version != 2 || a.Status != AgentOK || a.Salvaged != tt.wantSalvaged || a.ReportRetries != tt.wantRetries {
+			if m.Version != ManifestVersion || a.Status != AgentOK || a.Salvaged != tt.wantSalvaged || a.ReportRetries != tt.wantRetries {
 				t.Errorf("manifest version %d, agent record = %+v", m.Version, a)
 			}
 			if len(m.Items) != 3 || len(m.Questions) != tt.wantQuestions {
@@ -277,13 +277,17 @@ func TestRunPreconditions(t *testing.T) {
 		}
 	})
 
-	t.Run("existing knowledge base", func(t *testing.T) {
+	t.Run("existing knowledge base without reconciler", func(t *testing.T) {
 		fx := agenttest.NewProject(t, agenttest.Argv(agenttest.Valid))
 		if _, err := execute(t, fx.Dir, Options{}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := execute(t, fx.Dir, Options{}); err == nil || !strings.Contains(err.Error(), "already holds 3 item(s)") {
+		_, err := execute(t, fx.Dir, Options{})
+		if err == nil || !strings.Contains(err.Error(), "holds 3 item(s) of the configured types: add a `reconciler` section") {
 			t.Errorf("error = %v", err)
+		}
+		if runs, _ := os.ReadDir(workspace.RunsDir(fx.Dir)); len(runs) != 1 {
+			t.Errorf("the refused run started: %d run(s)", len(runs))
 		}
 	})
 

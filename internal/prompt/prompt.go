@@ -18,9 +18,10 @@ import (
 var templates embed.FS
 
 var (
-	task  = template.Must(template.ParseFS(templates, "templates/task.md.tmpl"))
-	lead  = template.Must(template.ParseFS(templates, "templates/lead.md.tmpl"))
-	retry = template.Must(template.ParseFS(templates, "templates/retry.md.tmpl"))
+	task      = template.Must(template.ParseFS(templates, "templates/task.md.tmpl"))
+	lead      = template.Must(template.ParseFS(templates, "templates/lead.md.tmpl"))
+	reconcile = template.Must(template.ParseFS(templates, "templates/reconcile.md.tmpl"))
+	retry     = template.Must(template.ParseFS(templates, "templates/retry.md.tmpl"))
 )
 
 // RetryHeading starts every retry prompt.
@@ -98,6 +99,39 @@ func (l Lead) Render() (string, error) {
 	}
 	if err := lead.Execute(&b, data); err != nil {
 		return "", fmt.Errorf("render lead prompt: %w", err)
+	}
+	return b.String(), nil
+}
+
+// Reconciler holds what a reconciler prompt is built from.
+type Reconciler struct {
+	Instructions string
+	Commit       string
+	Language     string
+	Types        []knowledge.Type
+	// Items is the JSON rendering of the existing items and of the run's
+	// items.
+	Items string
+}
+
+// Render returns the full reconciler prompt: instructions, project facts,
+// knowledge types, the items to match and the output contract.
+func (r Reconciler) Render() (string, error) {
+	var b strings.Builder
+	data := struct {
+		Reconciler
+		HasPersona, HasRequirement bool
+		ExampleType                knowledge.Type
+	}{
+		Reconciler:     r,
+		HasPersona:     slices.Contains(r.Types, knowledge.TypePersona),
+		HasRequirement: slices.Contains(r.Types, knowledge.TypeRequirement),
+	}
+	if len(r.Types) > 0 {
+		data.ExampleType = r.Types[0]
+	}
+	if err := reconcile.Execute(&b, data); err != nil {
+		return "", fmt.Errorf("render reconciler prompt: %w", err)
 	}
 	return b.String(), nil
 }

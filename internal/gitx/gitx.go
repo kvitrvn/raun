@@ -59,6 +59,25 @@ func (r *Repo) ResolveCommit(ctx context.Context, rev string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// IsAncestor reports whether ancestor is commit itself or one of its
+// ancestors. An unknown revision yields an error wrapping ErrUnknownCommit.
+func (r *Repo) IsAncestor(ctx context.Context, ancestor, commit string) (bool, error) {
+	a, err := r.ResolveCommit(ctx, ancestor)
+	if err != nil {
+		return false, err
+	}
+	c, err := r.ResolveCommit(ctx, commit)
+	if err != nil {
+		return false, err
+	}
+	_, err = run(ctx, r.root, "merge-base", "--is-ancestor", a, c)
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // ReadFile returns the content of path (relative to the repository root)
 // at commit. A missing path yields an error wrapping fs.ErrNotExist; a path
 // that is not a regular file yields ErrNotAFile.

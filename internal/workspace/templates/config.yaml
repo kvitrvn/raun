@@ -63,7 +63,8 @@ lead:
     argv: ["replace-with-your-lead-command"]
     timeout: 20m
 
-# Matches a new run against the existing knowledge base.
+# Matches a new run against the existing knowledge base; required once it
+# holds items. It only matches: existing content is never rewritten.
 reconciler:
   instructions: builtin:reconciler
   runner:

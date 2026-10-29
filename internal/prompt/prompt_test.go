@@ -111,6 +111,40 @@ func TestLeadRender(t *testing.T) {
 	}
 }
 
+func TestReconcilerRender(t *testing.T) {
+	instructions, err := Builtin("reconciler")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, types := range [][]knowledge.Type{
+		{knowledge.TypePersona, knowledge.TypeRequirement},
+		{knowledge.TypeRequirement},
+	} {
+		r := Reconciler{Instructions: instructions, Commit: "c0ffee", Language: "fr", Types: types, Items: `{"existing": [], "new": []}`}
+		got, err := r.Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"You maintain the knowledge base", "Commit analyzed by the run: c0ffee", "this language: fr", `{"existing": [], "new": []}`, "## Project", "exactly once"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("reconciler prompt lacks %q", want)
+			}
+		}
+		if strings.Contains(got, "### persona") != (len(types) == 2) {
+			t.Errorf("persona section shown for types %v", types)
+		}
+
+		// The example must satisfy the contract, given matching items.
+		blocks := jsonBlock.FindAllStringSubmatch(got, -1)
+		example := blocks[len(blocks)-1][1]
+		existing := map[string]knowledge.Type{string(types[0]) + "-k3x9q2": types[0]}
+		shown := map[string]knowledge.Type{"n1": types[0], "n2": types[0]}
+		if _, _, err := agent.ParseReconciliation([]byte(example), existing, shown, false); err != nil {
+			t.Errorf("reconciler example rejected by the contract: %v\n%s", err, example)
+		}
+	}
+}
+
 func TestRetryRender(t *testing.T) {
 	task, err := Analyst{Instructions: "Custom job.", Commit: "c", Language: "en", Types: []knowledge.Type{knowledge.TypePersona}, MaxLines: 10}.Render()
 	if err != nil {

@@ -40,6 +40,32 @@ func TestRunCommand(t *testing.T) {
 	}
 }
 
+func TestRunCommandRerun(t *testing.T) {
+	cfg := agenttest.WithReconciler(agenttest.Config(agenttest.Argv(agenttest.Valid), "10s"), agenttest.Argv(agenttest.Reconciler))
+	fx := agenttest.NewTeamProject(t, cfg)
+	if code, _, errOut := runCLI(t, "run", "-dir", fx.Dir); code != 0 {
+		t.Fatalf("first run: exit = %d, stderr = %s", code, errOut)
+	}
+
+	code, out, errOut := runCLI(t, "run", "-dir", fx.Dir)
+	if code != 0 {
+		t.Fatalf("rerun: exit = %d, stderr = %s", code, errOut)
+	}
+	for _, want := range []string{"0 knowledge item(s) proposed, 3 updated (0 need review).", "raun list -status proposed"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, out)
+		}
+	}
+	for _, want := range []string{"reconciler: matching 3 item(s) against 3 existing", "0 item(s) created, 3 existing item(s) updated, 0 need review, 0 evidence stale"} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("progress lacks %q:\n%s", want, errOut)
+		}
+	}
+	if code, out, _ := runCLI(t, "list", "-dir", fx.Dir); code != 0 || strings.Count(out, "proposed") != 3 {
+		t.Errorf("list after rerun:\n%s", out)
+	}
+}
+
 func TestRunCommandFailure(t *testing.T) {
 	fx := agenttest.NewProject(t, agenttest.Argv(agenttest.Garbage))
 	code, out, errOut := runCLI(t, "run", "-dir", fx.Dir)

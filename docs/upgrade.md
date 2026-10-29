@@ -1,6 +1,6 @@
 # Hosted Raun: scope and roadmap
 
-> **Status:** planned. Nothing on this page is implemented yet. It records the decisions taken on 2026-10-29 and the order of the work.
+> **Status:** step 0 (reconciliation) is implemented; the rest is planned. This page records the decisions taken on 2026-10-29 and the order of the work.
 
 Raun is a local CLI today. The knowledge base is plain YAML under `.raun/`, versioned in Git, and `raun serve` is a local browser for human decisions.
 
@@ -28,7 +28,7 @@ The local CLI (`raun init`, `run`, `serve`, …) stays fully functional througho
 
 ## Why these decisions
 
-- **Reruns are a prerequisite.** A run triggered by an event is always a rerun on an existing knowledge base, and reruns are not implemented yet. Without reconciliation, every push would duplicate every item, and nothing would move validated knowledge to `needs-review`.
+- **Reruns are a prerequisite.** A run triggered by an event is always a rerun on an existing knowledge base. Without reconciliation, every push would duplicate every item, and nothing would move validated knowledge to `needs-review`.
 - **LLM runs are expensive.** A Drone build is deterministic and cheap. A Raun run is not: it involves several agents and a lead, each with long timeouts and retries, and its output is not deterministic. Running it on every event would cost a lot and flood reviewers with proposals. Deterministic verification, on the other hand, is free and gives the most valuable signal on pull requests.
 - **The repository is untrusted.** Anyone who can push to the repository, or open a pull request from a fork, controls `.raun.yaml` and the analyzed code. The configuration must not be able to run commands, and the agents must be isolated from server secrets.
 - **One source of permissions.** If workspace membership granted access to a private repository's knowledge, someone removed from the forge organization would keep that access. Forge permissions avoid this leak.
@@ -51,12 +51,12 @@ The local CLI (`raun init`, `run`, `serve`, …) stays fully functional througho
 
 One step at a time, each reviewed by the owner before the next starts. Each step settles its own open decisions before any code is written.
 
-0. **Reconciliation (local).** Rerun on an existing knowledge base:
+0. **Reconciliation (local). Done.** Rerun on an existing knowledge base:
    - attach new interpretations to existing items;
    - move `validated` items to `needs-review` when their ground changes;
    - never rewrite validated content.
 
-   The `reconciler` block already exists in `internal/workspace/templates/config.yaml`, and the `reconcile` package is planned in `AGENTS.md`.
+   A `reconciler` agent matches the run's items to existing ones (`internal/reconcile`, contract in `docs/agents.md`).
 1. **Storage abstraction.**
    - Extract an interface from `internal/knowledge/store.go` (`List`, `Get`, `Save`, `Update(id, revision, mutate)`, `NewID`). The current file backend stays the local implementation.
    - Add a database backend. The choice between pure-Go SQLite and Postgres, and the justification for the new dependency, are made in this step.

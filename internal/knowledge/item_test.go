@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -109,4 +110,38 @@ func assertFieldError(t *testing.T, err error, field string) {
 		}
 	}
 	t.Errorf("no error on field %q; got: %v", field, err)
+}
+
+func TestAddEvidence(t *testing.T) {
+	it := &Item{Evidence: []Evidence{
+		{ID: "e1", Path: "a.go", Commit: "c1", StartLine: 1, EndLine: 2},
+		{ID: "e4", Path: "b.go", Commit: "c1", StartLine: 1, EndLine: 1},
+	}}
+	if id := it.AddEvidence(Evidence{ID: "e9", Path: "a.go", Commit: "c1", StartLine: 1, EndLine: 2}); id != "e1" || len(it.Evidence) != 2 {
+		t.Errorf("same lines at the same commit: %s, %d entries", id, len(it.Evidence))
+	}
+	// Numbered after the highest ID, gaps included.
+	for i, e := range []Evidence{
+		{Path: "a.go", Commit: "c2", StartLine: 1, EndLine: 2},
+		{Path: "a.go", Commit: "c1", StartLine: 1, EndLine: 3},
+	} {
+		if id, want := it.AddEvidence(e), fmt.Sprintf("e%d", 5+i); id != want {
+			t.Errorf("AddEvidence(%+v) = %s, want %s", e, id, want)
+		}
+	}
+}
+
+func TestAddPoint(t *testing.T) {
+	it := &Item{OpenPoints: []OpenPoint{{ID: "p2", Kind: PointQuestion, Summary: "Why?", Resolution: &Resolution{Note: "Because."}}}}
+	if id, added := it.AddPoint(OpenPoint{Kind: PointQuestion, Summary: "Why?"}); added || id != "p2" {
+		t.Errorf("a known question, even resolved, is not added again: %s, %v", id, added)
+	}
+	if id, added := it.AddPoint(OpenPoint{Kind: PointUncertainty, Summary: "Why?"}); !added || id != "p3" {
+		t.Errorf("another kind: %s, %v", id, added)
+	}
+	d := OpenPoint{Kind: PointDisagreement, Summary: "Split."}
+	it.AddPoint(d)
+	if id, added := it.AddPoint(d); !added || id != "p5" {
+		t.Errorf("disagreements are always added: %s, %v", id, added)
+	}
 }

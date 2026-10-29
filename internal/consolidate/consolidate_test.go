@@ -159,6 +159,23 @@ func TestBuildIdentity(t *testing.T) {
 	}
 }
 
+func TestBuildKeepsAssignedIDs(t *testing.T) {
+	reports := []CheckedReport{alphaReport()}
+	plan := Identity(reports)
+	plan.Items[0].ID = "persona-k3x9q2" // matched to an existing persona
+	res, err := Build("run-2", commit, at, reports, plan, sequentialIDs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	persona, req := res.Items[0], res.Items[1]
+	if persona.ID != "persona-k3x9q2" || req.ID != "requirement-aaaaa1" {
+		t.Errorf("IDs = %s, %s", persona.ID, req.ID)
+	}
+	if !slices.Equal(req.Requirement.Personas, []string{"persona-k3x9q2"}) {
+		t.Errorf("persona link = %v, want the assigned ID", req.Requirement.Personas)
+	}
+}
+
 func TestLeadInputIsAnonymous(t *testing.T) {
 	reports := []CheckedReport{alphaReport(), betaReport()}
 	labels := Labels([]int{1, 0}) // beta gets A, alpha gets B

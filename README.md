@@ -4,7 +4,7 @@
 
 Raun builds an evidence-backed knowledge base of a software project, such as its personas and business requirements. Several LLM agents analyze the repository independently. A lead agent consolidates their findings and keeps disagreements visible. Every claim points to exact lines at a given commit, and Raun checks each citation itself. Agents only propose knowledge; a human validates it.
 
-> **Status:** early development. Everything below works today, except reruns on an existing knowledge base (planned).
+> **Status:** early development. Everything below works today.
 
 ## Install
 
@@ -28,7 +28,7 @@ In the repository you want to analyze:
 raun init     # creates .raun/config.yaml, .raun/context.md, .raun/.gitignore
 ```
 
-1. Edit `.raun/config.yaml`: set each agent's `runner.argv`, and the lead's, to a command that reads a prompt on stdin and prints one JSON object on stdout (see [docs/agents.md](docs/agents.md)). Use different models for different agents. Set `language` for the knowledge you want to read.
+1. Edit `.raun/config.yaml`: set each agent's `runner.argv`, and those of the lead and the reconciler, to a command that reads a prompt on stdin and prints one JSON object on stdout (see [docs/agents.md](docs/agents.md)). Use different models for different agents. Set `language` for the knowledge you want to read.
 2. Write what the team knows in `.raun/context.md` and commit it. Agents can cite it, but it stays tagged as human input, separate from facts found in code.
 3. Validate the configuration, commit, and run an analysis:
 
@@ -62,6 +62,15 @@ raun report -o KNOWLEDGE.md                         # Markdown view for the team
 ```
 
 A disagreement blocks validation until it is resolved. Resolving records your choice but does not rewrite the item. If its content must change, edit the YAML file and run `raun check`.
+
+Run again after the code changes:
+
+```sh
+raun run                     # on an existing knowledge base, the reconciler matches the new results
+raun review                  # validated items whose ground changed are back as needs-review
+```
+
+The reconciler tells which existing item each new result describes. Raun attaches the new support and evidence to that item without rewriting its content, and creates the rest as new proposals. A validated item moves to `needs-review` when one of its citations no longer holds at the new commit, or when the new results disagree with it. Rejected items stay rejected. See [docs/agents.md](docs/agents.md#running-again).
 
 The knowledge base is made of plain YAML files under `.raun/`. You review and version them with Git, like code.
 
