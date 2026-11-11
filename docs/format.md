@@ -111,7 +111,6 @@ A revision says nothing about content: two updates that leave the content the sa
 | `proposed` | `contested` | run | The run adds a disagreement. |
 | `proposed` | `validated`, `rejected` | human | |
 | `contested` | `proposed` | human | Every disagreement is resolved. Recorded automatically when the last one is resolved: a human event with the reason `disagreements resolved`, whose `at` and `by` are those of that resolution. |
-| `contested` | `validated` | human | Every disagreement is resolved. |
 | `contested` | `rejected` | human | |
 | `validated` | `needs-review` | run | An evidence of the item becomes `stale`, or the run adds a disagreement. |
 | `validated` | `rejected` | human | |
@@ -119,6 +118,7 @@ A revision says nothing about content: two updates that leave the content the sa
 | `rejected` | `proposed` | human | Reopening. |
 
 - A transition missing from the table is refused.
+- A `contested` item is never validated directly: resolving its last disagreement makes it `proposed`, and a human validates it from there. raun-old listed `contested` to `validated`, but the automatic move made that row unreachable.
 - A run never moves an item to `validated` or `rejected`.
 - A run may append support, evidence and open points to an item in any status. The status changes only as the table says: a disagreement added to a `proposed` item makes it `contested`, to a `validated` item makes it `needs-review`, and changes nothing on a `contested`, `needs-review` or `rejected` item. A `rejected` item found again stays `rejected`.
 - An item cannot be `validated` while one of its disagreements is unresolved. Uncertainties and questions do not block validation.
@@ -148,7 +148,7 @@ The excerpt must equal the cited lines, as whole lines. Before comparing, CRLF i
 
 | State | Meaning |
 | --- | --- |
-| `verified` | The excerpt is at the cited lines. |
+| `verified` | Integrity: the excerpt is at the cited lines. Freshness: the excerpt still holds at the later commit, see below. |
 | `relocated` | At the cited commit, the excerpt is at one other place in the file, and only one. Raun corrects the lines. |
 | `invalid` | At the cited commit, the citation has no ground. |
 | `stale` | It held at the cited commit, but not at a later one. |

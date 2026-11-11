@@ -16,7 +16,9 @@ The normative tables (fields, statuses, transitions, evidence states, identifier
 
 The model of raun-old is kept as it is: the types `persona` and `requirement`, the requirement kinds `business-rule`, `functional` and `constraint`, the five statuses and their transitions, support with its two natures, evidence with its sources and states, open points with their kinds, positions and resolutions.
 
-One change: an excerpt that is not at its cited lines but appears at several other places is reported as `ambiguous` instead of being moved to the nearest occurrence. raun-old's choice could attach a claim to the wrong code without anyone noticing. Ambiguity is a reason, not a fifth state: the evidence is `invalid` at the cited commit and `stale` at a later one, so every rule that reads states stays as it was. The other reasons (`not-found`, `missing-file`, `not-regular`, `binary`, `too-long`, `bad-range`) say why a citation has no ground, which raun-old only wrote in its run manifests.
+The unreachable `contested` to `validated` row of raun-old is dropped: resolving the last disagreement already makes the item `proposed`.
+
+One change of behavior: an excerpt that is not at its cited lines but appears at several other places is reported as `ambiguous` instead of being moved to the nearest occurrence. raun-old's choice could attach a claim to the wrong code without anyone noticing. Ambiguity is a reason, not a fifth state: the evidence is `invalid` at the cited commit and `stale` at a later one, so every rule that reads states stays as it was. The other reasons (`not-found`, `missing-file`, `not-regular`, `binary`, `too-long`, `bad-range`) say why a citation has no ground, which raun-old only wrote in its run manifests.
 
 Adding a type later takes a constant in the core, a row in `docs/format.md` and a decision in the record of the epic that adds it. The set of types is closed: an unknown type is a validation error.
 
@@ -61,7 +63,7 @@ An event records `actor` (`human` or `run`) and `by`. For a human, `by` identifi
 
 ### Scoping
 
-Every row carries a workspace identifier and a repository identifier, items and history events alike. The primary key of an item is `(repository, id)`; history events reference it with the repository included.
+Every row carries a workspace identifier and a repository identifier, items and history events alike. The primary key of an item is `(workspace, repository, id)`; history events reference it with the same three columns. Repository identifiers are not assumed unique across workspaces until epic 5 decides whether a repository belongs to one workspace only (#30).
 
 The scope is a value (`Scope{Workspace, Repository}`) passed to every port operation, not a property of a store instance. One store serves the whole server, and an operation without a scope does not exist. Every query filters on both identifiers, so a read cannot cross repositories. The contract tests prove it on each table.
 
