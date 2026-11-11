@@ -103,7 +103,8 @@ func localID(s, prefix string) (int, bool) {
 }
 
 // FreeEvidenceIDs returns n evidence identifiers that the item does not use
-// yet, in order, for evidence a caller is about to append.
+// yet, in order, for evidence a caller is about to append. It returns nil when
+// n is zero or negative.
 func FreeEvidenceIDs(it Item, n int) []string {
 	used := make([]string, len(it.Evidence))
 	for i, e := range it.Evidence {
@@ -113,7 +114,8 @@ func FreeEvidenceIDs(it Item, n int) []string {
 }
 
 // FreeOpenPointIDs returns n open point identifiers that the item does not use
-// yet, in order, for open points a caller is about to append.
+// yet, in order, for open points a caller is about to append. It returns nil
+// when n is zero or negative.
 func FreeOpenPointIDs(it Item, n int) []string {
 	used := make([]string, len(it.OpenPoints))
 	for i, p := range it.OpenPoints {
@@ -123,6 +125,9 @@ func FreeOpenPointIDs(it Item, n int) []string {
 }
 
 func freeLocalIDs(used []string, prefix string, n int) []string {
+	if n <= 0 {
+		return nil
+	}
 	highest := 0
 	for _, id := range used {
 		if k, ok := localID(id, prefix); ok && k > highest {

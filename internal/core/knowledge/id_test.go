@@ -118,8 +118,11 @@ func TestFreeLocalIDs(t *testing.T) {
 	if got := FreeEvidenceIDs(Item{}, 1); got[0] != "e1" {
 		t.Errorf("first evidence = %v", got)
 	}
-	if got := FreeOpenPointIDs(Item{}, 0); len(got) != 0 {
+	if got := FreeOpenPointIDs(Item{}, 0); got != nil {
 		t.Errorf("none = %v", got)
+	}
+	if got := FreeEvidenceIDs(it, -3); got != nil {
+		t.Errorf("negative count = %v", got)
 	}
 }
 

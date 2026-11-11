@@ -311,7 +311,8 @@ func (it Item) HasUnresolvedDisagreement() bool {
 }
 
 // runs returns the runs the item knows: those that wrote its support or its
-// positions, or changed its status.
+// positions, or changed its status. Evidence names no run: evidence alone
+// supports nothing, so a run that appended only evidence is not counted.
 func (it Item) runs() map[string]bool {
 	runs := map[string]bool{}
 	for _, s := range it.Support {
