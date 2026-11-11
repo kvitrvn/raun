@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: the shape below is decided ([epic 1](implementation/01-project-foundation.md)), and the storage engine by [epic 2](implementation/02-knowledge-core.md#sqlite); only `cmd/raun` exists so far. Each epic fills in its part and updates this page.
+> Status: the shape below is decided ([epic 1](implementation/01-project-foundation.md)), and the storage engine by [epic 2](implementation/02-knowledge-core.md#sqlite). What exists so far: `cmd/raun` and the knowledge model in `internal/core/knowledge`. Each epic fills in its part and updates this page.
 
 ## Components
 

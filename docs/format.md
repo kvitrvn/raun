@@ -1,6 +1,6 @@
 # Knowledge format
 
-> Status: decided by the [epic 2 review](implementation/02-knowledge-core.md) (#9) and implemented by #10 to #14. Until those land, this page is the specification, not a description of running code.
+> Status: decided by the [epic 2 review](implementation/02-knowledge-core.md) (#9). The item model, its validation, its identifiers and its transitions are implemented in `internal/core/knowledge` (#10). Evidence verification (#11, #13) and storage (#14) are not implemented yet: for them, this page is the specification.
 
 This page defines a knowledge item: its fields, its statuses and who may change them, its evidence and how Raun verifies it, and the versions of Raun's formats. The model is the one of raun-old (`docs/format.md` at `330e634`), stored in a database instead of YAML files.
 
@@ -16,7 +16,7 @@ An item belongs to one repository of one workspace. Its fields:
 | `status` | See [Statuses](#statuses). Always equals the `to` of the last history event. |
 | `revision` | See [Revisions](#revisions). |
 | `persona` | Only for type `persona`: `description` (required), `goals[]`, `capabilities[]`. |
-| `requirement` | Only for type `requirement`: `statement` (required), `kind`, `rationale`, `personas[]` (identifiers of persona items of the same repository, which must exist; the store checks it inside the write transaction). |
+| `requirement` | Only for type `requirement`: `statement` (required), `kind` (optional; a value outside the kinds below is refused), `rationale`, `personas[]` (identifiers of persona items of the same repository, which must exist; the store checks it inside the write transaction). |
 | `support[]` | The agent interpretations backing the item. |
 | `evidence[]` | The citations the support rests on. |
 | `open_points[]` | Disagreements, uncertainties and questions. |
@@ -30,7 +30,7 @@ An item is never deleted on its own: a human rejects it. Items disappear only wi
 | Type | Content |
 | --- | --- |
 | `persona` | Someone the software serves: `description`, `goals[]`, `capabilities[]`. |
-| `requirement` | A rule the software follows: `statement` and a `kind`. |
+| `requirement` | A rule the software follows: `statement` and, optionally, a `kind`. |
 
 | Requirement kind | Meaning |
 | --- | --- |
@@ -76,7 +76,7 @@ A later run appends support; it never changes an existing entry.
 | `kind` | `disagreement`, `uncertainty` or `question`. |
 | `summary` | One line. |
 | `raised_by` | Optional: an agent identifier, `lead`, `reconciler` for a conflict with existing content, or `raun` for a verification problem. |
-| `positions[]` | One side of a disagreement, kept as written: `statement`, `run`, `agents[]`, `evidence[]`. A disagreement has at least two positions. |
+| `positions[]` | One side of a disagreement, kept as written: `statement`, `run`, `agents[]`, `evidence[]`. A disagreement has at least two positions. A position names the run that wrote it. When a run contradicts existing content, a position may name an earlier run of the item: one that wrote its support or a position, or changed its status. This is checked when the position is appended, since an item read back cannot tell which runs came before. |
 | `resolution` | Set by a human: `at`, `by`, `position` (0-based index of the retained position, optional), `note`. |
 
 ## Identifiers
@@ -130,7 +130,7 @@ A revision says nothing about content: two updates that leave the content the sa
 
 ## History
 
-Every status change appends one event. Events are never changed or deleted.
+Every status change appends one event. Events are never changed or deleted, and they are in time order: a change dated before the last change of the item is refused.
 
 | Field | Content |
 | --- | --- |
@@ -139,7 +139,7 @@ Every status change appends one event. Events are never changed or deleted.
 | `by` | For `human`, the account that decided. For `run`, the run identifier. |
 | `from` | The previous status; absent on creation. |
 | `to` | The new status. |
-| `reason` | Required for `human`. For `run`, why the ground of the item changed. |
+| `reason` | Required for `human`. For `run`, why the ground of the item changed: required on every event but the creation. |
 
 Until accounts exist (epic 4), `by` is an opaque identifier supplied by the caller; it is never free text typed by the person who decides.
 
