@@ -115,15 +115,18 @@ A revision says nothing about content: two updates that leave the content the sa
 | `validated` | `needs-review` | run | An evidence of the item becomes `stale`, or the run adds a disagreement. |
 | `validated` | `rejected` | human | |
 | `needs-review` | `validated`, `rejected` | human | `validated` requires every disagreement to be resolved. |
-| `rejected` | `proposed` | human | Reopening. |
+| `rejected` | `proposed` | human | Reopening, when no disagreement is unresolved. |
+| `rejected` | `contested` | human | Reopening, when a disagreement is unresolved. |
 
 - A transition missing from the table is refused.
 - A `contested` item is never validated directly: resolving its last disagreement makes it `proposed`, and a human validates it from there. raun-old listed `contested` to `validated`, but the automatic move made that row unreachable.
 - A run never moves an item to `validated` or `rejected`.
 - A run may append support, evidence and open points to an item in any status. The status changes only as the table says: a disagreement added to a `proposed` item makes it `contested`, to a `validated` item makes it `needs-review`, and changes nothing on a `contested`, `needs-review` or `rejected` item. A `rejected` item found again stays `rejected`.
 - An item cannot be `validated` while one of its disagreements is unresolved. Uncertainties and questions do not block validation.
+- A `proposed` item never holds an unresolved disagreement: a disagreement makes it `contested`, and reopening a `rejected` item that holds one makes it `contested`.
+- Resolving the last disagreement moves an item automatically only from `contested`. A `needs-review` item stays `needs-review` until a human validates or rejects it.
 - Support that only confirms an item changes no status, and neither does a run that does not find an item again.
-- A human status change requires a reason. Resolving an open point requires a note; it may name the retained position, and never changes the item's content.
+- A human status change requires a reason. Resolving an open point requires a note; it may name the retained position. It never changes the title, the type-specific content, the support or the evidence of the item; only the status may change, as the table says.
 
 ## History
 

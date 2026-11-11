@@ -16,7 +16,10 @@ The normative tables (fields, statuses, transitions, evidence states, identifier
 
 The model of raun-old is kept as it is: the types `persona` and `requirement`, the requirement kinds `business-rule`, `functional` and `constraint`, the five statuses and their transitions, support with its two natures, evidence with its sources and states, open points with their kinds, positions and resolutions.
 
-The unreachable `contested` to `validated` row of raun-old is dropped: resolving the last disagreement already makes the item `proposed`.
+Two adjustments keep `proposed` free of unresolved disagreements, which raun-old implied without enforcing:
+
+- the unreachable `contested` to `validated` row is dropped, since resolving the last disagreement already makes the item `proposed`;
+- reopening a `rejected` item that holds an unresolved disagreement makes it `contested`, not `proposed`.
 
 One change of behavior: an excerpt that is not at its cited lines but appears at several other places is reported as `ambiguous` instead of being moved to the nearest occurrence. raun-old's choice could attach a claim to the wrong code without anyone noticing. Ambiguity is a reason, not a fifth state: the evidence is `invalid` at the cited commit and `stale` at a later one, so every rule that reads states stays as it was. The other reasons (`not-found`, `missing-file`, `not-regular`, `binary`, `too-long`, `bad-range`) say why a citation has no ground, which raun-old only wrote in its run manifests.
 
