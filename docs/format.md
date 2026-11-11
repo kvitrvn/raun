@@ -1,6 +1,6 @@
 # Knowledge format
 
-> Status: decided by the [epic 2 review](implementation/02-knowledge-core.md) (#9) and implemented by #10 to #14. Until those land, this page is the specification, not a description of running code.
+> Status: decided by the [epic 2 review](implementation/02-knowledge-core.md) (#9). The item model, its validation, its identifiers and its transitions are implemented in `internal/core/knowledge` (#10). Evidence verification (#11, #13) and storage (#14) are not implemented yet: for them, this page is the specification.
 
 This page defines a knowledge item: its fields, its statuses and who may change them, its evidence and how Raun verifies it, and the versions of Raun's formats. The model is the one of raun-old (`docs/format.md` at `330e634`), stored in a database instead of YAML files.
 
@@ -16,7 +16,7 @@ An item belongs to one repository of one workspace. Its fields:
 | `status` | See [Statuses](#statuses). Always equals the `to` of the last history event. |
 | `revision` | See [Revisions](#revisions). |
 | `persona` | Only for type `persona`: `description` (required), `goals[]`, `capabilities[]`. |
-| `requirement` | Only for type `requirement`: `statement` (required), `kind`, `rationale`, `personas[]` (identifiers of persona items of the same repository, which must exist; the store checks it inside the write transaction). |
+| `requirement` | Only for type `requirement`: `statement` (required), `kind` (optional; a value outside the kinds below is refused), `rationale`, `personas[]` (identifiers of persona items of the same repository, which must exist; the store checks it inside the write transaction). |
 | `support[]` | The agent interpretations backing the item. |
 | `evidence[]` | The citations the support rests on. |
 | `open_points[]` | Disagreements, uncertainties and questions. |
@@ -139,7 +139,7 @@ Every status change appends one event. Events are never changed or deleted.
 | `by` | For `human`, the account that decided. For `run`, the run identifier. |
 | `from` | The previous status; absent on creation. |
 | `to` | The new status. |
-| `reason` | Required for `human`. For `run`, why the ground of the item changed. |
+| `reason` | Required for `human`. For `run`, why the ground of the item changed: required on every event but the creation. |
 
 Until accounts exist (epic 4), `by` is an opaque identifier supplied by the caller; it is never free text typed by the person who decides.
 
