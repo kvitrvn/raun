@@ -1,5 +1,7 @@
 .env
 .conclave*
+.tmp/
+bin/
 
 # Conclave review output
 review.md

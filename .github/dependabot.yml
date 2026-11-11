@@ -1,0 +1,39 @@
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      tools:
+        applies-to: version-updates
+        patterns:
+          - "golang.org/x/vuln"
+          - "honnef.co/go/tools"
+      indirect-minor-and-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+        patterns:
+          - "*"
+        exclude-patterns:
+          - "golang.org/x/vuln"
+          - "honnef.co/go/tools"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: ci
