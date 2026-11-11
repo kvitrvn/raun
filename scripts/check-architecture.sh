@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Enforces the dependency direction of the packages below internal/core:
-# a core context imports the standard library and its own context only.
-# See docs/architecture.md.
+# a core context, its tests included, imports the standard library and its own
+# context only. See docs/architecture.md.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -13,15 +13,29 @@ fi
 
 module="$(go list -m)"
 core_root="$module/internal/core"
+imports_format='{{range .Imports}}{{.}}{{"\n"}}{{end}}{{range .TestImports}}{{.}}{{"\n"}}{{end}}{{range .XTestImports}}{{.}}{{"\n"}}{{end}}'
 failed=0
 
+# Lists are captured before looping so that a failing go list stops the
+# script instead of giving an empty loop and a pass.
+packages="$(go list ./internal/core/...)" || {
+    echo "architecture: cannot list the core packages" >&2
+    exit 1
+}
+
 while IFS= read -r package; do
+    [[ -n "$package" ]] || continue
     relative="${package#"$core_root"}"
     relative="${relative#/}"
     context="${relative%%/*}"
     if [[ "$package" == "$core_root" ]]; then
         context=""
     fi
+
+    imports="$(go list -f "$imports_format" "$package")" || {
+        echo "architecture: cannot list the imports of $package" >&2
+        exit 1
+    }
 
     while IFS= read -r imported; do
         [[ -n "$imported" ]] || continue
@@ -46,7 +60,7 @@ while IFS= read -r package; do
             echo "$package must not import a non-standard package: $imported" >&2
             failed=1
         fi
-    done < <(go list -f '{{range .Imports}}{{.}}{{"\n"}}{{end}}' "$package")
-done < <(go list ./internal/core/...)
+    done < <(sort -u <<<"$imports")
+done <<<"$packages"
 
 exit "$failed"

@@ -45,7 +45,7 @@ internal/adapter/driven/   implementations of the ports: database, forge, sandbo
 internal/adapter/driving/  entry points: HTTP server, webhooks, runner API
 ```
 
-- A core context imports the standard library and its own context only. `make architecture` enforces it.
+- A core context, its tests included, imports the standard library and its own context only. `make architecture` enforces it.
 - A port is an interface declared in the core context that consumes it. Its adapter lives under `internal/adapter`.
 - Only `cmd/raun` builds adapters and hands them to the core.
 - A package is created by the epic that first needs it.

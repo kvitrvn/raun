@@ -60,7 +60,7 @@ internal/adapter/driven/   implementations of the ports: database, forge, sandbo
 internal/adapter/driving/  entry points: HTTP server, webhooks, runner API
 ```
 
-- A core context imports the standard library and its own context only.
+- A core context, its tests included, imports the standard library and its own context only.
 - A port is an interface declared in the core context that consumes it, never next to its adapter and never in a shared `ports` package.
 - Adapters import the core; the core never imports an adapter.
 - `cmd/raun` is the only place where adapters are built and handed to the core.
