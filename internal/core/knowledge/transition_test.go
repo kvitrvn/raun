@@ -41,6 +41,13 @@ func matrixFixture(t *testing.T, from, to Status) Item {
 		return it
 	case StatusRejected:
 		return itemIn(t, StatusRejected, to == StatusContested)
+	case StatusProposed:
+		it := itemIn(t, StatusProposed, false)
+		if to == StatusContested {
+			// AppendFromRun appends the disagreement before the transition.
+			it.OpenPoints = append(it.OpenPoints, disagreement("p1", testRun))
+		}
+		return it
 	default:
 		return itemIn(t, from, false)
 	}
@@ -137,6 +144,14 @@ func TestTransitionConditions(t *testing.T) {
 			to:      StatusContested,
 			actor:   human,
 			reason:  "reconsidered",
+			wantErr: ErrTransitionNotAllowed,
+		},
+		{
+			name:    "contested without an unresolved disagreement",
+			item:    func(t *testing.T) Item { return itemIn(t, StatusProposed, false) },
+			to:      StatusContested,
+			actor:   Actor{Kind: ActorRun, By: testRun2},
+			reason:  "conflict",
 			wantErr: ErrTransitionNotAllowed,
 		},
 		{

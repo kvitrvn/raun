@@ -76,7 +76,7 @@ A later run appends support; it never changes an existing entry.
 | `kind` | `disagreement`, `uncertainty` or `question`. |
 | `summary` | One line. |
 | `raised_by` | Optional: an agent identifier, `lead`, `reconciler` for a conflict with existing content, or `raun` for a verification problem. |
-| `positions[]` | One side of a disagreement, kept as written: `statement`, `run`, `agents[]`, `evidence[]`. A disagreement has at least two positions. A position names the run that wrote it. When a run contradicts existing content, a position may name an earlier run of the item: one that wrote its support or a position, or changed its status. |
+| `positions[]` | One side of a disagreement, kept as written: `statement`, `run`, `agents[]`, `evidence[]`. A disagreement has at least two positions. A position names the run that wrote it. When a run contradicts existing content, a position may name an earlier run of the item: one that wrote its support or a position, or changed its status. This is checked when the position is appended, since an item read back cannot tell which runs came before. |
 | `resolution` | Set by a human: `at`, `by`, `position` (0-based index of the retained position, optional), `note`. |
 
 ## Identifiers

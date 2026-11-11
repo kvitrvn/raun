@@ -94,8 +94,8 @@ func transition(it *Item, to Status, actor Actor, reason string, at time.Time) e
 		return fmt.Errorf("%w: from %s to %s", err, from, to)
 	}
 
-	// The two reopening cases cannot happen through Reopen, which picks the
-	// target itself; they keep the rule true for any caller of transition.
+	// Reopen and AppendFromRun already pick a target that meets these rules;
+	// they are checked here too, so that the rules hold for any caller.
 	unresolved := it.HasUnresolvedDisagreement()
 	switch {
 	case to == StatusValidated && unresolved:
@@ -104,8 +104,8 @@ func transition(it *Item, to Status, actor Actor, reason string, at time.Time) e
 		return fmt.Errorf("%w: %s stays contested", ErrUnresolvedDisagreement, it.ID)
 	case from == StatusRejected && to == StatusProposed && unresolved:
 		return fmt.Errorf("%w: reopening %s makes it %s", ErrUnresolvedDisagreement, it.ID, StatusContested)
-	case from == StatusRejected && to == StatusContested && !unresolved:
-		return fmt.Errorf("%w: reopening %s without an unresolved disagreement makes it %s", ErrTransitionNotAllowed, it.ID, StatusProposed)
+	case to == StatusContested && !unresolved:
+		return fmt.Errorf("%w: %s holds no unresolved disagreement to be contested", ErrTransitionNotAllowed, it.ID)
 	}
 
 	it.History = append(it.History, Event{
