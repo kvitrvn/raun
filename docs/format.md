@@ -16,12 +16,14 @@ An item belongs to one repository of one workspace. Its fields:
 | `status` | See [Statuses](#statuses). Always equals the `to` of the last history event. |
 | `revision` | See [Revisions](#revisions). |
 | `persona` | Only for type `persona`: `description` (required), `goals[]`, `capabilities[]`. |
-| `requirement` | Only for type `requirement`: `statement` (required), `kind`, `rationale`, `personas[]` (identifiers of persona items of the same repository, which must exist). |
+| `requirement` | Only for type `requirement`: `statement` (required), `kind`, `rationale`, `personas[]` (identifiers of persona items of the same repository, which must exist; the store checks it inside the write transaction). |
 | `support[]` | The agent interpretations backing the item. |
 | `evidence[]` | The citations the support rests on. |
 | `open_points[]` | Disagreements, uncertainties and questions. |
 | `history[]` | Every status change. See [History](#history). |
 | `created_at`, `updated_at` | UTC. |
+
+An item is never deleted on its own: a human rejects it. Items disappear only with their repository (epic 13), so a persona reference never points at nothing.
 
 ### Types and kinds
 
@@ -63,7 +65,7 @@ A later run appends support; it never changes an existing entry.
 | `excerpt` | The cited lines. |
 | `sha256` | Hex SHA-256 of `excerpt`. |
 | `state` | Set by Raun, never by an agent. See [Evidence states](#evidence-states). |
-| `reason` | Why the state is not `verified`, see the table below. Empty when verified. |
+| `reason` | Why the evidence has no ground, see the table below. Required for `invalid` and `stale`, empty for `verified` and `relocated`. |
 | `checked_at`, `checked_commit` | When and at which commit the state was last computed. |
 
 ### Open points
@@ -108,7 +110,7 @@ A revision says nothing about content: two updates that leave the content the sa
 | (none) | `proposed` | run | Creation. |
 | `proposed` | `contested` | run | The run adds a disagreement. |
 | `proposed` | `validated`, `rejected` | human | |
-| `contested` | `proposed` | human | Every disagreement is resolved. Recorded automatically, as a human event with the reason `disagreements resolved`, when the last one is resolved. |
+| `contested` | `proposed` | human | Every disagreement is resolved. Recorded automatically when the last one is resolved: a human event with the reason `disagreements resolved`, whose `at` and `by` are those of that resolution. |
 | `contested` | `validated` | human | Every disagreement is resolved. |
 | `contested` | `rejected` | human | |
 | `validated` | `needs-review` | run | An evidence of the item becomes `stale`, or the run adds a disagreement. |
@@ -116,7 +118,9 @@ A revision says nothing about content: two updates that leave the content the sa
 | `needs-review` | `validated`, `rejected` | human | `validated` requires every disagreement to be resolved. |
 | `rejected` | `proposed` | human | Reopening. |
 
+- A transition missing from the table is refused.
 - A run never moves an item to `validated` or `rejected`.
+- A run may append support, evidence and open points to an item in any status. The status changes only as the table says: a disagreement added to a `proposed` item makes it `contested`, to a `validated` item makes it `needs-review`, and changes nothing on a `contested`, `needs-review` or `rejected` item. A `rejected` item found again stays `rejected`.
 - An item cannot be `validated` while one of its disagreements is unresolved. Uncertainties and questions do not block validation.
 - Support that only confirms an item changes no status, and neither does a run that does not find an item again.
 - A human status change requires a reason. Resolving an open point requires a note; it may name the retained position, and never changes the item's content.
@@ -157,12 +161,18 @@ The excerpt must equal the cited lines, as whole lines. Before comparing, CRLF i
 | `not-regular` | `invalid`, `stale` | The path is a directory, a link or a submodule. |
 | `binary` | `invalid`, `stale` | The file is not text. |
 | `too-long` | `invalid` | The citation exceeds the maximum number of lines. |
-| `bad-range` | `invalid` | The line range is empty, reversed or outside the file. |
+| `bad-range` | `invalid` | At the cited commit, the line range is empty, reversed or outside the file. |
 
 Two checks exist:
 
 - **Integrity**, at the cited commit: does the citation hold where the agent made it? It gives `verified`, `relocated` or `invalid`.
-- **Freshness**, at a later commit, usually the head of the default branch: does it still hold? It gives `verified` or `stale`, and a `stale` evidence that holds again goes back to `verified`. An excerpt found at one other place only still holds. Whether the stored citation then moves to the later commit is decided by the epic 7 review (#44).
+- **Freshness**, at a later commit, usually the head of the default branch: does it still hold? It applies to evidence stored as `verified`, `relocated` (whose lines were already corrected at the cited commit) or `stale`, never to `invalid` evidence, which had no ground to begin with. It gives `verified` or `stale`:
+  - the excerpt is at the stored lines, or at one other place only: `verified`;
+  - it appears at several other places: `stale`, reason `ambiguous`;
+  - it is nowhere in the file, including when the stored range no longer fits a shorter file: `stale`, reason `not-found`;
+  - the file is missing, not regular or binary: `stale` with that reason.
+
+  A `stale` evidence that holds again goes back to `verified`. Whether a stored citation found at another place moves to the later commit is decided by the epic 7 review (#44).
 
 ## Format versions
 

@@ -104,7 +104,7 @@ The port is declared in the knowledge core:
 | `Create(ctx, scope, item)` | Stores a new item at revision 1 with its creation event. `ErrIDTaken` if the identifier exists in the repository. |
 | `Update(ctx, scope, id, revision, mutate)` | Runs `mutate` on the stored item inside the write transaction, then stores it at revision + 1 with its new events. `ErrNotFound`, `ErrStaleRevision` when the stored revision differs. An error returned by `mutate` rolls everything back and is returned as it is. |
 
-The validation of the item and of its transitions runs in the core before anything is written: the store never writes an item the core would refuse.
+The validation of the item and of its transitions runs in the core before anything is written: the store never writes an item the core would refuse. The one rule the core cannot check alone, that the personas a requirement names exist in the repository, is checked by the store inside the write transaction, and `Create` or `Update` fail with `ErrUnknownReference`. There is no `Delete`: an item is rejected, never deleted on its own.
 
 There is no `Save` (create or replace): replacing an item without a revision check is exactly what the port exists to prevent.
 
