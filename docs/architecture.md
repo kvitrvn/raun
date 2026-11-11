@@ -7,7 +7,7 @@
 ```
                  webhooks, OAuth, statuses, comments
    forge  <------------------------------------------------>  raun server
- (GitHub, Gitea,                                              |  database (SQLite)
+ (GitHub, Gitea,                                              |  database
   Forgejo, GitLab)                                            |  web interface
       ^                                                       |  forge adapters
       |  clone with a short-lived credential                  |  job queue, runner API

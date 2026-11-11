@@ -49,7 +49,7 @@ Exit codes:
 
 `main` only calls `run(args, stdout, stderr) int`, which tests drive directly.
 
-`raun version` prints the module version stamped by the Go toolchain: a tag, or a pseudo-version made from the Git revision. A build without one prints `dev` and the revision. Release versioning is settled in epic 13.
+`raun version` prints the module version stamped by the Go toolchain: a tag, or a pseudo-version made from the Git revision. A build without one prints `dev`, followed by the revision when the toolchain recorded it. Release versioning is settled in epic 13.
 
 ### Package layout
 
@@ -127,6 +127,7 @@ Go version: 1.27.3, from `go.mod`. CI reads it with `go-version-file`. GitHub Ac
 | Link checking of the documentation | When the documentation grows past the skeleton |
 | Secret scanning in CI | Epic 13 |
 | Release versioning, packaging and signing | Epic 13 |
+| Storage engine (SQLite first, PostgreSQL later is the orientation) | Epic 2 review (#9) |
 | Tenancy beyond one organization per instance | Not planned; the data model stays ready for it |
 
 ## Exit criteria
