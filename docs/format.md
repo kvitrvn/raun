@@ -175,7 +175,7 @@ Two checks exist:
   - it is nowhere in the file, including when the stored range no longer fits a shorter file: `stale`, reason `not-found`;
   - the file is missing, not regular or binary: `stale` with that reason.
 
-  A `stale` evidence that holds again goes back to `verified`. Whether a stored citation found at another place moves to the later commit is decided by the epic 7 review (#44).
+  A `stale` evidence that holds again goes back to `verified`. When the excerpt is found at another place, the stored commit and lines stay as they are, and the evidence keeps verifying against them at its own commit; whether they move to the later commit is decided by the epic 7 review (#44).
 
 ## Format versions
 
