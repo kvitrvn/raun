@@ -141,7 +141,6 @@ func AppendFromRun(it Item, add RunAdditions) (Item, error) {
 	c.Support = append(c.Support, batch.Support...)
 	c.Evidence = append(c.Evidence, batch.Evidence...)
 	c.OpenPoints = append(c.OpenPoints, batch.OpenPoints...)
-	c.UpdatedAt = add.At
 
 	if disagreement {
 		run := Actor{Kind: ActorRun, By: add.Run}
@@ -156,6 +155,9 @@ func AppendFromRun(it Item, add RunAdditions) (Item, error) {
 			return Item{}, fmt.Errorf("append to %s: %w", it.ID, err)
 		}
 	}
+	// Set after the transition, which checks the time against the previous
+	// change of the item.
+	c.UpdatedAt = add.At
 
 	if err := c.Validate(); err != nil {
 		return Item{}, err
@@ -257,7 +259,6 @@ func ResolveOpenPoint(it Item, pointID string, res Resolution) (Item, error) {
 		r.Position = &pos
 	}
 	c.OpenPoints[idx].Resolution = &r
-	c.UpdatedAt = res.At
 
 	if c.Status == StatusContested && !c.HasUnresolvedDisagreement() {
 		human := Actor{Kind: ActorHuman, By: res.By}
@@ -265,6 +266,9 @@ func ResolveOpenPoint(it Item, pointID string, res Resolution) (Item, error) {
 			return Item{}, fmt.Errorf("resolve %s of %s: %w", pointID, it.ID, err)
 		}
 	}
+	// Set after the transition, which checks the time against the previous
+	// change of the item.
+	c.UpdatedAt = res.At
 
 	if err := c.Validate(); err != nil {
 		return Item{}, err
