@@ -25,7 +25,7 @@ See [the architecture](../architecture.md) and [the threat model](../threat-mode
 Dropped. There is no file-based `.raun/` workspace and no local `init`, `run` or `serve` command.
 
 - The server database is the source of truth. YAML and Markdown are exports (epic 11).
-- A knowledge base written by raun-old under `.raun/knowledge/` can be imported (#15).
+- No knowledge base is imported from raun-old, which was never used in production. This line first announced an import (#15); the epic 2 review dropped it ([02-knowledge-core.md](02-knowledge-core.md#no-import-from-raun-old)).
 
 Why: one product with one storage model. Keeping the file backend would double every storage change and every test of the knowledge core for a mode the hosted product does not need.
 
@@ -127,7 +127,7 @@ Go version: 1.27.3, from `go.mod`. CI reads it with `go-version-file`. GitHub Ac
 | Link checking of the documentation | When the documentation grows past the skeleton |
 | Secret scanning in CI | Epic 13 |
 | Release versioning, packaging and signing | Epic 13 |
-| Storage engine (SQLite first, PostgreSQL later is the orientation) | Epic 2 review (#9) |
+| Storage engine | Decided by the epic 2 review: SQLite ([02-knowledge-core.md](02-knowledge-core.md#sqlite)); PostgreSQL in epic 14 |
 | Tenancy beyond one organization per instance | Not planned; the data model stays ready for it |
 
 ## Exit criteria
