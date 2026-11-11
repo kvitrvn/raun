@@ -104,9 +104,9 @@ func newRequirement(t *testing.T) Item {
 func itemIn(t *testing.T, status Status, unresolved bool) Item {
 	t.Helper()
 	it := newRequirement(t)
-	addDisagreement := func(it Item) Item {
+	addDisagreement := func(it Item, minute int) Item {
 		t.Helper()
-		out, err := AppendFromRun(it, RunAdditions{Run: testRun2, Reason: "the lead found a conflict", At: at(5), OpenPoints: []OpenPoint{disagreement("p1", testRun2)}})
+		out, err := AppendFromRun(it, RunAdditions{Run: testRun2, Reason: "the lead found a conflict", At: at(minute), OpenPoints: []OpenPoint{disagreement("p1", testRun2)}})
 		if err != nil {
 			t.Fatalf("add disagreement: %v", err)
 		}
@@ -128,7 +128,7 @@ func itemIn(t *testing.T, status Status, unresolved bool) Item {
 		if !unresolved {
 			t.Fatal("a contested item holds an unresolved disagreement")
 		}
-		it = addDisagreement(it)
+		it = addDisagreement(it, 5)
 	case StatusValidated:
 		if unresolved {
 			t.Fatal("a validated item holds no unresolved disagreement")
@@ -136,13 +136,13 @@ func itemIn(t *testing.T, status Status, unresolved bool) Item {
 		it = must(Decide(it, StatusValidated, testHuman, testReasonOK, at(10)))
 	case StatusRejected:
 		if unresolved {
-			it = addDisagreement(it)
+			it = addDisagreement(it, 5)
 		}
 		it = must(Decide(it, StatusRejected, testHuman, "not a rule of the product", at(10)))
 	case StatusNeedsReview:
 		it = must(Decide(it, StatusValidated, testHuman, testReasonOK, at(10)))
 		if unresolved {
-			it = addDisagreement(it)
+			it = addDisagreement(it, 15)
 		} else {
 			it.Evidence[0].State = EvidenceStale
 			it.Evidence[0].Reason = ReasonNotFound

@@ -154,8 +154,9 @@ func (it Item) validateEvidence(v *validator) map[string]bool {
 			v.add(at+".id", "must be e<number>, got %q", e.ID)
 		} else if ids[e.ID] {
 			v.add(at+".id", "duplicate identifier %q", e.ID)
+		} else {
+			ids[e.ID] = true
 		}
-		ids[e.ID] = true
 
 		if !e.Source.Valid() {
 			v.add(at+".source", "unknown source %q", e.Source)
@@ -237,8 +238,9 @@ func (it Item) validateOpenPoints(v *validator, evidence map[string]bool) {
 			v.add(at+".id", "must be p<number>, got %q", p.ID)
 		} else if ids[p.ID] {
 			v.add(at+".id", "duplicate identifier %q", p.ID)
+		} else {
+			ids[p.ID] = true
 		}
-		ids[p.ID] = true
 
 		if !p.Kind.Valid() {
 			v.add(at+".kind", "unknown kind %q", p.Kind)
@@ -281,6 +283,9 @@ func (it Item) validateHistory(v *validator) {
 			v.add(at+".to", "unknown status %q", e.To)
 		}
 
+		if i > 0 && e.At.Before(it.History[i-1].At) {
+			v.add(at+".at", "is before the previous event")
+		}
 		if i == 0 {
 			if e.From != "" || e.To != StatusProposed || e.Actor != ActorRun {
 				v.add(at, "the first event must be the creation of the item by a run, to %s", StatusProposed)
@@ -297,8 +302,12 @@ func (it Item) validateHistory(v *validator) {
 		}
 		v.required(at+".reason", e.Reason)
 	}
-	if last := it.History[len(it.History)-1].To; it.Status.Valid() && it.Status != last {
-		v.add("status", "must be %q, the status of the last history event, got %q", last, it.Status)
+	last := it.History[len(it.History)-1]
+	if it.Status.Valid() && it.Status != last.To {
+		v.add("status", "must be %q, the status of the last history event, got %q", last.To, it.Status)
+	}
+	if !it.UpdatedAt.IsZero() && it.UpdatedAt.Before(last.At) {
+		v.add("updated_at", "is before the last history event")
 	}
 }
 

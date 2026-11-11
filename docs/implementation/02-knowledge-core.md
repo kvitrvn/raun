@@ -23,6 +23,8 @@ Two adjustments keep `proposed` free of unresolved disagreements, which raun-old
 
 One change of behavior: an excerpt that is not at its cited lines but appears at several other places is reported as `ambiguous` instead of being moved to the nearest occurrence. raun-old's choice could attach a claim to the wrong code without anyone noticing. Ambiguity is a reason, not a fifth state: the integrity check reports it as `invalid`, the freshness check as `stale`, so every rule that reads states stays as it was. A citation found ambiguous at its own commit is therefore never checked again, where raun-old would have relocated it and kept following it: it supports nothing, and the next analysis cites the code anew. The other reasons (`not-found`, `missing-file`, `not-regular`, `binary`, `too-long`, `bad-range`) say why a citation has no ground, which raun-old only wrote in its run manifests.
 
+A requirement's `kind` is optional, as in raun-old, but a value outside the three kinds is refused.
+
 Adding a type later takes a constant in the core, a row in `docs/format.md` and a decision in the record of the epic that adds it. The set of types is closed: an unknown type is a validation error.
 
 ### No import from raun-old

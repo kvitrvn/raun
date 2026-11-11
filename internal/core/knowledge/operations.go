@@ -11,8 +11,8 @@ import (
 var (
 	// ErrNothingToAppend: a run appended no support, evidence or open point.
 	ErrNothingToAppend = errors.New("nothing to append")
-	// ErrForeignRun: an appended element names another run than the one
-	// appending it.
+	// ErrForeignRun: an appended support entry names another run than the one
+	// appending it, or a position names a run unknown to the item.
 	ErrForeignRun = errors.New("element of another run")
 	// ErrResolvedByRun: a run tried to append an open point already resolved;
 	// only a human resolves.
@@ -79,8 +79,9 @@ func New(d Draft, run, reason string, at time.Time) (Item, error) {
 
 // RunAdditions is what a run appends to an existing item.
 type RunAdditions struct {
-	// Run identifies the run. Every appended support entry and position must
-	// name it.
+	// Run identifies the run. Every appended support entry must name it. A
+	// position names it, or an earlier run of the item whose content the
+	// position stands for.
 	Run string
 	// Reason says why the ground of the item changed. It is required when the
 	// additions change the status.
@@ -104,8 +105,8 @@ func AppendFromRun(it Item, add RunAdditions) (Item, error) {
 	if strings.TrimSpace(add.Run) == "" {
 		return Item{}, fmt.Errorf("append to %s: %w", it.ID, ErrActorRequired)
 	}
-	if add.At.IsZero() || add.At.Location() != time.UTC {
-		return Item{}, fmt.Errorf("append to %s: %w", it.ID, ErrTimeRequired)
+	if err := checkTime(it, add.At); err != nil {
+		return Item{}, fmt.Errorf("append to %s: %w", it.ID, err)
 	}
 	if len(add.Support) == 0 && len(add.Evidence) == 0 && len(add.OpenPoints) == 0 {
 		return Item{}, fmt.Errorf("append to %s: %w", it.ID, ErrNothingToAppend)
@@ -117,13 +118,17 @@ func AppendFromRun(it Item, add RunAdditions) (Item, error) {
 			return Item{}, fmt.Errorf("append to %s: support[%d] names run %q: %w", it.ID, i, s.Run, ErrForeignRun)
 		}
 	}
+	// A position keeps the run that wrote it: a conflict with existing content
+	// sets a position of an earlier run of the item against one of this run.
+	runs := it.runs()
+	runs[add.Run] = true
 	for i, p := range add.OpenPoints {
 		if p.Resolution != nil {
 			return Item{}, fmt.Errorf("append to %s: open_points[%d]: %w", it.ID, i, ErrResolvedByRun)
 		}
 		for j, pos := range p.Positions {
-			if pos.Run != add.Run {
-				return Item{}, fmt.Errorf("append to %s: open_points[%d].positions[%d] names run %q: %w", it.ID, i, j, pos.Run, ErrForeignRun)
+			if !runs[pos.Run] {
+				return Item{}, fmt.Errorf("append to %s: open_points[%d].positions[%d] names run %q, unknown to the item: %w", it.ID, i, j, pos.Run, ErrForeignRun)
 			}
 		}
 		if p.Unresolved() {
@@ -227,8 +232,8 @@ func ResolveOpenPoint(it Item, pointID string, res Resolution) (Item, error) {
 	if strings.TrimSpace(res.Note) == "" {
 		return Item{}, fmt.Errorf("resolve %s of %s: %w", pointID, it.ID, ErrNoteRequired)
 	}
-	if res.At.IsZero() || res.At.Location() != time.UTC {
-		return Item{}, fmt.Errorf("resolve %s of %s: %w", pointID, it.ID, ErrTimeRequired)
+	if err := checkTime(it, res.At); err != nil {
+		return Item{}, fmt.Errorf("resolve %s of %s: %w", pointID, it.ID, err)
 	}
 
 	c := it.clone()

@@ -21,6 +21,9 @@ var (
 	ErrActorRequired = errors.New("actor required")
 	// ErrTimeRequired: the time of the change is zero or not in UTC.
 	ErrTimeRequired = errors.New("time required in UTC")
+	// ErrTimeBackwards: the time of the change is before the last change of
+	// the item.
+	ErrTimeBackwards = errors.New("time before the last change")
 )
 
 // transitionKey is one row of the transition table. From is empty for the
@@ -60,6 +63,18 @@ type Actor struct {
 	By   string
 }
 
+// checkTime refuses a zero time, a time outside UTC, and a time before the
+// last change of the item.
+func checkTime(it Item, at time.Time) error {
+	if at.IsZero() || at.Location() != time.UTC {
+		return ErrTimeRequired
+	}
+	if at.Before(it.UpdatedAt) {
+		return ErrTimeBackwards
+	}
+	return nil
+}
+
 // transition moves the item, a copy the caller owns, to the status to and
 // appends one history event. It checks the table, the actor, the reason, the
 // time and the rules on disagreements. It never touches the revision.
@@ -75,10 +90,12 @@ func transition(it *Item, to Status, actor Actor, reason string, at time.Time) e
 	if strings.TrimSpace(reason) == "" {
 		return fmt.Errorf("%w: from %s to %s", ErrReasonRequired, from, to)
 	}
-	if at.IsZero() || at.Location() != time.UTC {
-		return fmt.Errorf("%w: from %s to %s", ErrTimeRequired, from, to)
+	if err := checkTime(*it, at); err != nil {
+		return fmt.Errorf("%w: from %s to %s", err, from, to)
 	}
 
+	// The two reopening cases cannot happen through Reopen, which picks the
+	// target itself; they keep the rule true for any caller of transition.
 	unresolved := it.HasUnresolvedDisagreement()
 	switch {
 	case to == StatusValidated && unresolved:

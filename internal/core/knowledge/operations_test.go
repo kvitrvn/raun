@@ -130,6 +130,12 @@ func TestAppendFromRunStatusEffects(t *testing.T) {
 			if len(got.History) != wantEvents {
 				t.Errorf("%d events, want %d", len(got.History), wantEvents)
 			}
+			if tt.want != tt.status {
+				e := got.History[len(got.History)-1]
+				if e.Actor != ActorRun || e.By != testRun2 || e.From != tt.status || e.Reason != "found again" || !e.At.Equal(at(40)) {
+					t.Errorf("run event = %+v", e)
+				}
+			}
 			if !got.UpdatedAt.Equal(at(40)) {
 				t.Errorf("updated_at = %v", got.UpdatedAt)
 			}
@@ -141,7 +147,7 @@ func TestAppendFromRunRefusals(t *testing.T) {
 	resolved := disagreement("p9", testRun2)
 	resolved.Resolution = &Resolution{At: at(40), By: testHuman, Note: "n"}
 	foreignPosition := disagreement("p9", testRun2)
-	foreignPosition.Positions[1].Run = testRun
+	foreignPosition.Positions[1].Run = "run-unknown"
 
 	tests := []struct {
 		name    string
@@ -150,7 +156,8 @@ func TestAppendFromRunRefusals(t *testing.T) {
 	}{
 		{name: "nothing", add: RunAdditions{}, wantErr: ErrNothingToAppend},
 		{name: "support of another run", add: RunAdditions{Support: []Support{support(testRun, "e1")}}, wantErr: ErrForeignRun},
-		{name: "position of another run", add: RunAdditions{OpenPoints: []OpenPoint{foreignPosition}}, wantErr: ErrForeignRun},
+		{name: "position of a run unknown to the item", add: RunAdditions{Reason: "conflict", OpenPoints: []OpenPoint{foreignPosition}}, wantErr: ErrForeignRun},
+		{name: "time before the last change", add: RunAdditions{At: at(-1), OpenPoints: []OpenPoint{question("p9")}}, wantErr: ErrTimeBackwards},
 		{name: "resolved open point", add: RunAdditions{OpenPoints: []OpenPoint{resolved}}, wantErr: ErrResolvedByRun},
 		{name: "disagreement without a reason", add: RunAdditions{OpenPoints: []OpenPoint{disagreement("p9", testRun2)}}, wantErr: ErrReasonRequired},
 	}
@@ -158,7 +165,10 @@ func TestAppendFromRunRefusals(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			it := itemIn(t, StatusProposed, false)
 			before := it.clone()
-			tt.add.Run, tt.add.At = testRun2, at(40)
+			tt.add.Run = testRun2
+			if tt.add.At.IsZero() {
+				tt.add.At = at(40)
+			}
 			if _, err := AppendFromRun(it, tt.add); !errors.Is(err, tt.wantErr) {
 				t.Fatalf("err = %v, want %v", err, tt.wantErr)
 			}
@@ -198,6 +208,32 @@ func TestAppendFromRunValidatesTheResult(t *testing.T) {
 			assertFieldError(t, err, tt.wantPath)
 			unchanged(t, before, it)
 		})
+	}
+}
+
+// A run that contradicts content of an earlier run records a disagreement
+// whose positions keep the run that wrote each side.
+func TestAppendFromRunRecordsAConflictWithEarlierContent(t *testing.T) {
+	it := itemIn(t, StatusValidated, false)
+	conflict := OpenPoint{
+		ID:       "p1",
+		Kind:     PointDisagreement,
+		Summary:  "The new analysis contradicts the validated rule.",
+		RaisedBy: "reconciler",
+		Positions: []Position{
+			{Statement: "Issued invoices are read-only.", Run: testRun, Agents: []string{"alpha"}, Evidence: []string{"e1"}},
+			{Statement: "Admins can edit issued invoices.", Run: testRun2, Agents: []string{"gamma"}},
+		},
+	}
+	got, err := AppendFromRun(it, RunAdditions{Run: testRun2, Reason: "conflict with existing content", At: at(40), OpenPoints: []OpenPoint{conflict}})
+	if err != nil {
+		t.Fatalf("AppendFromRun: %v", err)
+	}
+	if got.Status != StatusNeedsReview {
+		t.Errorf("status = %s, want needs-review", got.Status)
+	}
+	if runs := []string{got.OpenPoints[0].Positions[0].Run, got.OpenPoints[0].Positions[1].Run}; runs[0] != testRun || runs[1] != testRun2 {
+		t.Errorf("positions name runs %v, want %s then %s", runs, testRun, testRun2)
 	}
 }
 
@@ -259,6 +295,18 @@ func TestDecide(t *testing.T) {
 				t.Errorf("status %s, last event %+v", got.Status, last)
 			}
 		})
+	}
+}
+
+func TestDecideRefusesATimeBeforeTheLastChange(t *testing.T) {
+	it := itemIn(t, StatusValidated, false)
+	before := it.clone()
+	if _, err := Decide(it, StatusRejected, testHuman, "no", at(9)); !errors.Is(err, ErrTimeBackwards) {
+		t.Fatalf("err = %v, want ErrTimeBackwards", err)
+	}
+	unchanged(t, before, it)
+	if _, err := Decide(it, StatusRejected, testHuman, "no", it.UpdatedAt); err != nil {
+		t.Errorf("a decision at the time of the last change: %v", err)
 	}
 }
 
@@ -377,6 +425,7 @@ func TestResolveOpenPoint(t *testing.T) {
 		{name: "no note", point: "p1", res: Resolution{At: at(70), By: testHuman}, wantErr: ErrNoteRequired},
 		{name: "no author", point: "p1", res: Resolution{At: at(70), Note: "n"}, wantErr: ErrActorRequired},
 		{name: "no time", point: "p1", res: Resolution{By: testHuman, Note: "n"}, wantErr: ErrTimeRequired},
+		{name: "time before the last change", point: "p1", res: Resolution{At: at(1), By: testHuman, Note: "n"}, wantErr: ErrTimeBackwards},
 	}
 	for _, tt := range refusals {
 		t.Run(tt.name, func(t *testing.T) {

@@ -30,7 +30,7 @@ An item is never deleted on its own: a human rejects it. Items disappear only wi
 | Type | Content |
 | --- | --- |
 | `persona` | Someone the software serves: `description`, `goals[]`, `capabilities[]`. |
-| `requirement` | A rule the software follows: `statement` and a `kind`. |
+| `requirement` | A rule the software follows: `statement` and, optionally, a `kind`. |
 
 | Requirement kind | Meaning |
 | --- | --- |
@@ -76,7 +76,7 @@ A later run appends support; it never changes an existing entry.
 | `kind` | `disagreement`, `uncertainty` or `question`. |
 | `summary` | One line. |
 | `raised_by` | Optional: an agent identifier, `lead`, `reconciler` for a conflict with existing content, or `raun` for a verification problem. |
-| `positions[]` | One side of a disagreement, kept as written: `statement`, `run`, `agents[]`, `evidence[]`. A disagreement has at least two positions. |
+| `positions[]` | One side of a disagreement, kept as written: `statement`, `run`, `agents[]`, `evidence[]`. A disagreement has at least two positions. A position names the run that wrote it, which may be an earlier run of the item when a run contradicts existing content. |
 | `resolution` | Set by a human: `at`, `by`, `position` (0-based index of the retained position, optional), `note`. |
 
 ## Identifiers
@@ -130,7 +130,7 @@ A revision says nothing about content: two updates that leave the content the sa
 
 ## History
 
-Every status change appends one event. Events are never changed or deleted.
+Every status change appends one event. Events are never changed or deleted, and they are in time order: a change dated before the last change of the item is refused.
 
 | Field | Content |
 | --- | --- |

@@ -119,6 +119,8 @@ func TestValidateReportsFieldPaths(t *testing.T) {
 		{"event without author", func(it *Item) { it.History[1].By = "" }, "history[1].by"},
 		{"event without reason", func(it *Item) { it.History[1].Reason = "" }, "history[1].reason"},
 		{"status other than the last event", func(it *Item) { it.Status = StatusValidated }, "status"},
+		{"event before the previous one", func(it *Item) { it.History[2].At = it.History[1].At.Add(-time.Second) }, "history[2].at"},
+		{"updated before the last event", func(it *Item) { it.UpdatedAt = it.History[2].At.Add(-time.Second) }, "updated_at"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -137,6 +139,23 @@ func TestValidateStatusAndDisagreements(t *testing.T) {
 	proposed := itemIn(t, StatusProposed, false)
 	proposed.OpenPoints = []OpenPoint{disagreement("p1", testRun)}
 	assertFieldError(t, proposed.Validate(), "status")
+}
+
+// A malformed identifier is reported once for its shape, and never counts as
+// an evidence or open point that a reference may name.
+func TestValidateMalformedLocalIDs(t *testing.T) {
+	it := fullItem(t)
+	it.Evidence[0].ID = "E1"
+	it.Evidence[1].ID = "E1"
+	err := it.Validate()
+	assertFieldError(t, err, "evidence[0].id")
+	assertFieldError(t, err, "evidence[1].id")
+	assertFieldError(t, err, "support[0].observations[0].evidence[0]")
+	for _, fe := range err.(*ValidationError).Errors {
+		if strings.Contains(fe.Message, "duplicate") {
+			t.Errorf("malformed identifier reported as a duplicate: %v", fe)
+		}
+	}
 }
 
 func TestValidatePersona(t *testing.T) {

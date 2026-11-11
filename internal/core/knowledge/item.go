@@ -310,6 +310,26 @@ func (it Item) HasUnresolvedDisagreement() bool {
 	return false
 }
 
+// runs returns the runs the item knows: those that wrote its support or its
+// positions, or changed its status.
+func (it Item) runs() map[string]bool {
+	runs := map[string]bool{}
+	for _, s := range it.Support {
+		runs[s.Run] = true
+	}
+	for _, p := range it.OpenPoints {
+		for _, pos := range p.Positions {
+			runs[pos.Run] = true
+		}
+	}
+	for _, e := range it.History {
+		if e.Actor == ActorRun {
+			runs[e.By] = true
+		}
+	}
+	return runs
+}
+
 // clone returns a deep copy of the item, so that an operation can change the
 // copy without touching the slices and pointers the caller still holds.
 func (it Item) clone() Item {
