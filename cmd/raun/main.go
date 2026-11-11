@@ -84,8 +84,10 @@ func readBuildInfo() buildInfo {
 }
 
 // versionLine formats the build information. A module version, tagged or a
-// pseudo-version stamped from Git, already identifies the revision; only a
-// development build gets the revision appended.
+// pseudo-version stamped from Git, already identifies the revision, and is what
+// every build from a Git checkout reports. The "dev" form, with the revision
+// appended when known, is for builds without a module version, such as
+// `go build -buildvcs=false` or a build outside a repository.
 func versionLine(bi buildInfo) string {
 	if bi.version != "" && bi.version != "(devel)" {
 		return "raun " + bi.version
