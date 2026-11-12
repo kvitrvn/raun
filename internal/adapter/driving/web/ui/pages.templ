@@ -1,0 +1,20 @@
+package ui
+
+// HomePage lists the repositories of the instance. None can be activated
+// before accounts and forges exist (epics 4 and 5), so it shows the empty
+// state.
+templ HomePage(p Page) {
+	@Layout(p) {
+		<div class="flex flex-wrap items-center gap-3">
+			<h1 class="text-2xl font-semibold tracking-tight">Repositories</h1>
+		</div>
+		@Empty(EmptyProps{Title: "No repository yet", Icon: IconFolder})
+	}
+}
+
+// NotFoundPage answers a path the server does not know.
+templ NotFoundPage(p Page) {
+	@Layout(p) {
+		@ErrorState(ErrorProps{Status: 404, Title: "Page not found", Message: "Nothing lives at this address.", BackHref: "/", BackLabel: "Back to repositories"})
+	}
+}

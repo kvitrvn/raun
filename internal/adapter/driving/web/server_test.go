@@ -169,11 +169,10 @@ func TestHealth(t *testing.T) {
 
 func TestHealthRefusesOtherMethods(t *testing.T) {
 	s, _ := newTestServer(t, nil)
-	// Only GET and HEAD reach the health endpoints; any other method goes to
-	// the application, which has no such route.
+	// Only GET and HEAD reach the health endpoints.
 	resp := serve(s, request(http.MethodPost, "/healthz", testHost, nil))
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("POST /healthz = %d, want 404", resp.StatusCode)
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("POST /healthz = %d, want 405", resp.StatusCode)
 	}
 	resp = serve(s, request(http.MethodHead, "/readyz", testHost, nil))
 	if resp.StatusCode != http.StatusOK {
@@ -565,6 +564,63 @@ func TestCanonicalHost(t *testing.T) {
 		got, err := CanonicalHost(tt.authority, tt.scheme)
 		if (err != nil) != tt.wantErr || got != tt.want {
 			t.Errorf("CanonicalHost(%q, %q) = %q, %v; want %q, error %v", tt.authority, tt.scheme, got, err, tt.want, tt.wantErr)
+		}
+	}
+}
+
+func TestPages(t *testing.T) {
+	s, logs := newTestServer(t, nil)
+	tests := []struct {
+		name, target string
+		status       int
+		want         string
+		route        string
+	}{
+		{"home", "/", http.StatusOK, "<h1 class=\"text-2xl font-semibold tracking-tight\">Repositories</h1>", "GET /{$}"},
+		{"unknown page", "/nowhere", http.StatusNotFound, "Page not found", ""},
+		{"path below home", "/x/y", http.StatusNotFound, "Page not found", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logs.Reset()
+			resp := serve(s, request(http.MethodGet, tt.target, testHost, nil))
+			if resp.StatusCode != tt.status {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.status)
+			}
+			body := readBody(t, resp)
+			if !strings.Contains(body, tt.want) {
+				t.Errorf("body lacks %q", tt.want)
+			}
+			h := resp.Header
+			if h.Get("Content-Type") != "text/html; charset=utf-8" || h.Get("Cache-Control") != "no-store" || h.Get("Set-Cookie") != "" {
+				t.Errorf("headers = %v", h)
+			}
+			// Every asset the page names is served.
+			for _, m := range regexp.MustCompile(`(?:src|href)="(/assets/[^"]+)"`).FindAllStringSubmatch(body, -1) {
+				if r := serve(s, request(http.MethodGet, m[1], testHost, nil)); r.StatusCode != http.StatusOK {
+					t.Errorf("%s = %d", m[1], r.StatusCode)
+				}
+			}
+			if got := find(records(t, logs), "request"); len(got) == 0 || got[0]["route"] != tt.route {
+				t.Errorf("access records = %v", got)
+			}
+		})
+	}
+}
+
+func TestPagesNeedThePublicHost(t *testing.T) {
+	s, _ := newTestServer(t, nil)
+	if resp := serve(s, request(http.MethodGet, "/", "evil.example", nil)); resp.StatusCode != http.StatusMisdirectedRequest {
+		t.Errorf("home with a foreign Host = %d, want 421", resp.StatusCode)
+	}
+}
+
+func TestWrongMethodOnAPage(t *testing.T) {
+	s, _ := newTestServer(t, nil)
+	for _, target := range []string{"/", "/nowhere"} {
+		resp := serve(s, request(http.MethodPost, target, testHost, nil))
+		if resp.StatusCode != http.StatusMethodNotAllowed || !strings.Contains(resp.Header.Get("Allow"), "GET") {
+			t.Errorf("POST %s = %d, Allow %q; want 405 with GET", target, resp.StatusCode, resp.Header.Get("Allow"))
 		}
 	}
 }

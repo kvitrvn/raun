@@ -1,0 +1,1 @@
+<input id="name" name="name" type="text" value="&lt;script&gt;alert(1)&lt;/script&gt;&#34; onmouseover=&#34;x" placeholder="Workspace" data-slot="input" class="cn-input w-full min-w-0 outline-none placeholder:text-faint-foreground disabled:cursor-not-allowed disabled:opacity-50" required>

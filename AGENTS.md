@@ -24,7 +24,7 @@ internal/adapter/driven/   implementations of the ports: database, forge, sandbo
 internal/adapter/driving/  entry points: HTTP server, webhooks, runner API
 internal/gittest/          test helper outside the core: fixture Git repositories
 internal/golden/           test helper outside the core: golden files, rewritten with -update
-scripts/                   repository checks called by the Makefile
+scripts/                   repository checks called by the Makefile, and generate-web.sh (docs/web.md)
 docs/                      product, architecture, threat model, implementation records
 ```
 
@@ -72,6 +72,7 @@ Dependencies:
 | `honnef.co/go/tools/cmd/staticcheck` | tool | Pinned linter, run with `go tool` |
 | `golang.org/x/vuln/cmd/govulncheck` | tool | Pinned vulnerability scanner, run with `go tool` |
 | `modernc.org/sqlite` | library | Pure-Go SQLite driver of the knowledge store: the binary keeps building with `CGO_ENABLED=0` (epic 2 record) |
+| `github.com/a-h/templ` | tool and library | Typed templates that escape every value; the generator runs with `go tool templ`, the runtime package is linked (epic 3 record) |
 
 ## Testing
 

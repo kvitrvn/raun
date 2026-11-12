@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -162,6 +163,19 @@ func TestServerServes(t *testing.T) {
 	}
 	if code, _ := s.get(t, "/", "evil.example", nil); code != http.StatusMisdirectedRequest {
 		t.Errorf("foreign Host = %d, want 421", code)
+	}
+	code, page := s.get(t, "/", "", nil)
+	if code != http.StatusOK || !strings.Contains(page, "<title>Repositories · Raun</title>") {
+		t.Errorf("/ = %d %q", code, page)
+	}
+	assets := regexp.MustCompile(`(?:src|href)="(/assets/[^"]+)"`).FindAllStringSubmatch(page, -1)
+	if len(assets) < 5 {
+		t.Errorf("the page names %d assets", len(assets))
+	}
+	for _, m := range assets {
+		if code, _ := s.get(t, m[1], "", nil); code != http.StatusOK {
+			t.Errorf("%s = %d", m[1], code)
+		}
 	}
 	if code, _ := s.get(t, "/readyz", "evil.example", nil); code != http.StatusOK {
 		t.Errorf("/readyz with a foreign Host = %d, want 200", code)

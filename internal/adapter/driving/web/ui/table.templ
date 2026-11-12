@@ -1,0 +1,85 @@
+package ui
+
+// Adapted from shadcn-templ v2.0.0-beta.16, components/table/table.templ: the
+// data-slot structure and the cn-table-* classes are kept; the class-merging
+// helper and the checkbox padding are removed, and a head cell is a column
+// header for assistive technologies.
+
+// TableProps configures a table and its scrolling container. Label names
+// the table when no caption does.
+type TableProps struct {
+	ID         string
+	Class      string
+	Label      string
+	Attributes templ.Attributes
+}
+
+templ Table(props ...TableProps) {
+	{{ var p TableProps }}
+	if len(props) > 0 {
+		{{ p = props[0] }}
+	}
+	<div data-slot="table-container" class="cn-table-container">
+		<table
+			if p.ID != "" {
+				id={ p.ID }
+			}
+			data-slot="table"
+			class={ classes("cn-table", p.Class) }
+			if p.Label != "" {
+				aria-label={ p.Label }
+			}
+			{ p.Attributes... }
+		>
+			{ children... }
+		</table>
+	</div>
+}
+
+templ TableCaption() {
+	<caption data-slot="table-caption" class="cn-table-caption">{ children... }</caption>
+}
+
+templ TableHeader() {
+	<thead data-slot="table-header" class="cn-table-header">{ children... }</thead>
+}
+
+templ TableBody() {
+	<tbody data-slot="table-body" class="cn-table-body">{ children... }</tbody>
+}
+
+// TableRowProps configures a row.
+type TableRowProps struct {
+	Class      string
+	Attributes templ.Attributes
+}
+
+templ TableRow(props ...TableRowProps) {
+	{{ var p TableRowProps }}
+	if len(props) > 0 {
+		{{ p = props[0] }}
+	}
+	<tr data-slot="table-row" class={ classes("cn-table-row", p.Class) } { p.Attributes... }>{ children... }</tr>
+}
+
+// TableCellProps configures a head or body cell.
+type TableCellProps struct {
+	Class      string
+	Attributes templ.Attributes
+}
+
+templ TableHead(props ...TableCellProps) {
+	{{ var p TableCellProps }}
+	if len(props) > 0 {
+		{{ p = props[0] }}
+	}
+	<th scope="col" data-slot="table-head" class={ classes("cn-table-head", p.Class) } { p.Attributes... }>{ children... }</th>
+}
+
+templ TableCell(props ...TableCellProps) {
+	{{ var p TableCellProps }}
+	if len(props) > 0 {
+		{{ p = props[0] }}
+	}
+	<td data-slot="table-cell" class={ classes("cn-table-cell", p.Class) } { p.Attributes... }>{ children... }</td>
+}

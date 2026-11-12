@@ -1,0 +1,83 @@
+package ui
+
+// Adapted from shadcn-templ v2.0.0-beta.16, components/dialog/dialog.templ:
+// the data-slot names and the cn-dialog-* classes are kept; the portal, the
+// overlay element and the upstream JavaScript are replaced by the native
+// dialog element, which traps focus, closes on Escape and restores focus.
+// A trigger opens it with the invoker commands of the platform
+// (commandfor, command), and ../assets/app.js does the same where the browser
+// lacks them.
+
+// DialogProps configures a modal dialog. ID is the target of its triggers.
+type DialogProps struct {
+	ID         string
+	Title      string
+	Class      string
+	Attributes templ.Attributes
+}
+
+templ Dialog(p DialogProps) {
+	<dialog
+		id={ p.ID }
+		data-slot="dialog-content"
+		class={ classes("cn-dialog", p.Class) }
+		aria-labelledby={ p.ID + "-title" }
+		{ p.Attributes... }
+	>
+		<div data-slot="dialog-header" class="cn-dialog-header">
+			<h2 id={ p.ID + "-title" } data-slot="dialog-title" class="cn-dialog-title">{ p.Title }</h2>
+			<span class="flex-1"></span>
+			@DialogClose(DialogCloseProps{For: p.ID, Button: ButtonProps{Variant: ButtonGhost, Size: ButtonIconSm, Label: "Close"}}) {
+				@Icon(IconX)
+			}
+		</div>
+		<div data-slot="dialog-body" class="cn-dialog-body">
+			{ children... }
+		</div>
+	</dialog>
+}
+
+templ DialogFooter() {
+	<div data-slot="dialog-footer" class="cn-dialog-footer">{ children... }</div>
+}
+
+// DialogTriggerProps configures the button that opens the dialog For.
+type DialogTriggerProps struct {
+	For    string
+	Button ButtonProps
+}
+
+templ DialogTrigger(p DialogTriggerProps) {
+	{{ b := p.Button }}
+	{{ b.Href = "" }}
+	{{ b.Attributes = with(b.Attributes, templ.Attributes{
+	"commandfor":       p.For,
+	"command":          "show-modal",
+	"aria-haspopup":    "dialog",
+	"data-dialog-open": p.For,
+	"data-slot":        "dialog-trigger",
+}) }}
+	@Button(b) {
+		{ children... }
+	}
+}
+
+// DialogCloseProps configures a button that closes the dialog For.
+type DialogCloseProps struct {
+	For    string
+	Button ButtonProps
+}
+
+templ DialogClose(p DialogCloseProps) {
+	{{ b := p.Button }}
+	{{ b.Href = "" }}
+	{{ b.Attributes = with(b.Attributes, templ.Attributes{
+	"commandfor":        p.For,
+	"command":           "close",
+	"data-dialog-close": p.For,
+	"data-slot":         "dialog-close",
+}) }}
+	@Button(b) {
+		{ children... }
+	}
+}

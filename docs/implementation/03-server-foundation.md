@@ -120,7 +120,7 @@ These answer T11. They apply to every route by default; a route opts out only by
 - **Cross-origin protection.** `http.CrossOriginProtection` from the standard library, on every route: a non-safe request whose `Sec-Fetch-Site` is `cross-site` or `same-site` is refused with `403`, and one with `same-origin` or `none` is accepted without reading `Origin`. Only when `Sec-Fetch-Site` is absent, an `Origin` whose host differs from `Host` is refused. A request with neither header is allowed, as a non-browser client or a browser too old to send them; the CSRF token covers it.
 - **CSRF token.** Each session has a token of 32 random bytes, distinct from its identifier, stored in clear in its row and replaced together with the identifier. Every non-safe request on a route that uses a session must carry it, as the form field `csrf` or the header `X-CSRF-Token`; it is compared in constant time, and a missing or wrong token is refused with `403`. HTMX sends the header on every request through `hx-headers` on `<body>`, an attribute the Content Security Policy allows; forms also carry the hidden field, so they work without JavaScript.
 - **Safe methods change nothing.** `GET`, `HEAD` and `OPTIONS` never change state, since every protection above lets them through.
-- **Rendering.** Repository text, agent output and logs are rendered as escaped text by templ (T13). `templ.Raw` and its equivalents are refused by a check of `make verify`, except for icon data, if #19 adds an icon set: a constant of the repository, never repository content.
+- **Rendering.** Repository text, agent output and logs are rendered as escaped text by templ (T13). `templ.Raw` is refused everywhere by a test of `make verify`, whatever name templ is imported under; icons are written as markup, so there is no exception.
 
 Security headers on every response, pages, fragments and errors alike:
 
@@ -144,10 +144,23 @@ As #16 proposed: templ for typed and escaped templates, HTMX to enhance links an
 - **templ is a tool and a library.** The generator is a `tool` in `go.mod`, run with `go tool templ`, so its version is pinned and checked by `go.sum`; its runtime package is linked into the binary. That makes `github.com/a-h/templ` a production dependency, added to the table of `AGENTS.md` by #19 with this reason: typed templates that escape every value.
 - **Tailwind is a standalone binary**, downloaded by the generation script and checked against the SHA-256 of `docs/web.md`. No Node.js.
 - **HTMX is one file**, the unchanged upstream `dist/htmx.min.js`, committed with its SHA-256, which a test checks.
-- **Fonts.** None embedded: the system font stack. It removes a set of files and their licenses, and nothing in the interface needs a specific face.
+- **Fonts.** Onest for the interface and Spline Sans Mono for code, both under the SIL Open Font License, embedded as WOFF2 latin and latin-ext subsets with their licenses. The review first chose the system font stack; the owner changed it on 2026-11-12 with the design of the interface (#19), whose warm, readable look the system stacks do not give everywhere.
 - **Generated files are committed.** `scripts/generate-web.sh` regenerates the templ output and the CSS; a regular `go build` needs neither tool. `make verify` fails when they are stale, without the network: the templ output is regenerated with `go tool templ` into a temporary directory and compared, and the CSS carries the SHA-256 of its inputs (the templates, `styles.css` and the Tailwind version), which a check recomputes.
 - **Assets** are embedded with `go:embed` and served under `/assets/` with a content hash in their name and `Cache-Control: public, max-age=31536000, immutable`.
 - **Licenses.** The license of every copied or embedded third-party file is kept next to it, in `internal/adapter/driving/web/licenses/`, and listed in `docs/web.md` (epic 1).
+
+### Web shell (#19)
+
+The owner approved a design of the interface on 2026-11-12: a top bar with the workspace, the navigation and the account, a repository bar with its tabs, and content in cards on a warm ground; warm neutrals and a cobalt accent, radii of 4 to 8 px, statuses as filled discs with a white glyph and a word. #19 builds its base; [docs/web.md](../web.md) lists the files.
+
+Rules made explicit while implementing it (#19):
+
+- **One package of templates.** Every template, components, layout, states and pages, is in `internal/adapter/driving/web/ui`, so one directory is generated and checked; `web` stays the HTTP layer that renders them.
+- **Six components, then the domain.** #19 adapts button, badge, input with its field, table, dialog and dropdown menu, and adds the icons, the toast, the layout and the empty and error states. The domain components of the design (queue row, citation, decision bar, position, run steps and console) come with the epics that show them, so no package holds a component nothing uses.
+- **Native elements first.** The dialog is a `<dialog>` opened by invoker commands, the dropdown menu a popover: both work without script and keep the focus behavior of the platform; `app.js` only fills in for browsers without invoker commands, places menus and moves focus with the arrow keys.
+- **The checks are tests.** The freshness of the templ output, the hash of the stylesheet inputs, the HTMX checksum and the refusal of `templ.Raw` are tests of `ui`, so `go test ./...` and `make verify` run them without a new target. The templ check generates into a temporary copy and compares every file, so a missing or left-over generated file fails too.
+- **Theme.** `theme.js`, the only script in the head without `defer`, sets `data-theme` from the person's choice or the system before the page paints; the toggle shows only once it has run.
+- **First page.** `/` lists the repositories, empty until epic 5 activates one; any other path of the application answers a not-found page. Pages set `Cache-Control: no-store` now; #20 adds the other headers.
 
 ### Logging
 
@@ -213,7 +226,7 @@ Rules made explicit while implementing the server (#18):
 | Issue | Change |
 | --- | --- |
 | #18 | The variables, startup order, `RAUN_DATABASE_MIGRATE` instead of a command or flag, limits, shutdown and `SIGHUP`, logs and their forbidden fields, `/healthz` and `/readyz`, the Host check and TLS. |
-| #19 | `docs/web.md` pins, copied components, templ as a tool and a dependency, the stale check without network, content-hashed assets, licenses, no fonts, the `templ.Raw` check. |
+| #19 | `docs/web.md` pins, copied components, templ as a tool and a dependency, the stale check without network, content-hashed assets, licenses, embedded fonts, the `templ.Raw` check. |
 | #20 | `internal/core/session`, the `0002_sessions.sql` migration, lifetimes, renewal, revocation, cookie attributes, `http.CrossOriginProtection`, the token field and header, the security headers. |
 | #21 | Moved to epic 4 and rescoped: the `RAUN_ADMINS` check once accounts exist, the read-only Instance settings screen, the encryption of stored secrets with their first consumer. No bootstrap. |
 | #16 | Scope and exit criteria without the administrator and the instance settings. |
@@ -221,6 +234,6 @@ Rules made explicit while implementing the server (#18):
 ## Exit criteria
 
 - [x] This page records the choices.
-- [ ] `raun server` starts on an empty database, applies migrations and serves a page built with the web shell (#18, #19).
+- [x] `raun server` starts on an empty database, applies migrations and serves a page built with the web shell (#18, #19): `TestServerServes` in `cmd/raun/server_test.go`.
 - [ ] Tests prove that a cross-site state-changing request is refused (#20).
-- [ ] `make verify` passes, including the check that generated files are up to date (#19).
+- [ ] `make verify` passes, including the check that generated files are up to date (#19: `TestGeneratedTemplatesAreCurrent` and `TestStylesheetIsCurrent` in `internal/adapter/driving/web/ui`); checked at the end of the epic.

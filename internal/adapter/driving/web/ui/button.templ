@@ -1,0 +1,127 @@
+package ui
+
+// Adapted from shadcn-templ v2.0.0-beta.16, components/button/button.templ:
+// the data-slot and the cn-button-* classes are kept; the class-merging
+// helper, the generated ids and the role and tabindex forced on links are
+// removed: a link stays a link.
+
+// ButtonVariant is the look of a button.
+type ButtonVariant string
+
+const (
+	ButtonPrimary ButtonVariant = "primary"
+	ButtonSuccess ButtonVariant = "success"
+	ButtonOutline ButtonVariant = "outline"
+	ButtonGhost   ButtonVariant = "ghost"
+	ButtonDanger  ButtonVariant = "danger"
+)
+
+// ButtonSize is the size of a button. The icon sizes are square and need a
+// Label.
+type ButtonSize string
+
+const (
+	ButtonMedium ButtonSize = "md"
+	ButtonSmall  ButtonSize = "sm"
+	ButtonLarge  ButtonSize = "lg"
+	ButtonIcon   ButtonSize = "icon"
+	ButtonIconSm ButtonSize = "icon-sm"
+)
+
+// ButtonType is the type attribute of a button element.
+type ButtonType string
+
+const (
+	TypeButton ButtonType = "button"
+	TypeSubmit ButtonType = "submit"
+	TypeReset  ButtonType = "reset"
+)
+
+// ButtonProps configures a button. With Href it renders a link that looks
+// like a button, unless Disabled. Label is the accessible name of a button
+// whose content is only an icon.
+type ButtonProps struct {
+	ID         string
+	Class      string
+	Attributes templ.Attributes
+	Variant    ButtonVariant
+	Size       ButtonSize
+	Type       ButtonType
+	Href       string
+	Disabled   bool
+	Label      string
+	Form       string
+	Name       string
+	Value      string
+}
+
+const buttonBase = "cn-button inline-flex shrink-0 items-center justify-center whitespace-nowrap select-none disabled:pointer-events-none disabled:opacity-50"
+
+// ButtonClasses gives the classes of a button with these props, for an
+// element that is not a Button.
+func ButtonClasses(p ButtonProps) string {
+	variant := p.Variant
+	if variant == "" {
+		variant = ButtonPrimary
+	}
+	size := p.Size
+	if size == "" {
+		size = ButtonMedium
+	}
+	return classes(buttonBase, "cn-button-variant-"+string(variant), "cn-button-size-"+string(size), p.Class)
+}
+
+templ Button(props ...ButtonProps) {
+	{{ var p ButtonProps }}
+	if len(props) > 0 {
+		{{ p = props[0] }}
+	}
+	if p.Type == "" {
+		{{ p.Type = TypeButton }}
+	}
+	if p.Href != "" && !p.Disabled {
+		<a
+			if p.ID != "" {
+				id={ p.ID }
+			}
+			href={ templ.URL(p.Href) }
+			if _, ok := p.Attributes["data-slot"]; !ok {
+				data-slot="button"
+			}
+			class={ ButtonClasses(p) }
+			if p.Label != "" {
+				aria-label={ p.Label }
+			}
+			{ p.Attributes... }
+		>
+			{ children... }
+		</a>
+	} else {
+		<button
+			if p.ID != "" {
+				id={ p.ID }
+			}
+			type={ string(p.Type) }
+			if _, ok := p.Attributes["data-slot"]; !ok {
+				data-slot="button"
+			}
+			class={ ButtonClasses(p) }
+			if p.Label != "" {
+				aria-label={ p.Label }
+			}
+			if p.Form != "" {
+				form={ p.Form }
+			}
+			if p.Name != "" {
+				name={ p.Name }
+			}
+			if p.Value != "" {
+				value={ p.Value }
+			}
+			disabled?={ p.Disabled }
+			{ p.Attributes... }
+		>
+			{ children... }
+		</button>
+	}
+}
