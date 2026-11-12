@@ -491,6 +491,24 @@ func TestReadFilesStopsWhenVisitFails(t *testing.T) {
 	}
 }
 
+func TestReadFilesWithoutPaths(t *testing.T) {
+	f := newFixture(t)
+	c := newCounter(t)
+	r := open(t, f.repo.Dir(), git.Options{Git: c.path})
+	c.starts(t)
+	for _, paths := range [][]string{nil, {}} {
+		err := r.ReadFiles(context.Background(), strings.Repeat("0", 40), paths, func(knowledge.File) error {
+			return errors.New("visited")
+		})
+		if err != nil {
+			t.Errorf("ReadFiles(%v) = %v, want nil: no path reads nothing", paths, err)
+		}
+	}
+	if starts := c.starts(t); len(starts) != 0 {
+		t.Errorf("reading no path started git: %q", starts)
+	}
+}
+
 func TestReadFilesHonoursTheContext(t *testing.T) {
 	f := newFixture(t)
 	r := open(t, f.repo.Dir(), git.Options{})

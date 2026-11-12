@@ -35,7 +35,8 @@ type CommitReader interface {
 	// what the commit holds there. Many paths cost the same small number of
 	// processes as one, so a caller reads the files of a commit in one call.
 	// An error returned by visit stops the reading and is returned as it is.
-	// An unknown commit and a tree above the bound fail as for ListTree.
+	// An unknown commit and a tree above the bound fail as for ListTree. With
+	// no path, it reads nothing and checks nothing, not even the commit.
 	ReadFiles(ctx context.Context, commit string, paths []string, visit func(File) error) error
 }
 
