@@ -53,6 +53,7 @@ func Suite(t *testing.T, open func(t *testing.T) knowledge.Store) {
 	t.Run("persona references", func(t *testing.T) { testReferences(t, open(t)) })
 	t.Run("copies", func(t *testing.T) { testCopies(t, open(t)) })
 	t.Run("text", func(t *testing.T) { testText(t, open(t)) })
+	t.Run("times", func(t *testing.T) { testTimes(t, open(t)) })
 	t.Run("concurrent writers", func(t *testing.T) { testConcurrentWriters(t, open(t)) })
 	t.Run("invalid input", func(t *testing.T) { testInvalidInput(t, open(t)) })
 }
@@ -320,6 +321,33 @@ func testUpdate(t *testing.T, s knowledge.Store) {
 		if err != nil || forged.Revision != read+1 || get(t, s, scopeA(), personaID).Revision != read+1 {
 			t.Errorf("a mutation returning revision %d: %d, %v, want %d", rev, forged.Revision, err, read+1)
 		}
+	}
+}
+
+// testTimes stores times to the nanosecond within years 0 to 9999, and
+// refuses others, which a store keeping text or JSON could not read back.
+func testTimes(t *testing.T, s knowledge.Store) {
+	ctx := context.Background()
+	at := func(it knowledge.Item, when time.Time) knowledge.Item {
+		it.CreatedAt, it.UpdatedAt, it.History[0].At = when, when, when
+		return it
+	}
+	last := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+	create(t, s, scopeA(), at(Persona(t, personaID), last))
+	if got := get(t, s, scopeA(), personaID); !got.CreatedAt.Equal(last) || !got.History[0].At.Equal(last) {
+		t.Errorf("times read back: %v and %v, want %v", got.CreatedAt, got.History[0].At, last)
+	}
+	for _, when := range []time.Time{
+		time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC),
+		time.Date(-1, 12, 31, 0, 0, 0, 0, time.UTC),
+	} {
+		var invalid *knowledge.ValidationError
+		if err := s.Create(ctx, scopeA(), at(Persona(t, otherPersona), when)); !errors.As(err, &invalid) {
+			t.Errorf("create at %v: %v, want a validation error", when, err)
+		}
+	}
+	if _, err := s.Get(ctx, scopeA(), otherPersona); !errors.Is(err, knowledge.ErrNotFound) {
+		t.Errorf("a refused item was stored: %v", err)
 	}
 }
 

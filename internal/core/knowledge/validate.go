@@ -52,7 +52,15 @@ func (v *validator) utc(path string, t time.Time) {
 		v.add(path, "required")
 	case t.Location() != time.UTC:
 		v.add(path, "must be in UTC")
+	case !inYearRange(t):
+		v.add(path, "must be between the years 0 and 9999, got %d", t.Year())
 	}
+}
+
+// inYearRange reports whether t has a four-digit year, the range that JSON and
+// the stores can write and read back.
+func inYearRange(t time.Time) bool {
+	return t.Year() >= 0 && t.Year() <= 9999
 }
 
 func (v *validator) err() error {
@@ -239,8 +247,13 @@ func (it Item) validateEvidence(v *validator) map[string]bool {
 			}
 		}
 
-		if !e.CheckedAt.IsZero() && e.CheckedAt.Location() != time.UTC {
-			v.add(at+".checked_at", "must be in UTC")
+		if !e.CheckedAt.IsZero() {
+			switch {
+			case e.CheckedAt.Location() != time.UTC:
+				v.add(at+".checked_at", "must be in UTC")
+			case !inYearRange(e.CheckedAt):
+				v.add(at+".checked_at", "must be between the years 0 and 9999, got %d", e.CheckedAt.Year())
+			}
 		}
 		if e.CheckedCommit != "" && !isCommit(e.CheckedCommit) {
 			v.add(at+".checked_commit", "must be a full commit hash, got %q", e.CheckedCommit)

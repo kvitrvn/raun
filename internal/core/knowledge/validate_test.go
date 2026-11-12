@@ -246,6 +246,21 @@ func TestValidateRefusesInvalidUTF8Anywhere(t *testing.T) {
 	}
 }
 
+func TestValidateRefusesYearsOutOfRange(t *testing.T) {
+	for _, year := range []int{10000, -1} {
+		when := time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
+		it := fullItem(t)
+		it.History[0].At = when
+		it.Evidence[0].CheckedAt = when
+		err := it.Validate()
+		for _, at := range []string{"history[0].at", "evidence[0].checked_at"} {
+			if err == nil || !strings.Contains(err.Error(), at+": must be between the years 0 and 9999") {
+				t.Errorf("year %d: %v, want an error at %s", year, err, at)
+			}
+		}
+	}
+}
+
 func TestReasonGoesWithState(t *testing.T) {
 	// Reasons that describe the citation itself hold at the cited commit only.
 	atCitedCommitOnly := map[Reason]bool{ReasonTooLong: true, ReasonBadRange: true}
