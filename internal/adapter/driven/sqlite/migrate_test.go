@@ -112,7 +112,7 @@ func TestMigrateTheEmbeddedSchema(t *testing.T) {
 	if err := s.Migrate(ctx, true); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(tables(t, s), " "); got != "knowledge_history knowledge_items schema_migrations" {
+	if got := strings.Join(tables(t, s), " "); got != "knowledge_history knowledge_items schema_migrations sessions" {
 		t.Errorf("tables = %s", got)
 	}
 	if err := s.Migrate(ctx, false); err != nil {
@@ -139,8 +139,8 @@ func TestConcurrentMigrations(t *testing.T) {
 			t.Errorf("Migrate: %v", err)
 		}
 	}
-	if v := version(t, a); v != 1 {
-		t.Errorf("version = %d, want 1", v)
+	if v := version(t, a); v != a.latest {
+		t.Errorf("version = %d, want %d", v, a.latest)
 	}
 }
 
