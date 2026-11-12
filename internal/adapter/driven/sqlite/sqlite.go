@@ -34,6 +34,8 @@ type Options struct {
 type Store struct {
 	writer *sql.DB
 	reader *sql.DB
+	// latest is the version of the last embedded migration.
+	latest int
 }
 
 var _ knowledge.Store = (*Store)(nil)
@@ -68,6 +70,11 @@ func Open(ctx context.Context, path string, opts Options) (*Store, error) {
 	settings.Set("_query_only", "1")
 	readDSN := path + "?" + settings.Encode()
 
+	migrations, err := loadMigrations(migrationFiles)
+	if err != nil {
+		return nil, fmt.Errorf("open database %s: %w", path, err)
+	}
+
 	writer, err := openPool(ctx, writeDSN, 1)
 	if err != nil {
 		return nil, fmt.Errorf("open database %s: writer: %w", path, err)
@@ -77,7 +84,7 @@ func Open(ctx context.Context, path string, opts Options) (*Store, error) {
 		_ = writer.Close()
 		return nil, fmt.Errorf("open database %s: readers: %w", path, err)
 	}
-	return &Store{writer: writer, reader: reader}, nil
+	return &Store{writer: writer, reader: reader, latest: migrations[len(migrations)-1].version}, nil
 }
 
 // CheckPath reports whether path is a database path Open accepts: a plain,

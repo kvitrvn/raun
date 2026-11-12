@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 const testHost = "raun.example"
@@ -189,6 +191,7 @@ func TestHostCheck(t *testing.T) {
 		{"public host", "raun.example", nil, true},
 		{"public host with its default port", "raun.example:443", nil, true},
 		{"case differs", "RAUN.example", nil, true},
+		{"fully qualified name", "raun.example.", nil, true},
 		{"foreign host", "evil.example", nil, false},
 		{"public host on another port", "raun.example:8443", nil, false},
 		{"empty host", "", nil, false},
@@ -379,10 +382,6 @@ func TestPanicRecovery(t *testing.T) {
 		var empty []int
 		_ = empty[len(r.URL.Path)]
 	}))
-	handle(s.app, "GET /started", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusAccepted)
-		panic("late")
-	}))
 
 	resp := serve(s, request(http.MethodGet, "/value", testHost, nil))
 	id := resp.Header.Get("X-Request-Id")
@@ -393,13 +392,10 @@ func TestPanicRecovery(t *testing.T) {
 		t.Errorf("body = %q, want the request identifier %s and no panic value", body, id)
 	}
 	serve(s, request(http.MethodGet, "/runtime", testHost, nil))
-	if resp := serve(s, request(http.MethodGet, "/started", testHost, nil)); resp.StatusCode != http.StatusAccepted {
-		t.Errorf("a panic after the header changed the status to %d", resp.StatusCode)
-	}
 
 	recs := records(t, logs)
 	panics := find(recs, "panic")
-	if len(panics) != 3 {
+	if len(panics) != 2 {
 		t.Fatalf("panic records = %v", panics)
 	}
 	if panics[0]["request_id"] != id || panics[0]["type"] != "string" || !strings.Contains(panics[0]["stack"].(string), "recoverPanics") {
@@ -412,8 +408,69 @@ func TestPanicRecovery(t *testing.T) {
 		t.Error("the log holds the panic value")
 	}
 	access := find(recs, "request")
-	if len(access) != 3 || access[0]["status"] != float64(500) || access[0]["route"] != "GET /value" {
+	if len(access) != 2 || access[0]["status"] != float64(500) || access[0]["route"] != "GET /value" {
 		t.Errorf("access records = %v", access)
+	}
+}
+
+func TestPanicAfterTheResponseStartedAbortsIt(t *testing.T) {
+	s, logs := newTestServer(t, nil)
+	handle(s.app, "GET /partial", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "partial")
+		if err := http.NewResponseController(w).Flush(); err != nil {
+			t.Errorf("Flush: %v", err)
+		}
+		panic("late")
+	}))
+	srv := httptest.NewUnstartedServer(s)
+	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+	srv.Start()
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/partial", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = testHost
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want the 200 already sent", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err == nil {
+		t.Fatalf("the client read %q as a complete body", body)
+	}
+	if string(body) != "partial" {
+		t.Errorf("body read before the abort = %q", body)
+	}
+	// The panic and the request are both logged. Close waits for the
+	// handler, whose deferred calls write them.
+	srv.Close()
+	recs := records(t, logs)
+	if len(find(recs, "panic")) != 1 || len(find(recs, "request")) != 1 {
+		t.Errorf("records = %v", recs)
+	}
+}
+
+func TestReadinessHasADeadline(t *testing.T) {
+	var left time.Duration
+	s, _ := newTestServer(t, func(ctx context.Context) error {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return errors.New("no deadline")
+		}
+		left = time.Until(deadline)
+		return nil
+	})
+	if resp := serve(s, request(http.MethodGet, "/readyz", testHost, nil)); resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if left <= 0 || left > ReadyTimeout {
+		t.Errorf("readiness ran with %s left, want at most %s", left, ReadyTimeout)
 	}
 }
 
@@ -446,6 +503,10 @@ func TestCanonicalHost(t *testing.T) {
 		{"[::1]:8080", "http", "[::1]:8080", false},
 		{"[::1]", "http", "[::1]", false},
 		{"[::1]:80", "http", "[::1]", false},
+		{"raun.example.", "https", "raun.example", false},
+		{"Raun.Example.:8443", "https", "raun.example:8443", false},
+		{".", "https", "", true},
+		{"raun.example..", "https", "", true},
 		{"[2001:DB8::1]:443", "https", "[2001:db8::1]", false},
 		{"", "https", "", true},
 		{":8080", "http", "", true},

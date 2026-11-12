@@ -10,7 +10,8 @@ import (
 // CanonicalHost returns the form of an authority (host, or host and port)
 // that the Host check compares: the host in lower case, an IPv6 literal in
 // brackets, and the port omitted when it is the default port of scheme
-// ("http" or "https"). It refuses an empty host, a port outside 1 to 65535
+// ("http" or "https"). A final dot of a DNS name is dropped, since
+// "raun.example." names the same host as "raun.example". It refuses an empty host, a port outside 1 to 65535
 // and a scheme it does not know.
 func CanonicalHost(authority, scheme string) (string, error) {
 	var defaultPort string
@@ -41,6 +42,12 @@ func CanonicalHost(authority, scheme string) (string, error) {
 	}
 	if strings.ContainsAny(host, "[]/ ") || (strings.Contains(host, ":") && net.ParseIP(host) == nil) {
 		return "", fmt.Errorf("host %q is not a name or an IP address", host)
+	}
+	if net.ParseIP(host) == nil {
+		host = strings.TrimSuffix(host, ".")
+		if host == "" || strings.HasSuffix(host, ".") {
+			return "", fmt.Errorf("host %q is not a name or an IP address", authority)
+		}
 	}
 	host = strings.ToLower(host)
 	if port == "" || port == defaultPort {

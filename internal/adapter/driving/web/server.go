@@ -23,6 +23,9 @@ const (
 	// MaxBodyBytes is the default bound of a request body. A route that needs
 	// more states its own bound explicitly.
 	MaxBodyBytes = 64 << 10
+	// ReadyTimeout bounds the readiness check of one probe: /readyz is
+	// reachable without the Host check.
+	ReadyTimeout = 2 * time.Second
 )
 
 // Options configures the handler.
@@ -117,7 +120,9 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		writeText(w, http.StatusServiceUnavailable, "unavailable")
 		return
 	}
-	if err := s.ready(r.Context()); err != nil {
+	ctx, cancel := context.WithTimeout(r.Context(), ReadyTimeout)
+	defer cancel()
+	if err := s.ready(ctx); err != nil {
 		s.logger.LogAttrs(r.Context(), slog.LevelWarn, "not ready",
 			slog.String("request_id", RequestID(r.Context())),
 			slog.String("error", err.Error()))

@@ -99,7 +99,9 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 }
 
 // recoverPanics turns a panic of a handler into a 500 that carries the
-// request identifier, and logs the stack. The panic value is logged only
+// request identifier, and logs the stack. Once the response has started, it
+// can no longer change: the connection is aborted instead, so the client
+// never takes a truncated body for a complete one. The panic value is logged only
 // when it is a runtime error, whose text the program wrote; any other value
 // could hold request data, so only its type is logged.
 // http.ErrAbortHandler is passed on, as net/http expects.
@@ -125,8 +127,9 @@ func (s *Server) recoverPanics(next http.Handler) http.Handler {
 			}
 			s.logger.LogAttrs(r.Context(), slog.LevelError, "panic", attrs...)
 			if sw != nil && sw.status != 0 {
-				// The response has started: it can only be cut.
-				return
+				// net/http aborts the connection, or the HTTP/2 stream,
+				// on this value and logs nothing more.
+				panic(http.ErrAbortHandler)
 			}
 			writeText(w, http.StatusInternalServerError, "internal error, request "+RequestID(r.Context()))
 		}()

@@ -12,11 +12,7 @@ import (
 // older than the binary gives ErrSchemaTooOld, a newer one ErrSchemaTooNew,
 // both wrapped; a database that does not answer gives the error of the query.
 func (s *Store) CheckReady(ctx context.Context) error {
-	migrations, err := loadMigrations(migrationFiles)
-	if err != nil {
-		return err
-	}
-	latest := migrations[len(migrations)-1].version
+	latest := s.latest
 	return s.read(ctx, func(tx *sql.Tx) error {
 		current, err := schemaVersion(ctx, tx)
 		if err != nil {
