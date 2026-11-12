@@ -133,6 +133,28 @@ func TestOpen(t *testing.T) {
 	}
 }
 
+func TestOpenThroughALink(t *testing.T) {
+	f := newFixture(t)
+	links := t.TempDir()
+	below := filepath.Join(links, "below")
+	root := filepath.Join(links, "root")
+	if err := os.Symlink(filepath.Join(f.repo.Dir(), "internal"), below); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(f.repo.Dir(), root); err != nil {
+		t.Fatal(err)
+	}
+
+	// A link to a directory below the root must not let Git reach the root.
+	if _, err := git.Open(context.Background(), below, git.Options{}); err == nil || !strings.Contains(err.Error(), "not the root of a Git repository") {
+		t.Errorf("Open(link below the root) = %v, want a refusal", err)
+	}
+	r := open(t, root, git.Options{})
+	if got, err := r.ResolveRevision(context.Background(), "main"); err != nil || got != f.second {
+		t.Errorf("ResolveRevision(main) through a link to the root = %q, %v", got, err)
+	}
+}
+
 func TestOpenRefusesAnOldGit(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the fake git is a shell script")

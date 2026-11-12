@@ -85,6 +85,12 @@ func Open(ctx context.Context, dir string, opts Options) (*Reader, error) {
 	if !info.IsDir() {
 		return nil, fmt.Errorf("open repository %s: not a directory", abs)
 	}
+	// Git walks up from the physical directory: the ceiling must be computed
+	// on it, or a link to a directory below a root would let Git reach that
+	// root.
+	if abs, err = filepath.EvalSymlinks(abs); err != nil {
+		return nil, fmt.Errorf("open repository: %w", err)
+	}
 
 	r := &Reader{
 		git:            opts.Git,
