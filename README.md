@@ -8,7 +8,7 @@ Raun is self-hosted and connected to your forge, in the spirit of Drone CI: a se
 
 ## Status
 
-Early development: `raun server` starts, opens its database and serves health endpoints, but has no page yet; `raun runner` is a stub. The knowledge model (`internal/core/knowledge`) exists with source classification, a reader of a commit on the `git` binary, deterministic evidence verification and its storage on SQLite. The plan is in the [issues](https://github.com/kvitrvn/raun/issues) and the [implementation records](docs/implementation/README.md).
+Early development: `raun server` starts, opens its database, serves health endpoints and a first page built with the web shell (no repository can be activated yet); `raun runner` is a stub. The knowledge model (`internal/core/knowledge`) exists with source classification, a reader of a commit on the `git` binary, deterministic evidence verification and its storage on SQLite. The plan is in the [issues](https://github.com/kvitrvn/raun/issues) and the [implementation records](docs/implementation/README.md).
 
 ## Usage
 
@@ -50,6 +50,7 @@ Requirements: Go 1.27.3 and GNU Make. The linters are pinned in `go.mod` and run
 ```sh
 make build     # bin/raun
 make verify    # the gate run before every change and by CI
+./scripts/generate-web.sh   # after changing a template or ui/styles.css (docs/web.md)
 ```
 
 Read [AGENTS.md](AGENTS.md) for the conventions and [docs/](docs/README.md) for the product, the architecture and the threat model.
