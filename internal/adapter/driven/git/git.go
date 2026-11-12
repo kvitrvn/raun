@@ -83,8 +83,9 @@ func Open(ctx context.Context, dir string, opts Options) (*Reader, error) {
 	}
 	// Git walks up from the physical directory: the ceiling must be computed
 	// on it, or a link to a directory below a root would let Git reach that
-	// root.
-	if abs, err = filepath.EvalSymlinks(abs); err != nil {
+	// root. Messages keep naming the directory the caller gave.
+	physical, err := filepath.EvalSymlinks(abs)
+	if err != nil {
 		return nil, fmt.Errorf("open repository: %w", err)
 	}
 
@@ -108,7 +109,7 @@ func Open(ctx context.Context, dir string, opts Options) (*Reader, error) {
 		r.maxTreeEntries = DefaultMaxTreeEntries
 	}
 
-	out, err := r.output(ctx, abs, nil, "version")
+	out, err := r.output(ctx, physical, nil, "version")
 	if err != nil {
 		return nil, fmt.Errorf("open repository: %w", err)
 	}
@@ -117,8 +118,8 @@ func Open(ctx context.Context, dir string, opts Options) (*Reader, error) {
 	}
 
 	// The ceiling keeps Git from finding a repository above dir.
-	ceiling := []string{"GIT_CEILING_DIRECTORIES=" + filepath.Dir(abs)}
-	out, err = r.output(ctx, abs, ceiling, "rev-parse", "--absolute-git-dir")
+	ceiling := []string{"GIT_CEILING_DIRECTORIES=" + filepath.Dir(physical)}
+	out, err = r.output(ctx, physical, ceiling, "rev-parse", "--absolute-git-dir")
 	if err != nil {
 		return nil, fmt.Errorf("open repository %s: not the root of a Git repository: %w", abs, err)
 	}

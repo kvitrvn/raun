@@ -146,8 +146,11 @@ func TestOpenThroughALink(t *testing.T) {
 	}
 
 	// A link to a directory below the root must not let Git reach the root.
-	if _, err := git.Open(context.Background(), below, git.Options{}); err == nil || !strings.Contains(err.Error(), "not the root of a Git repository") {
+	_, err := git.Open(context.Background(), below, git.Options{})
+	if err == nil || !strings.Contains(err.Error(), "not the root of a Git repository") {
 		t.Errorf("Open(link below the root) = %v, want a refusal", err)
+	} else if !strings.Contains(err.Error(), below) {
+		t.Errorf("Open(link below the root) = %v, does not name the directory given", err)
 	}
 	r := open(t, root, git.Options{})
 	if got, err := r.ResolveRevision(context.Background(), "main"); err != nil || got != f.second {
