@@ -66,7 +66,8 @@ The variables of epic 3, read by `raun server` only. Each has a default and a ru
 
 Rules that hold for every variable, of this epic and the next:
 
-- **Unknown variables stop the server.** A variable whose name starts with `RAUN_` and that the server does not know stops it at startup, so a typo is never silently ignored (#18). The variables of the runner start with `RAUN_RUNNER_` and are ignored by the server, so one environment can hold both.
+- **The catalogue grows by epic.** Epic 4 adds `RAUN_ADMINS`, `RAUN_SECRET_KEY` and `RAUN_SECRET_KEY_PREVIOUS` (with their `_FILE` forms) to the table, with #21; until then they are unknown, like any variable a later epic defines.
+- **Unknown variables stop the server.** A variable whose name starts with `RAUN_` and that the server does not know stops it at startup, so a typo is never silently ignored (#18). The variables of the runner start with `RAUN_RUNNER_` and are ignored by the server, so one environment can hold both. A tool of the repository, such as the generation script of #19, reads no `RAUN_*` variable.
 - **Secrets from files.** A secret variable `RAUN_<NAME>` can also be given as a file, `RAUN_<NAME>_FILE`; setting both is an error (epic 1). Epic 3 defines no secret variable; the first ones are the forge credentials of epic 4.
 - **The effective configuration** is logged once at startup, each secret replaced by `[redacted]` whether set or not.
 
@@ -119,7 +120,7 @@ These answer T11. They apply to every route by default; a route opts out only by
 - **Cross-origin protection.** `http.CrossOriginProtection` from the standard library, on every route: a non-safe request whose `Sec-Fetch-Site` is neither `same-origin` nor `none`, or whose `Origin` does not match `Host`, is refused with `403`. It allows requests without either header, which browsers always send on non-safe requests; the CSRF token covers the rest.
 - **CSRF token.** Each session has a token of 32 random bytes, stored in its row and replaced with its identifier. Every non-safe request on a route that uses a session must carry it, as the form field `csrf` or the header `X-CSRF-Token`; it is compared in constant time, and a missing or wrong token is refused with `403`. HTMX sends the header on every request through `hx-headers` on `<body>`, an attribute the Content Security Policy allows; forms also carry the hidden field, so they work without JavaScript.
 - **Safe methods change nothing.** `GET`, `HEAD` and `OPTIONS` never change state, since every protection above lets them through.
-- **Rendering.** Repository text, agent output and logs are rendered as escaped text by templ (T13). `templ.Raw` and its equivalents are refused by a check of `make verify`, except for the icon data of #19, which is a constant of the repository.
+- **Rendering.** Repository text, agent output and logs are rendered as escaped text by templ (T13). `templ.Raw` and its equivalents are refused by a check of `make verify`, except for icon data, if #19 adds an icon set: a constant of the repository, never repository content.
 
 Security headers on every response, pages, fragments and errors alike:
 

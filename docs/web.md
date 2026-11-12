@@ -47,7 +47,7 @@ The policy is in the [epic 3 record](implementation/03-server-foundation.md#requ
 ./scripts/generate-web.sh
 ```
 
-It runs `go tool templ generate` on the templates and the Tailwind binary on `styles.css`, downloading the binary on first use into `${RAUN_WEB_TOOLS:-${TMPDIR:-/tmp}/raun-web-tools}` and checking it against the table above. It needs Go, `curl` and, the first time, the network. The generated `*_templ.go` files and the CSS are committed.
+It runs `go tool templ generate` on the templates and the Tailwind binary on `styles.css`, downloading the binary on first use into `${WEB_TOOLS_DIR:-${TMPDIR:-/tmp}/raun-web-tools}` and checking it against the table above. It needs Go, `curl` and, the first time, the network. The generated `*_templ.go` files and the CSS are committed. The cache variable does not start with `RAUN_`, since the server refuses a `RAUN_*` variable it does not know.
 
 `make verify` fails when they are stale, without the network or Tailwind: it regenerates the templ output into a temporary directory and compares it, and checks that the CSS records the SHA-256 of its current inputs (the templates, `styles.css` and the Tailwind version).
 
@@ -62,4 +62,4 @@ The license of each third-party file is kept in `internal/adapter/driving/web/li
 | HTMX (`htmx.min.js`) | v2.0.10 | Zero-Clause BSD | `licenses/htmx.txt` |
 | shadcn-templ (adapted components) | v2.0.0-beta.16 | MIT | `licenses/shadcn-templ.txt` |
 
-An icon set, if the components need one, is added with its license and a row here. No font is embedded: the interface uses the system font stack.
+An icon set, if the components need one, is added with its license and a row here; its data is the only exception to the `templ.Raw` check. No font is embedded: the interface uses the system font stack.
