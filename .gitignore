@@ -5,3 +5,6 @@ bin/
 
 # Conclave review output
 review.md
+
+# Left by a golden update killed before its rename
+.golden-*

@@ -23,6 +23,7 @@ internal/core/<context>/   domain logic: standard library and its own context on
 internal/adapter/driven/   implementations of the ports: database, forge, sandbox, Git
 internal/adapter/driving/  entry points: HTTP server, webhooks, runner API
 internal/gittest/          test helper outside the core: fixture Git repositories
+internal/golden/           test helper outside the core: golden files, rewritten with -update
 scripts/                   repository checks called by the Makefile
 docs/                      product, architecture, threat model, implementation records
 ```
@@ -78,6 +79,7 @@ No production dependency yet.
 - Table-driven tests; `t.TempDir()` for filesystem work.
 - Never call a real LLM, a real forge or the network in tests.
 - Build the Git repositories a test needs with `internal/gittest`; core tests build their inputs in memory instead.
+- Compare long outputs with golden files under `testdata/` through `internal/golden`. Refresh them one package at a time with `go test ./<pkg> -update`, never `./...`, and review the diff before committing. `.gitattributes` keeps every `testdata` directory byte for byte.
 - Test the CLI through `run()` in `cmd/raun`.
 - Cover error paths and boundaries, not only the happy path.
 
