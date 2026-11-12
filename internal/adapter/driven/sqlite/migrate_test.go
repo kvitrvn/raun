@@ -120,6 +120,30 @@ func TestMigrateTheEmbeddedSchema(t *testing.T) {
 	}
 }
 
+// TestConcurrentMigrations runs Migrate on one file from two stores at once,
+// as two processes starting together would: both succeed.
+func TestConcurrentMigrations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "raun.db")
+	a, b := openAt(t, path), openAt(t, path)
+	errs := make(chan error, 2)
+	start := make(chan struct{})
+	for _, s := range []*Store{a, b} {
+		go func() {
+			<-start
+			errs <- s.Migrate(context.Background(), true)
+		}()
+	}
+	close(start)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Errorf("Migrate: %v", err)
+		}
+	}
+	if v := version(t, a); v != 1 {
+		t.Errorf("version = %d, want 1", v)
+	}
+}
+
 func TestFailingMigrationLeavesNothing(t *testing.T) {
 	ctx := context.Background()
 	s := freshStore(t)

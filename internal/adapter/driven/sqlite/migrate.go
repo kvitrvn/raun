@@ -103,6 +103,18 @@ func migrate(ctx context.Context, s *Store, migrations []migration, enabled bool
 	}
 	for _, m := range migrations[current:] {
 		err := s.write(ctx, func(tx *sql.Tx) error {
+			// Another process may have migrated since the version was read:
+			// read it again under the write lock.
+			applied, err := schemaVersion(ctx, tx)
+			if err != nil {
+				return err
+			}
+			if applied >= m.version {
+				return nil
+			}
+			if applied != m.version-1 {
+				return fmt.Errorf("database at version %d, expected %d", applied, m.version-1)
+			}
 			if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 				version    INTEGER PRIMARY KEY,
 				applied_at TEXT NOT NULL
@@ -112,7 +124,7 @@ func migrate(ctx context.Context, s *Store, migrations []migration, enabled bool
 			if _, err := tx.ExecContext(ctx, m.sql); err != nil {
 				return err
 			}
-			_, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`,
+			_, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`,
 				m.version, formatTime(time.Now().UTC()))
 			return err
 		})
@@ -123,9 +135,15 @@ func migrate(ctx context.Context, s *Store, migrations []migration, enabled bool
 	return nil
 }
 
+// querier is what schemaVersion reads through: the writer pool, or a
+// transaction on it.
+type querier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // schemaVersion returns the version of the last migration applied, 0 for a
 // database that has none.
-func schemaVersion(ctx context.Context, db *sql.DB) (int, error) {
+func schemaVersion(ctx context.Context, db querier) (int, error) {
 	var tables int
 	err := db.QueryRowContext(ctx,
 		`SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'schema_migrations'`).Scan(&tables)
