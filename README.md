@@ -41,6 +41,7 @@ The first start on an empty database needs `RAUN_DATABASE_MIGRATE=true`. A schem
 - **Health.** `GET /healthz` answers `200 ok` while the process serves; `GET /readyz` answers `200 ok` when the database answers at the schema of the binary, `503 unavailable` otherwise and while stopping. Neither needs the public host.
 - **Signals.** `SIGINT` and `SIGTERM` stop the server: it stops accepting connections and waits for in-flight requests up to `RAUN_SHUTDOWN_TIMEOUT`, then exits with 1 if it had to drop some. `SIGHUP` reloads the TLS pair; a pair that fails to load is logged and the previous one is kept.
 - **Limits.** Headers 5 s to arrive and 32 KiB at most (`431`), a request 30 s to be read, a response 60 s to be written, an idle connection 120 s, a request body 64 KiB by default (`413`). They are constants.
+- **Protections.** Every response carries a strict Content Security Policy and the other security headers. A state-changing request needs a session and its CSRF token (header `X-CSRF-Token` or form field `csrf`), and a browser request from another site is refused. Sessions live 7 days without use and 30 days at most; expired ones are deleted at start and every hour.
 - **Logs.** One record per line on standard error. Each request gets a random identifier, returned in `X-Request-Id`, and one access record: method, route pattern, status, size, duration and peer address. Headers, cookies, queries, bodies and raw paths are never logged. The effective configuration is logged once at startup.
 
 ## Development

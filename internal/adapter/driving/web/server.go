@@ -2,12 +2,16 @@ package web
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sync/atomic"
 	"time"
+
+	"github.com/kvitrvn/raun/internal/core/session"
 )
 
 // Limits of the server, constants by decision of the epic 3 review. cmd/raun
@@ -41,6 +45,13 @@ type Options struct {
 	// Ready reports whether the server can serve: the database answers and
 	// its schema is the one of the binary.
 	Ready func(context.Context) error
+	// Sessions keeps the browser sessions.
+	Sessions session.Store
+	// Now gives the time of a request; nil means time.Now.
+	Now func() time.Time
+	// Random is the source of session identifiers and CSRF tokens; nil
+	// means crypto/rand.
+	Random io.Reader
 }
 
 // Server is the HTTP handler of the Raun server. It holds no global state:
@@ -50,6 +61,10 @@ type Server struct {
 	publicHost string
 	scheme     string
 	ready      func(context.Context) error
+	sessions   session.Store
+	now        func() time.Time
+	random     io.Reader
+	bypass     *bypass
 	assets     *assets
 	stopping   atomic.Bool
 	app        *http.ServeMux
@@ -58,11 +73,30 @@ type Server struct {
 
 // New returns the handler of the server.
 func New(opts Options) (*Server, error) {
+	return newServer(opts, nil)
+}
+
+// newServer is New with the patterns of the routes that opt out of the
+// request protections. The server has none yet; tests give their own.
+func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 	if opts.Logger == nil {
 		return nil, errors.New("web: Options.Logger is nil")
 	}
 	if opts.Ready == nil {
 		return nil, errors.New("web: Options.Ready is nil")
+	}
+	if opts.Sessions == nil {
+		return nil, errors.New("web: Options.Sessions is nil")
+	}
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
+	if opts.Random == nil {
+		opts.Random = rand.Reader
+	}
+	skip, err := newBypass(bypassPatterns)
+	if err != nil {
+		return nil, fmt.Errorf("web: %w", err)
 	}
 	canonical, err := CanonicalHost(opts.PublicHost, opts.Scheme)
 	if err != nil {
@@ -80,6 +114,10 @@ func New(opts Options) (*Server, error) {
 		publicHost: opts.PublicHost,
 		scheme:     opts.Scheme,
 		ready:      opts.Ready,
+		sessions:   opts.Sessions,
+		now:        opts.Now,
+		random:     opts.Random,
+		bypass:     skip,
 		assets:     files,
 		app:        http.NewServeMux(),
 	}
@@ -93,11 +131,13 @@ func New(opts Options) (*Server, error) {
 	root := http.NewServeMux()
 	handle(root, "GET /healthz", http.HandlerFunc(s.healthz))
 	handle(root, "GET /readyz", http.HandlerFunc(s.readyz))
-	// Every other path is the application: it is served at the public
-	// address only, with a bounded body.
-	root.Handle("/", s.checkHost(limitBody(s.app)))
+	// Every other path is the application, behind the protections in the
+	// order of the record: the public address only, a bounded body, no
+	// cross-origin state change, the session, and its CSRF token on every
+	// state change.
+	root.Handle("/", s.checkHost(limitBody(s.checkOrigin(s.loadSession(s.checkCSRF(s.app))))))
 
-	s.handler = s.logRequests(s.recoverPanics(root))
+	s.handler = s.logRequests(s.recoverPanics(s.securityHeaders(root)))
 	return s, nil
 }
 

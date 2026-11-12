@@ -76,6 +76,7 @@ func TestComponents(t *testing.T) {
 		{"input", Input(InputProps{ID: "name", Name: "name", Value: hostile, Placeholder: "Workspace", Required: true})},
 		{"field-error", Field(FieldProps{For: "reason", Label: "Reason", Error: "A decision needs a reason."})},
 		{"input-invalid", Input(InputProps{ID: "reason", Name: "reason", Invalid: true})},
+		{"csrf-field", CSRFField(`tok"en<`)},
 		{"table", Table(TableProps{Label: "Repositories"})},
 		{"table-parts", templ.Join(TableHeader(), TableBody(), TableRow(), TableHead(), TableCell(), TableCaption())},
 		{"dialog", Dialog(DialogProps{ID: "activate", Title: "Activate a repository"})},
@@ -111,6 +112,8 @@ func TestPages(t *testing.T) {
 	flash.Flash = []Flash{{Tone: ToneDanger, Message: hostile}}
 	hostileTitle := testPage()
 	hostileTitle.Title = hostile
+	withSession := testPage()
+	withSession.CSRF = `tok"en<`
 	tests := []struct {
 		name string
 		c    templ.Component
@@ -118,6 +121,7 @@ func TestPages(t *testing.T) {
 		{"home", HomePage(testPage())},
 		{"home-flash", HomePage(flash)},
 		{"not-found", NotFoundPage(hostileTitle)},
+		{"home-session", HomePage(withSession)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

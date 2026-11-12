@@ -1,5 +1,7 @@
 package ui
 
+import "encoding/json"
+
 // Assets holds the URLs of the embedded assets, content-hashed by the
 // server.
 type Assets struct {
@@ -26,6 +28,16 @@ type Page struct {
 	Assets   Assets
 	Nav      []NavItem
 	Flash    []Flash
+	// CSRF is the token of the session of the request, empty without one.
+	// HTMX sends it on every request; forms carry it with CSRFField.
+	CSRF string
+}
+
+// csrfHeaders is the JSON of the hx-headers attribute that sends the CSRF
+// token of the session with every HTMX request.
+func csrfHeaders(token string) string {
+	b, _ := json.Marshal(map[string]string{"X-CSRF-Token": token})
+	return string(b)
 }
 
 func (p Page) documentTitle() string {
@@ -56,7 +68,12 @@ templ Layout(p Page) {
 			<script src={ p.Assets.HTMX } defer></script>
 			<script src={ p.Assets.AppJS } defer></script>
 		</head>
-		<body class="flex min-h-screen flex-col bg-ground text-foreground">
+		<body
+			class="flex min-h-screen flex-col bg-ground text-foreground"
+			if p.CSRF != "" {
+				hx-headers={ csrfHeaders(p.CSRF) }
+			}
+		>
 			<a class="cn-skip-link" href="#main">Skip to content</a>
 			@topbar(p)
 			if len(p.Flash) > 0 {

@@ -162,6 +162,18 @@ Rules made explicit while implementing it (#19):
 - **Theme.** `theme.js`, the only script in the head without `defer`, sets `data-theme` from the person's choice or the system before the page paints; the toggle shows only once it has run.
 - **First page.** `/` lists the repositories, empty until epic 5 activates one; any other path of the application answers a not-found page. Pages set `Cache-Control: no-store` now; #20 adds the other headers.
 
+### Sessions and protections (#20)
+
+Rules made explicit while implementing them (#20):
+
+- **The core holds the rules.** `internal/core/session` draws the identifier and the CSRF token from a reader it is given, hashes the identifier, computes the ends of a session, when to touch it and the `Max-Age` of its cookie, and compares tokens in constant time. It reads no clock and no cookie. Renewal keeps the creation time. An identifier that is not 32 bytes in canonical unpadded base64url is malformed and never reaches the store as a key.
+- **The port.** `session.Store` has `Create`, `Get`, `Touch`, `Replace` (delete the old row and insert the new one in one transaction: a renewal never leaves both or neither), `Delete` (a revocation succeeds whether the row exists or not) and `DeleteExpired`. Expiry is the core's rule: `Get` returns an expired session, and the middleware deletes it. `sessiontest.Suite` holds the contract; `sessiontest.Memory` and the SQLite adapter pass it.
+- **SQLite.** `0002_sessions.sql` adds the `sessions` table, `STRICT`, a 64-character hash as key, and indexes on both times for the purge. The store is `(*sqlite.Store).Sessions()`, a type of its own on the same pools, since both ports name their operations alike.
+- **Purge.** `raun server` deletes expired sessions after migrating, and stops if it cannot, then every hour; a failure of the hourly purge is logged and retried at the next tick.
+- **The chain.** Security headers wrap every response, health endpoints and refusals included; then, for the application only, the Host check, the body limit, `http.CrossOriginProtection`, the session lookup and the CSRF check. A request without a session that changes state is refused with `403` before routing, so another method on a page answers `403`, not `405`: no route is revealed without a session.
+- **The token.** It comes from the `X-CSRF-Token` header, else from exactly one `csrf` field of a URL-encoded body, never from the query; a body over the limit answers `413`. The check reads a URL-encoded body to find the field, so a handler reads its form from `r.PostForm`, never from `r.Body`; a multipart body is not parsed, and such a request sends the header. `ui.Page` carries it, the layout puts it in `hx-headers` on `<body>`, and `ui.CSRFField` puts it in a form. A page without a session sets no cookie and carries no token.
+- **For later epics.** `requireSession` answers `401` without a session; `startSession`, `renewSession` and `endSession` create, renew and revoke the session of a request and set or clear its cookie. A route that must take a request without a session, such as the first request of a login, is listed in the bypass patterns of the server, which skip the cross-origin check, the session requirement and the CSRF check, never the Host check. One mux decides for all three, and a path that is not clean matches no bypass.
+
 ### Logging
 
 `log/slog`, one record per line on standard error, JSON by default and text with `RAUN_LOG_FORMAT=text` for development. Standard output stays for the output of commands.
@@ -235,5 +247,5 @@ Rules made explicit while implementing the server (#18):
 
 - [x] This page records the choices.
 - [x] `raun server` starts on an empty database, applies migrations and serves a page built with the web shell (#18, #19): `TestServerServes` in `cmd/raun/server_test.go`.
-- [ ] Tests prove that a cross-site state-changing request is refused (#20).
-- [ ] `make verify` passes, including the check that generated files are up to date (#19: `TestGeneratedTemplatesAreCurrent` and `TestStylesheetIsCurrent` in `internal/adapter/driving/web/ui`); checked at the end of the epic.
+- [x] Tests prove that a cross-site state-changing request is refused (#20): `TestCrossOriginRequestsAreRefused` and `TestCSRFToken` in `internal/adapter/driving/web/protect_test.go`.
+- [x] `make verify` passes, including the check that generated files are up to date (#19: `TestGeneratedTemplatesAreCurrent` and `TestStylesheetIsCurrent` in `internal/adapter/driving/web/ui`).

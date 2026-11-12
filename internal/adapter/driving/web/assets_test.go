@@ -112,7 +112,7 @@ func TestServeAssets(t *testing.T) {
 		// ServeMux redirects a path that is not clean; the target is not an asset.
 		{"traversal", http.MethodGet, "/assets/../server.go", testHost, http.StatusTemporaryRedirect, ""},
 		{"foreign host", http.MethodGet, css, "evil.example", http.StatusMisdirectedRequest, ""},
-		{"post", http.MethodPost, css, testHost, http.StatusMethodNotAllowed, ""},
+		{"post", http.MethodPost, css, testHost, http.StatusForbidden, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
