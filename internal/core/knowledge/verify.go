@@ -259,12 +259,16 @@ func excerptBlock(excerpt string) []string {
 }
 
 // normalizeLine turns each run of spaces and tabs into one space and trims
-// both edges. No other character counts as blank.
+// both edges. It works on bytes: every other byte is kept as it is, so two
+// lines that differ in an invalid UTF-8 byte still differ.
 func normalizeLine(l string) string {
+	l = strings.Trim(l, " \t")
 	var b strings.Builder
+	b.Grow(len(l))
 	space := false
-	for _, r := range strings.Trim(l, " \t") {
-		if r == ' ' || r == '\t' {
+	for i := 0; i < len(l); i++ {
+		c := l[i]
+		if c == ' ' || c == '\t' {
 			space = true
 			continue
 		}
@@ -272,7 +276,7 @@ func normalizeLine(l string) string {
 			b.WriteByte(' ')
 			space = false
 		}
-		b.WriteRune(r)
+		b.WriteByte(c)
 	}
 	return b.String()
 }

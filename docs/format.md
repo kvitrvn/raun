@@ -182,7 +182,7 @@ A regular file larger than the reader reads (8 MiB by default) is reported as to
 
 Raun checks evidence without any LLM, against the content of the repository at a commit.
 
-The excerpt must equal the cited lines, as whole lines. Before comparing, CRLF is read as LF, runs of spaces and tabs count as one space, the edges of each line are trimmed, and blank lines at both ends of the excerpt and of the cited range are ignored; blank lines inside them count. Only spaces and tabs are blank: another space character is compared as it is. A fragment of a line never matches, and an excerpt that is blank once normalized is found nowhere. A last line without a newline is a line.
+The excerpt must equal the cited lines, as whole lines. Before comparing, CRLF is read as LF, runs of spaces and tabs count as one space, the edges of each line are trimmed, and blank lines at both ends of the excerpt and of the cited range are ignored; blank lines inside them count. Only spaces and tabs are blank: another space character is compared as it is, and so is every other byte, valid UTF-8 or not. A fragment of a line never matches, and an excerpt that is blank once normalized is found nowhere. A last line without a newline is a line.
 
 A citation whose range, or whose excerpt without its blank ends, holds more lines than the maximum (40 by default, a parameter of the verification) is invalid. The maximum applies at the cited commit only: freshness never gives `too-long`.
 

@@ -127,6 +127,7 @@ func TestIntegrity(t *testing.T) {
 		"vendor/lib":            {Kind: PathSubmodule},
 		"logo.png":              text("PNG\x00\x01\n"),
 		"big.sql":               {Kind: PathFile, Size: 9 << 20, TooLarge: true},
+		"latin1.txt":            text("caf\xe9\n"),
 	}}}
 	v := newTestVerifier(t, reader, 0)
 
@@ -173,6 +174,9 @@ func TestIntegrity(t *testing.T) {
 		{"a bad range before the file is looked at", cite("billing/gone.go", 0, 1, "x"), EvidenceInvalid, ReasonBadRange, 0, 1},
 		{"a reversed range is not too long", cite("long.txt", 50, 1, lines(3)), EvidenceInvalid, ReasonBadRange, 50, 1},
 		{"too long before the file is looked at", cite("billing/gone.go", 1, 41, "x"), EvidenceInvalid, ReasonTooLong, 1, 41},
+		{"invalid UTF-8 compared as it is", cite("latin1.txt", 1, 1, "caf\xe9"), EvidenceVerified, "", 1, 1},
+		{"another invalid byte", cite("latin1.txt", 1, 1, "caf\xe8"), EvidenceInvalid, ReasonNotFound, 1, 1},
+		{"the replacement character is not an invalid byte", cite("latin1.txt", 1, 1, "caf\uFFFD"), EvidenceInvalid, ReasonNotFound, 1, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -229,6 +233,7 @@ func TestFreshness(t *testing.T) {
 		"logo.png":           text("\x00"),
 		"big.sql":            {Kind: PathFile, Size: 9 << 20, TooLarge: true},
 		"long.txt":           text(lines(60)),
+		"latin1.txt":         text("caf\xe8\n"),
 	}}}
 	v := newTestVerifier(t, reader, 3)
 
@@ -252,6 +257,7 @@ func TestFreshness(t *testing.T) {
 		{"binary", stored("logo.png", 1, 1, "x", EvidenceVerified, ""), EvidenceStale, ReasonBinary},
 		{"too large", stored("big.sql", 1, 1, "x", EvidenceVerified, ""), EvidenceStale, ReasonTooLarge},
 		{"no cap at freshness", stored("long.txt", 1, 10, lines(10), EvidenceVerified, ""), EvidenceVerified, ""},
+		{"an invalid byte that changed", stored("latin1.txt", 1, 1, "caf\xe9", EvidenceVerified, ""), EvidenceStale, ReasonNotFound},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -478,6 +484,8 @@ func TestNormalizeLine(t *testing.T) {
 		"\ta \t b":          "a b",
 		"a b":               "a b", // only spaces and tabs are blank
 		"a\rb":              "a\rb",
+		"caf\xe9  \xff":     "caf\xe9 \xff", // bytes are kept, valid UTF-8 or not
+		"\xe9":              "\xe9",
 		"tab\there and  so": "tab here and so",
 	}
 	for in, want := range tests {
