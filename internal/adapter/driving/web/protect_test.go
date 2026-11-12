@@ -227,3 +227,19 @@ func TestSecurityHeaders(t *testing.T) {
 		})
 	}
 }
+
+func TestUncleanPathsMatchNoBypass(t *testing.T) {
+	p := newProtected(t, "https", "POST /hooks/{forge}")
+	for _, target := range []string{"/hooks//github", "/x/../hooks/github"} {
+		r := request(http.MethodPost, target, testHost, nil)
+		r.Header.Set("Sec-Fetch-Site", "cross-site")
+		if p.bypass.skips(r) {
+			t.Errorf("%s matches the bypass", target)
+		}
+		// Refused, or redirected to the clean path before any protection:
+		// never served by the bypassed route.
+		if resp := serve(p, r); resp.StatusCode == http.StatusNoContent {
+			t.Errorf("cross-site POST %s reached the bypassed route", target)
+		}
+	}
+}

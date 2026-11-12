@@ -53,14 +53,15 @@ func purgeSessions(ctx context.Context, logger *slog.Logger, sessions session.St
 }
 
 // purgeSessionsEvery deletes expired sessions on each tick until done. A
-// failure is logged and the next tick tries again.
-func purgeSessionsEvery(logger *slog.Logger, sessions session.Store, ticks <-chan time.Time, done <-chan struct{}) {
+// failure is logged and the next tick tries again; the stop of the server
+// cancels ctx, and with it a purge in progress.
+func purgeSessionsEvery(ctx context.Context, logger *slog.Logger, sessions session.Store, ticks <-chan time.Time, done <-chan struct{}) {
 	for {
 		select {
 		case <-done:
 			return
 		case now := <-ticks:
-			_ = purgeSessions(context.Background(), logger, sessions, now)
+			_ = purgeSessions(ctx, logger, sessions, now)
 		}
 	}
 }
@@ -161,7 +162,7 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		defer ticker.Stop()
 		ticks = ticker.C
 	}
-	go purgeSessionsEvery(logger, sessions, ticks, done)
+	go purgeSessionsEvery(ctx, logger, sessions, ticks, done)
 
 	served := make(chan error, 1)
 	go func() {

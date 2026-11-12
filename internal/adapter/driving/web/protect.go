@@ -33,15 +33,16 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 
 // bypass holds the routes that opt out of the cross-origin protection, the
 // session requirement and the CSRF check, each because it authenticates
-// requests its own way (webhooks in epic 5, the runner API in epic 6).
+// requests its own way (webhooks in epic 5, the runner API in epic 6). One
+// mux decides for every protection; the cross-origin protection itself is
+// given no bypass, so the two can never disagree.
 type bypass struct {
-	patterns []string
-	mux      *http.ServeMux
-	origin   *http.CrossOriginProtection
+	mux    *http.ServeMux
+	origin *http.CrossOriginProtection
 }
 
 func newBypass(patterns []string) (*bypass, error) {
-	b := &bypass{patterns: patterns, mux: http.NewServeMux(), origin: http.NewCrossOriginProtection()}
+	b := &bypass{mux: http.NewServeMux(), origin: http.NewCrossOriginProtection()}
 	for _, p := range patterns {
 		if err := registerBypass(b, p); err != nil {
 			return nil, err
@@ -50,23 +51,26 @@ func newBypass(patterns []string) (*bypass, error) {
 	return b, nil
 }
 
-// registerBypass adds pattern, turning the panics of ServeMux and of the
-// cross-origin protection into an error.
+// registerBypass adds pattern, turning the panic of ServeMux on an invalid
+// or duplicate pattern into an error.
 func registerBypass(b *bypass, pattern string) (err error) {
 	defer func() {
 		if v := recover(); v != nil {
 			err = fmt.Errorf("bypass pattern %q: %v", pattern, v)
 		}
 	}()
-	b.mux.Handle(pattern, http.NotFoundHandler())
-	b.origin.AddInsecureBypassPattern(pattern)
+	b.mux.Handle(pattern, b)
 	return nil
 }
 
+// ServeHTTP makes the bypass the handler of its own patterns, so that skips
+// can tell a match from the redirect ServeMux gives a path that is not clean.
+func (b *bypass) ServeHTTP(http.ResponseWriter, *http.Request) {}
+
 // skips reports whether r matches a bypass pattern.
 func (b *bypass) skips(r *http.Request) bool {
-	_, pattern := b.mux.Handler(r)
-	return pattern != ""
+	h, _ := b.mux.Handler(r)
+	return h == http.Handler(b)
 }
 
 // checkOrigin refuses with 403 a state-changing request that a browser sent
@@ -75,6 +79,10 @@ func (b *bypass) skips(r *http.Request) bool {
 // whose host is not the Host. Safe methods and bypassed routes pass.
 func (s *Server) checkOrigin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.bypass.skips(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if err := s.bypass.origin.Check(r); err != nil {
 			s.logger.LogAttrs(r.Context(), slog.LevelWarn, "cross-origin request refused",
 				slog.String("request_id", RequestID(r.Context())),

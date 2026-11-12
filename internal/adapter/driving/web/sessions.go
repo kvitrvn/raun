@@ -82,7 +82,14 @@ func (s *Server) loadSession(next http.Handler) http.Handler {
 			return
 		}
 		if sess.NeedsTouch(now) {
-			if err := s.sessions.Touch(r.Context(), hash, now); err != nil {
+			err := s.sessions.Touch(r.Context(), hash, now)
+			switch {
+			case errors.Is(err, session.ErrNotFound):
+				// Revoked, renewed or purged since the lookup.
+				s.clearCookie(w)
+				next.ServeHTTP(w, r)
+				return
+			case err != nil:
 				s.fail(w, r, "touch session", err)
 				return
 			}

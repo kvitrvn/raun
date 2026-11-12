@@ -264,3 +264,28 @@ func TestStoreFailureIsAnError(t *testing.T) {
 		t.Errorf("a failing store = %d, want 500", resp.StatusCode)
 	}
 }
+
+// vanishing is a store whose sessions disappear between a lookup and its
+// touch, as after a logout in another tab.
+type vanishing struct{ session.Store }
+
+func (vanishing) Touch(context.Context, string, time.Time) error { return session.ErrNotFound }
+
+func TestSessionGoneBeforeItsTouch(t *testing.T) {
+	p := newProtected(t, "https")
+	cookie, _ := p.login(t)
+	s, err := newServer(Options{Logger: slog.New(slog.DiscardHandler), PublicHost: testHost, Scheme: "https", Ready: func(context.Context) error { return nil }, Sessions: vanishing{p.store}, Now: func() time.Time { return p.clock.now().Add(2 * time.Hour) }}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := serve(s, withCookie(request(http.MethodGet, "/", testHost, nil), cookie))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("a session gone before its touch = %d, want the page", resp.StatusCode)
+	}
+	if c := cookieOf(t, resp, secureCookie); c == nil || c.MaxAge >= 0 {
+		t.Error("its cookie is not cleared")
+	}
+	if body := readBody(t, resp); strings.Contains(body, "hx-headers") {
+		t.Error("the page still carries the token of the gone session")
+	}
+}
