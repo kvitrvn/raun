@@ -541,26 +541,36 @@ func commandError(name string, stderr *limitedBuffer, err error) error {
 }
 
 // checkVersion refuses a Git older than the minimum, from the output of
-// "git version", such as "git version 2.39.3 (Apple Git-145)".
+// "git version".
 func checkVersion(out string) error {
+	major, minor, err := parseVersion(out)
+	if err != nil {
+		return err
+	}
+	if major < minMajor || major == minMajor && minor < minMinor {
+		return fmt.Errorf("git %d.%d is older than %d.%d, the oldest supported", major, minor, minMajor, minMinor)
+	}
+	return nil
+}
+
+// parseVersion reads the major and minor numbers from the output of "git
+// version", such as "git version 2.39.3 (Apple Git-145)".
+func parseVersion(out string) (major, minor int, err error) {
 	version, ok := strings.CutPrefix(strings.TrimSpace(out), "git version ")
 	if !ok {
-		return fmt.Errorf("unexpected git version %q", out)
+		return 0, 0, fmt.Errorf("unexpected git version %q", out)
 	}
 	version, _, _ = strings.Cut(version, " ")
 	parts := strings.SplitN(version, ".", 3)
 	if len(parts) < 2 {
-		return fmt.Errorf("unexpected git version %q", version)
+		return 0, 0, fmt.Errorf("unexpected git version %q", version)
 	}
 	major, err1 := strconv.Atoi(parts[0])
 	minor, err2 := strconv.Atoi(parts[1])
 	if err1 != nil || err2 != nil {
-		return fmt.Errorf("unexpected git version %q", version)
+		return 0, 0, fmt.Errorf("unexpected git version %q", version)
 	}
-	if major < minMajor || major == minMajor && minor < minMinor {
-		return fmt.Errorf("git %s is older than %d.%d, the oldest supported", version, minMajor, minMinor)
-	}
-	return nil
+	return major, minor, nil
 }
 
 // isHash reports whether s is a full SHA-1 or SHA-256 object name in lowercase

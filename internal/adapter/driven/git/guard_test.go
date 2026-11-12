@@ -34,6 +34,20 @@ func hostileRemote(t *testing.T) (*Reader, *gittest.Repo, string) {
 	return r, repo, marker
 }
 
+// obeysNoLazyFetch reports whether the Git of the reader is 2.44 or later.
+func obeysNoLazyFetch(t *testing.T, r *Reader) bool {
+	t.Helper()
+	out, err := r.output(context.Background(), r.gitDir, nil, "version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	major, minor, err := parseVersion(string(out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return major > 2 || major == 2 && minor >= 44
+}
+
 // run starts git with the environment of the reader, less the variables named
 // by drop, and reports whether the hostile command ran.
 func run(t *testing.T, r *Reader, marker string, drop []string, args ...string) bool {
@@ -69,8 +83,9 @@ func TestEnvironmentDeniesEveryTransport(t *testing.T) {
 }
 
 // TestEnvironmentBlocksLazyFetching proves each guard against a lazy fetch on
-// its own: GIT_NO_LAZY_FETCH where Git obeys it, the empty allowlist on the
-// Git versions that ignore it.
+// its own: the empty allowlist on every supported Git, GIT_NO_LAZY_FETCH only
+// from Git 2.44, which is the first to obey it. On older Git the allowlist and
+// the refusal of partial clones at Open are what holds.
 func TestEnvironmentBlocksLazyFetching(t *testing.T) {
 	r, repo, marker := hostileRemote(t)
 	blob := repo.Git("rev-parse", "HEAD:README.md")
@@ -84,7 +99,13 @@ func TestEnvironmentBlocksLazyFetching(t *testing.T) {
 	if !run(t, r, marker, both, "cat-file", "-p", blob) {
 		t.Fatal("control: without both guards, reading the missing blob did not fetch it, so the test proves nothing")
 	}
-	for _, drop := range [][]string{{"GIT_NO_LAZY_FETCH"}, {"GIT_ALLOW_PROTOCOL"}, nil} {
+	drops := [][]string{nil, {"GIT_NO_LAZY_FETCH"}}
+	if obeysNoLazyFetch(t, r) {
+		drops = append(drops, []string{"GIT_ALLOW_PROTOCOL"})
+	} else {
+		t.Log("this Git ignores GIT_NO_LAZY_FETCH: only the allowlist is proven")
+	}
+	for _, drop := range drops {
 		if run(t, r, marker, drop, "cat-file", "-p", blob) {
 			t.Errorf("reading the missing blob fetched it without %v", drop)
 		}
