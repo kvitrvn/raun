@@ -66,7 +66,7 @@ The variables of epic 3, read by `raun server` only. Each has a default and a ru
 
 Rules that hold for every variable, of this epic and the next:
 
-- **The catalogue grows by epic.** Epic 4 adds `RAUN_ADMINS`, `RAUN_SECRET_KEY` and `RAUN_SECRET_KEY_PREVIOUS` (with their `_FILE` forms) to the table, with #21; until then they are unknown, like any variable a later epic defines.
+- **The catalogue grows by epic.** Epic 4 adds the forge credentials of the instance (#25, named by its review #23), and `RAUN_ADMINS`, `RAUN_SECRET_KEY` and `RAUN_SECRET_KEY_PREVIOUS` with #21, each secret with its `_FILE` form; until then they are unknown, like any variable a later epic defines.
 - **Unknown variables stop the server.** A variable whose name starts with `RAUN_` and that the server does not know stops it at startup, so a typo is never silently ignored (#18). The variables of the runner start with `RAUN_RUNNER_` and are ignored by the server, so one environment can hold both. A tool of the repository, such as the generation script of #19, reads no `RAUN_*` variable.
 - **Secrets from files.** A secret variable `RAUN_<NAME>` can also be given as a file, `RAUN_<NAME>_FILE`; setting both is an error (epic 1). Epic 3 defines no secret variable; the first ones are the forge credentials of epic 4.
 - **The effective configuration** is logged once at startup, each secret replaced by `[redacted]` whether set or not.
@@ -95,7 +95,7 @@ Both are unauthenticated, outside the Host check and the session, answer `text/p
 
 **No header from a proxy is trusted.** `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host` and `Forwarded` are ignored. The scheme and the host come from `RAUN_PUBLIC_URL`, and the access log records the address of the TCP peer. A client can therefore not change what the server thinks its own address is.
 
-**Host check.** Except on the health endpoints, a request whose `Host` header differs from the host and port of `RAUN_PUBLIC_URL` (the default port of the scheme omitted) is refused with `421` before any handler runs. A proxy forwards the original `Host`, or the administrator sets `RAUN_PUBLIC_URL` to the address the proxy sends.
+**Host check.** Except on the health endpoints, a request whose `Host` header differs from the host and port of `RAUN_PUBLIC_URL` (the default port of the scheme omitted) is refused with `421` before any handler runs. A proxy forwards the original `Host`, or the administrator sets `RAUN_PUBLIC_URL` to the address the proxy sends. `RAUN_PUBLIC_URL` does not follow `RAUN_HTTP_ADDR`: changing the port of the listener without the public URL leaves only the health endpoints reachable, so the refusal is logged with the host received and the host expected.
 
 **TLS.** The server speaks plain HTTP by default, for a reverse proxy that terminates TLS. With `RAUN_TLS_CERT_FILE` and `RAUN_TLS_KEY_FILE`, it serves TLS itself, TLS 1.2 at least, so a minimal deployment needs no proxy. It does not obtain certificates; an ACME client renews the files and sends `SIGHUP`.
 
@@ -174,7 +174,7 @@ When a stored setting appears, the rule is: a value that an administrator change
 
 ### Secrets at rest
 
-Epic 3 stores no secret: sessions and CSRF tokens are random values, the first stored hashed. The forge credentials of the instance (a GitHub App private key, its webhook secret) are configuration given by file (`RAUN_GITHUB_PRIVATE_KEY_FILE`, epic 1). The first secrets the server stores are the tokens it obtains from a forge at runtime (epic 4). They follow this scheme, which epic 4 implements with them:
+Epic 3 stores no secret: sessions and CSRF tokens are random values, the first stored hashed. The forge credentials of the instance (a GitHub App private key, its webhook secret) are configuration, given by file with the `_FILE` form of epic 1; epic 4 names their variables. The first secrets the server stores are the tokens it obtains from a forge at runtime (epic 4). They follow this scheme, which epic 4 implements with them:
 
 - **Cipher.** AES-256-GCM from the standard library, a random 96-bit nonce per encryption, and as associated data the table, column and key of the row, so a ciphertext copied to another row does not decrypt.
 - **Envelope.** `v1`, the identifier of the key, the nonce and the ciphertext, in one stored value. The `v1` is the version of the envelope, recorded with the other formats.
