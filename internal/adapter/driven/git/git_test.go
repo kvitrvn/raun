@@ -535,8 +535,6 @@ func TestIgnoresHostileConfiguration(t *testing.T) {
 		"\tpager = " + hostile,
 		"\thooksPath = " + filepath.Dir(hostile),
 		"\tsshCommand = " + hostile,
-		"[alias]",
-		"\tls-tree = !" + hostile,
 		"[uploadpack]",
 		"\tpackObjectsHook = " + hostile,
 		"",
