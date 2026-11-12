@@ -1,6 +1,6 @@
 # Knowledge format
 
-> Status: decided by the [epic 2 review](implementation/02-knowledge-core.md) (#9). The item model, its validation, its identifiers and its transitions are implemented in `internal/core/knowledge` (#10). Evidence verification (#11, #13) and storage (#14) are not implemented yet: for them, this page is the specification.
+> Status: decided by the [epic 2 review](implementation/02-knowledge-core.md) (#9). The item model, its validation, its identifiers and its transitions are implemented in `internal/core/knowledge` (#10), and so are the classification of sources and the reading of a commit (#11). Evidence verification (#13) and storage (#14) are not implemented yet: for them, this page is the specification.
 
 This page defines a knowledge item: its fields, its statuses and who may change them, its evidence and how Raun verifies it, and the versions of Raun's formats. The model is the one of raun-old (`docs/format.md` at `330e634`), stored in a database instead of YAML files.
 
@@ -58,8 +58,8 @@ A later run appends support; it never changes an existing entry.
 | Field | Content |
 | --- | --- |
 | `id` | `e1`, `e2`, ... within the item. |
-| `source` | `code`, `doc` or `human-context`. |
-| `path` | Clean path relative to the repository root. |
+| `source` | `code`, `doc` or `human-context`, set by Raun from the path, see [Sources](#sources). |
+| `path` | Clean path relative to the repository root, see [Paths](#paths). |
 | `commit` | Full hash of the commit the citation was made at. |
 | `start_line`, `end_line` | 1-based, inclusive. |
 | `excerpt` | The cited lines. |
@@ -142,6 +142,41 @@ Every status change appends one event. Events are never changed or deleted, and 
 | `reason` | Required for `human`. For `run`, why the ground of the item changed: required on every event but the creation. |
 
 Until accounts exist (epic 4), `by` is an opaque identifier supplied by the caller; it is never free text typed by the person who decides.
+
+## Sources
+
+Raun decides the source of an evidence from its path; an agent never declares it. Three sets drive the decision:
+
+| Set | Content | Default |
+| --- | --- | --- |
+| Context | Exact paths of files the team writes for Raun. Cited as `human-context`, so they never pass for facts derived from the code. | None |
+| Docs | Patterns of documentation paths, cited as `doc`. | `**/*.md`, `**/*.rst`, `**/*.adoc`, `**/*.txt`, `docs/**` |
+| Exclude | Patterns of paths no evidence may cite. | None |
+
+The first rule that holds wins:
+
+1. a path of the context set is `human-context`, even inside an excluded directory;
+2. a path matching an exclusion is excluded;
+3. a path matching a documentation pattern is `doc`;
+4. any other path is `code`.
+
+The order of the entries in a set never changes the result. The repository configuration sets them from epic 8; until then, the defaults apply.
+
+A pattern is matched against the whole path, segment by segment. Within a segment, `*` matches any run of characters, `?` one character, `[...]` a class (`[^...]` negates it) and `\` escapes the next character. A segment that is exactly `**` matches any number of segments, none included. So `*.md` matches at the root only, `**/*.md` anywhere, and `docs/**` matches `docs` itself and everything below it. Unlike `.gitignore`, a pattern without a slash is not matched at every depth, and there is no negation. A pattern that is empty, absolute, or has an empty, `.` or `..` segment, or a malformed class, is refused: it could match no path.
+
+## Paths
+
+A path from outside Raun, in an evidence or in the repository configuration, must be relative to the repository root, use forward slashes, be clean (no empty, `.` or `..` segment, no trailing slash), stay inside the repository, and not start with a dash, which Git would read as an option. Anything else is refused before any file is read.
+
+Raun reads a commit without a checkout and reports what it holds at a path. The evidence reasons follow from it:
+
+| What the commit holds | Reason |
+| --- | --- |
+| Nothing, including a path below a file, a link or a submodule | `missing-file` |
+| A directory, a symbolic link or a submodule; a link is never followed | `not-regular` |
+| A regular file with a NUL byte in its first 8000 bytes, the rule Git uses | `binary` |
+
+A regular file larger than the reader reads (8 MiB by default) is reported as too large, with no content. Which reason it gives is decided with evidence verification (#13).
 
 ## Evidence states
 
