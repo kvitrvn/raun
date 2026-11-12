@@ -5,7 +5,8 @@
 // repository, and reads it at a commit through plumbing commands only:
 // rev-parse to resolve a revision, ls-tree to list a tree, and one cat-file
 // --batch to read many files. Reading the files of one commit starts three
-// processes whatever their number.
+// processes whatever their number, two when none of them has content to read,
+// and none for no path.
 //
 // Git runs with an environment built from nothing and the user and system
 // configuration ignored. Options before every subcommand disable hooks, the
