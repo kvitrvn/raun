@@ -1,6 +1,6 @@
 # Knowledge format
 
-> Status: decided by the [epic 2 review](implementation/02-knowledge-core.md) (#9). The item model, its validation, its identifiers and its transitions are implemented in `internal/core/knowledge` (#10), and so are the classification of sources, the reading of a commit (#11) and evidence verification (#13). Storage (#14) is not implemented yet: for it, this page is the specification.
+> Status: decided by the [epic 2 review](implementation/02-knowledge-core.md) (#9). The item model, its validation, its identifiers and its transitions are implemented in `internal/core/knowledge` (#10), and so are the classification of sources, the reading of a commit (#11) and evidence verification (#13). Items are stored through the store port, on SQLite (`internal/adapter/driven/sqlite`, #14), at schema version 1.
 
 This page defines a knowledge item: its fields, its statuses and who may change them, its evidence and how Raun verifies it, and the versions of Raun's formats. The model is the one of raun-old (`docs/format.md` at `330e634`), stored in a database instead of YAML files.
 

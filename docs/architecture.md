@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: the shape below is decided ([epic 1](implementation/01-project-foundation.md)), and the storage engine by [epic 2](implementation/02-knowledge-core.md#sqlite). What exists so far: `cmd/raun`; the knowledge model, the source classification, the commit reader port and evidence verification in `internal/core/knowledge`; the commit reader on the `git` binary in `internal/adapter/driven/git`; and the test helpers `internal/gittest` (fixture repositories) and `internal/golden` (golden files). Each epic fills in its part and updates this page.
+> Status: the shape below is decided ([epic 1](implementation/01-project-foundation.md)), and the storage engine by [epic 2](implementation/02-knowledge-core.md#sqlite). What exists so far: `cmd/raun`; the knowledge model, the source classification, the commit reader port, evidence verification and the store port in `internal/core/knowledge`, with its contract suite in `knowledgetest`; the store on SQLite in `internal/adapter/driven/sqlite`; the commit reader on the `git` binary in `internal/adapter/driven/git`; and the test helpers `internal/gittest` (fixture repositories) and `internal/golden` (golden files). Each epic fills in its part and updates this page.
 
 ## Components
 

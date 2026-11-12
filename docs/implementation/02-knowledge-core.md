@@ -162,7 +162,7 @@ The maximum length of a citation stays 40 lines by default. It is a parameter of
 
 ### Evidence verification
 
-Decided by the owner on 2026-11-12 (#13): a citation whose file is larger than the reader reads gets a new reason, `too-large`, allowed with `invalid` and `stale` like `missing-file`. Its content was not read, so `binary` or `not-found` would not be true, and failing the whole check would let one citation of a large file block every other. The reason is a value of the item document, which has no `version` field and holds no stored data yet (#14 is not merged), so nothing is migrated.
+Decided by the owner on 2026-11-12 (#13): a citation whose file is larger than the reader reads gets a new reason, `too-large`, allowed with `invalid` and `stale` like `missing-file`. Its content was not read, so `binary` or `not-found` would not be true, and failing the whole check would let one citation of a large file block every other. The reason is a value of the item document, which has no `version` field and held no stored data when it was added (#14 came after), so nothing was migrated.
 
 Rules made explicit while implementing it (#13):
 
@@ -172,6 +172,17 @@ Rules made explicit while implementing it (#13):
 - **What blank means.** Only spaces and tabs, as `docs/format.md` says; raun-old also collapsed every Unicode space. Normalization works on bytes, so every other byte is compared as it is: two lines that differ in an invalid UTF-8 byte still differ, where decoding them would have made both U+FFFD. An excerpt must be valid UTF-8, which item validation now checks and the verifier refuses as an input error: it travels in JSON, which would replace invalid bytes. Such an excerpt fails the whole call, like a bad path or commit, since no item may hold it; a file the reader could not read, such as a too-large one, is a reason of one citation instead. A line of the file that is not valid UTF-8 therefore matches no excerpt and its citation is `not-found`. Blank lines are dropped at both ends of the excerpt and of the cited range, and kept inside them. An excerpt that is blank once normalized is found nowhere: `not-found`.
 - **A match at the cited lines wins.** An excerpt at the cited lines is `verified` even if it also appears elsewhere. Otherwise its occurrences are counted, overlapping ones included: one is a relocation, two or more are `ambiguous`. A relocation corrects the lines to the occurrence without its blank ends, and never changes the excerpt or its hash.
 - **Freshness gives verified or stale.** A `relocated` evidence that holds at a later commit becomes `verified`, as the table of states says; its corrected lines stay. An `invalid` evidence is returned as it is and its file is not read. An evidence without a state is refused.
+
+### Store (#14)
+
+Rules made explicit while implementing the store (#14):
+
+- **The port.** `knowledge.Store` has the four operations of the table above, and a fifth error, `ErrHistoryChanged`, for an update that changes or removes an event. `Create` returns only an error and refuses an item whose revision is not 1, as `New` makes it. A mutation is `func(Item) (Item, error)`, the shape of every operation of the core, so `Update(ctx, scope, id, revision, func(it Item) (Item, error) { return Decide(it, ...) })` needs no adapter. It gets a copy, runs once after the revision check while the store holds its write lock, and must be short and not call the store. The revision is the store's: the one a mutation returns is ignored.
+- **One rule, in the core.** `CheckCreate` and `CheckUpdate` hold what any store refuses: an invalid item, a change of identifier, type or creation time, an update time before the stored one, and an event of the stored history changed or removed. Both stores call them, so the PostgreSQL adapter (epic 14) will not copy them. A store checks only what needs its data: the identifier is free, and every persona a requirement names exists in the scope, whatever its status, since a persona is rejected, never deleted.
+- **The contract suite.** `knowledgetest.Suite` tests every rule of the port once, on fresh stores; `knowledgetest.Memory` passes it, and so does SQLite. Scopes are tested both ways: two repositories of one workspace, and one repository identifier in two workspaces.
+- **Driver and settings.** `modernc.org/sqlite` v1.61.0, the release before the latest that was at least two weeks old when it was added; the latest was five days old. The settings go in the parameters of the file name, so every connection a pool opens gets them, and a test reads them back on each. Read connections are also query-only. A path holding `?` or `#`, a `file:` URI or `:memory:` is refused: the first two would open another file, the last one a database per connection.
+- **Schema.** `knowledge_items` and `knowledge_history` are `STRICT` tables; the history references its item with the three key columns, and triggers abort any `UPDATE` or `DELETE` on it. Times are stored as fixed-width text in UTC, so their text order is their time order. The document holds persona, requirement, support, evidence and open points, encoded with `encoding/json` and decoded strictly: a field this binary does not know is an error, never dropped.
+- **Migrations.** `(*sqlite.Store).Migrate(ctx, enabled)` is the function epic 3 calls at start with the value of `RAUN_DATABASE_MIGRATE`. It gives `ErrSchemaTooNew` for a newer schema whatever `enabled` says, `ErrSchemaTooOld` for an older one when not enabled, with a message naming the setting, and applies each pending migration in its own transaction otherwise. `Open` never migrates and creates no table.
 
 ### Format versions
 
@@ -207,7 +218,7 @@ The invariant of `AGENTS.md` stands: every format read or written outside the da
 ## Exit criteria
 
 - [x] This page records the choices.
-- [ ] A test stores items, updates them with a revision check and refuses a stale revision (#14).
+- [x] A test stores items, updates them with a revision check and refuses a stale revision (#14): the `update` and `stale revision` cases of `knowledgetest.Suite`, run by `TestMemory` and by `TestContract` in `internal/adapter/driven/sqlite/store_test.go`.
 - [x] A test verifies, relocates and invalidates citations, an ambiguous one included, on a fixture repository (#11, #13): `TestVerifyOnARepository` in `internal/adapter/driven/git/verify_test.go`.
-- [ ] The store contract suite passes on SQLite and on the in-memory store, and proves that one repository cannot read another (#14).
-- [ ] `make verify` passes.
+- [x] The store contract suite passes on SQLite and on the in-memory store, and proves that one repository cannot read another (#14): the `scopes are isolated` case of `knowledgetest.Suite`.
+- [x] `make verify` passes.
