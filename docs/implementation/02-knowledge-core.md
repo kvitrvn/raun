@@ -209,7 +209,7 @@ The invariant of `AGENTS.md` stands: every format read or written outside the da
 | PostgreSQL adapter | Epic 14 (#93) |
 | Foreign keys to the workspace and repository tables | Epics 4 and 5 |
 | Binding `by` to an account | Epic 4 |
-| The setting that enables migrations at start | Epic 3 (#18) |
+| The setting that enables migrations at start | `RAUN_DATABASE_MIGRATE`, read by #18 ([03-server-foundation.md](03-server-foundation.md#startup-and-migrations)) |
 | Whether downgrades are supported | Epic 13 |
 | How an upgrade stops the servers of an older version before migrating | Epic 13 |
 | Whether a citation that moved at a later commit is rewritten | Epic 7 review (#44) |
