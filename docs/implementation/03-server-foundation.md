@@ -229,7 +229,7 @@ Rules made explicit while implementing the server (#18):
 | The `RAUN_ADMINS` check and the Instance settings screen | Epic 4 (#21) |
 | The encryption of stored secrets | Epic 4 (#26, with the first stored tokens) |
 | The first stored instance setting | The epic whose feature needs one |
-| The `_FILE` form of a variable and the secret type of the configuration | Epic 4 (#26), with its first secret variable |
+| The `_FILE` form of a variable and the secret type of the configuration | Epic 4 (#25), with the first secret variables, those of the GitHub App |
 | The bypass and authentication of webhooks | Epic 5 review (#30) |
 | The bypass and authentication of the runner API | Epic 6 |
 | How an upgrade is run, and the retention of logs | Epic 13 |

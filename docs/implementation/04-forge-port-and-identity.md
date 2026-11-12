@@ -101,8 +101,8 @@ The model already holds them: an account has identities, each of one forge, and 
 | Issue | Change |
 | --- | --- |
 | #24 | The port in `internal/core/identity`: login, listing, permission, membership; the fake forge and the contract suite in `internal/forgetest`; `docs/forge.md`. |
-| #25 | GitHub App: JWT, installation tokens in memory, user authorization with PKCE and refresh, listing through the installations of the user, permission and membership, GHES through `RAUN_GITHUB_URL`, the configuration variables, no SDK. |
-| #26 | Login with state and PKCE, sign-up rule (`RAUN_SIGNUP_USERS`, `RAUN_SIGNUP_ORGS`), username choice, logout, the account of a session; it stores the first secrets, so it adds their encryption (moved from #21) and the `_FILE` form and secret type of the configuration. |
+| #25 | GitHub App: JWT, installation tokens in memory, user authorization with PKCE and refresh, listing through the installations of the user, permission and membership, GHES through `RAUN_GITHUB_URL`, the configuration variables and, as they are the first secret variables, the `_FILE` form and the secret type of the configuration; no SDK. |
+| #26 | Login with state and PKCE, sign-up rule (`RAUN_SIGNUP_USERS`, `RAUN_SIGNUP_ORGS`), username choice, logout, the account of a session; it stores the first secrets, so it adds their encryption (moved from #21). |
 | #27 | Namespace rules and reserved names, personal and shared workspaces, owner and member, switcher; no renaming. |
 | #28 | Mapping, permission service, 5-minute cache, invalidation, refusal when unknown. |
 | #21 | `RAUN_ADMINS` in the stable form, the Instance settings screen; the encryption of stored secrets moves to #26. |
