@@ -177,3 +177,13 @@ func checkMarkup(t *testing.T, html string) {
 		t.Error("hostile text was not escaped")
 	}
 }
+
+// TestButtonsKeepTheFocusRing guards the focus indicator of the base layer:
+// an outline utility on a button would win over it.
+func TestButtonsKeepTheFocusRing(t *testing.T) {
+	for _, p := range []ButtonProps{{}, {Variant: ButtonGhost, Size: ButtonIcon}, {Href: "/"}} {
+		if c := ButtonClasses(p); strings.Contains(c, "outline-") {
+			t.Errorf("button classes %q remove the focus outline", c)
+		}
+	}
+}

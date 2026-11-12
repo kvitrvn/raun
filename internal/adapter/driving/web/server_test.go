@@ -169,11 +169,10 @@ func TestHealth(t *testing.T) {
 
 func TestHealthRefusesOtherMethods(t *testing.T) {
 	s, _ := newTestServer(t, nil)
-	// Only GET and HEAD reach the health endpoints; any other method goes to
-	// the application, which has no such route.
+	// Only GET and HEAD reach the health endpoints.
 	resp := serve(s, request(http.MethodPost, "/healthz", testHost, nil))
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("POST /healthz = %d, want 404", resp.StatusCode)
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("POST /healthz = %d, want 405", resp.StatusCode)
 	}
 	resp = serve(s, request(http.MethodHead, "/readyz", testHost, nil))
 	if resp.StatusCode != http.StatusOK {
@@ -613,5 +612,15 @@ func TestPagesNeedThePublicHost(t *testing.T) {
 	s, _ := newTestServer(t, nil)
 	if resp := serve(s, request(http.MethodGet, "/", "evil.example", nil)); resp.StatusCode != http.StatusMisdirectedRequest {
 		t.Errorf("home with a foreign Host = %d, want 421", resp.StatusCode)
+	}
+}
+
+func TestWrongMethodOnAPage(t *testing.T) {
+	s, _ := newTestServer(t, nil)
+	for _, target := range []string{"/", "/nowhere"} {
+		resp := serve(s, request(http.MethodPost, target, testHost, nil))
+		if resp.StatusCode != http.StatusMethodNotAllowed || !strings.Contains(resp.Header.Get("Allow"), "GET") {
+			t.Errorf("POST %s = %d, Allow %q; want 405 with GET", target, resp.StatusCode, resp.Header.Get("Allow"))
+		}
 	}
 }

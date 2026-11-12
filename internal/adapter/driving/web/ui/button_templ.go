@@ -64,7 +64,7 @@ type ButtonProps struct {
 	Value      string
 }
 
-const buttonBase = "cn-button inline-flex shrink-0 items-center justify-center whitespace-nowrap outline-none select-none disabled:pointer-events-none disabled:opacity-50"
+const buttonBase = "cn-button inline-flex shrink-0 items-center justify-center whitespace-nowrap select-none disabled:pointer-events-none disabled:opacity-50"
 
 // ButtonClasses gives the classes of a button with these props, for an
 // element that is not a Button.

@@ -86,8 +86,9 @@ func New(opts Options) (*Server, error) {
 	handle(s.app, "GET /{$}", http.HandlerFunc(s.home))
 	handle(s.app, "GET /assets/{file...}", http.HandlerFunc(s.assets.serve))
 	// Any other path of the application is a page that does not exist; it
-	// has no route pattern in the access log.
-	s.app.Handle("/", http.HandlerFunc(s.notFound))
+	// has no route pattern in the access log. Only GET and HEAD reach it, so
+	// another method on a known path gets 405 with Allow from the mux.
+	s.app.Handle("GET /", http.HandlerFunc(s.notFound))
 
 	root := http.NewServeMux()
 	handle(root, "GET /healthz", http.HandlerFunc(s.healthz))

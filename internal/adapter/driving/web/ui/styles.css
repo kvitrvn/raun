@@ -185,7 +185,7 @@
   .cn-dialog-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 18px 16px; }
 
   /* Dropdown menu (dropdown.templ) */
-  .cn-dropdown-content { min-width: 220px; margin: 0; padding: 5px; border: 0; border-radius: var(--radius-lg); background: var(--popover); color: var(--foreground); box-shadow: var(--shadow-pop); }
+  .cn-dropdown-content { min-width: 220px; max-height: calc(100vh - 16px); overflow-y: auto; margin: 0; padding: 5px; border: 0; border-radius: var(--radius-lg); background: var(--popover); color: var(--foreground); box-shadow: var(--shadow-pop); }
   .cn-dropdown-item { display: flex; width: 100%; align-items: center; gap: 10px; height: 32px; padding: 0 9px; border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
   .cn-dropdown-item:hover, .cn-dropdown-item:focus-visible { background: var(--muted); outline: none; }
   .cn-dropdown-item svg { width: 16px; height: 16px; color: var(--muted-foreground); }
@@ -206,10 +206,11 @@
   .cn-nav-link:hover { color: var(--foreground); }
   .cn-nav-link[aria-current="page"] { background: var(--muted); color: var(--foreground); }
 
-  /* The theme toggle shows once theme.js has set data-theme, and offers the
-     other theme. */
-  .cn-theme-toggle { display: none; }
-  [data-theme] .cn-theme-toggle { display: inline-flex; }
-  [data-theme="dark"] .cn-theme-toggle .cn-when-light,
-  [data-theme="light"] .cn-theme-toggle .cn-when-dark { display: none; }
 }
+
+/* Outside the layers, so that they win over the display utilities of the
+   button: the theme toggle shows once theme.js has set data-theme, and
+   offers the other theme. */
+:root:not([data-theme]) .cn-theme-toggle { display: none; }
+[data-theme="dark"] .cn-theme-toggle .cn-when-light,
+[data-theme="light"] .cn-theme-toggle .cn-when-dark { display: none; }

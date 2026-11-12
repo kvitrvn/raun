@@ -55,16 +55,28 @@
     return document.querySelector('[popovertarget="' + CSS.escape(menu.id) + '"]');
   }
 
-  // Places an open menu under its trigger, inside the viewport. Setting
-  // style properties from script is allowed by the Content Security Policy;
-  // style attributes in markup are not.
+  // Places an open menu under its trigger, or above it when there is more
+  // room there, inside the viewport; the stylesheet bounds its height, and
+  // it scrolls when neither side holds it. Setting style properties from
+  // script is allowed by the Content Security Policy; style attributes in
+  // markup are not.
   function place(menu, trigger) {
+    var gap = 4, edge = 8;
     var box = trigger.getBoundingClientRect();
     menu.style.position = "fixed";
     menu.style.margin = "0";
-    menu.style.top = Math.round(box.bottom + 4) + "px";
-    var left = Math.min(box.left, window.innerWidth - menu.offsetWidth - 8);
-    menu.style.left = Math.round(Math.max(8, left)) + "px";
+    var below = window.innerHeight - box.bottom - gap - edge;
+    var above = box.top - gap - edge;
+    var height = menu.offsetHeight;
+    if (height <= below || below >= above) {
+      menu.style.maxHeight = Math.max(below, 0) + "px";
+      menu.style.top = Math.round(box.bottom + gap) + "px";
+    } else {
+      menu.style.maxHeight = Math.max(above, 0) + "px";
+      menu.style.top = Math.round(Math.max(edge, box.top - gap - Math.min(height, above))) + "px";
+    }
+    var left = Math.min(box.left, window.innerWidth - menu.offsetWidth - edge);
+    menu.style.left = Math.round(Math.max(edge, left)) + "px";
   }
 
   // The toggle event does not bubble: it is caught on the way down.

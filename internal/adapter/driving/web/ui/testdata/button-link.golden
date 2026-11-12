@@ -1,1 +1,1 @@
-<a id="back" href="/repositories" data-slot="button" class="cn-button inline-flex shrink-0 items-center justify-center whitespace-nowrap outline-none select-none disabled:pointer-events-none disabled:opacity-50 cn-button-variant-outline cn-button-size-md">Label</a>
+<a id="back" href="/repositories" data-slot="button" class="cn-button inline-flex shrink-0 items-center justify-center whitespace-nowrap select-none disabled:pointer-events-none disabled:opacity-50 cn-button-variant-outline cn-button-size-md">Label</a>
