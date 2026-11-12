@@ -24,16 +24,22 @@
 // Every operation (New, AppendFromRun, Decide, Reopen, ResolveOpenPoint,
 // MarkNeedsReview) takes the time and the actor as arguments, works on a copy
 // of the item, validates the result and returns it. On error the input is left
-// as it was. No operation changes the revision, which the store increments
-// (#14), and none rewrites an existing support entry, evidence or history
-// event.
+// as it was. No operation changes the revision, which the store increments,
+// and none rewrites an existing support entry, evidence or history event.
+//
+// Store is the port of the storage: every operation takes a Scope, and an
+// update states the revision it read and runs its Mutation inside the write
+// transaction. CheckCreate and CheckUpdate are the rules every store applies
+// before writing; knowledgetest holds the contract suite of the port and an
+// in-memory store, and internal/adapter/driven/sqlite the store on SQLite.
 //
 // What this package does not do:
 //   - decide which commit to check, or record the result: the callers do,
 //     on a push or a pull request (epic 7) and after an analysis (epic 10);
 //   - read the repository configuration: the source sets are given by the
 //     caller, and DefaultDocs stands in until epic 8;
-//   - store items or check that the personas a requirement names exist (#14);
+//   - store items or check that the personas a requirement names exist: a
+//     Store does both;
 //   - authenticate the author of a decision: By is an opaque identifier until
 //     accounts exist (epic 4).
 //

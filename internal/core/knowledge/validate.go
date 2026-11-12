@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -51,7 +52,15 @@ func (v *validator) utc(path string, t time.Time) {
 		v.add(path, "required")
 	case t.Location() != time.UTC:
 		v.add(path, "must be in UTC")
+	case !inYearRange(t):
+		v.add(path, "must be between the years 0 and 9999, got %d", t.Year())
 	}
+}
+
+// inYearRange reports whether t has a four-digit year, the range that JSON and
+// the stores can write and read back.
+func inYearRange(t time.Time) bool {
+	return t.Year() >= 0 && t.Year() <= 9999
 }
 
 func (v *validator) err() error {
@@ -81,7 +90,46 @@ func (it Item) Validate() error {
 	it.validateOpenPoints(&v, evidence)
 	it.validateHistory(&v)
 	it.validateStatus(&v)
+	validateUTF8(&v, reflect.ValueOf(it), "")
 	return v.err()
+}
+
+// validateUTF8 reports every string of the item that is not valid UTF-8, at
+// its field path. Items are stored and exchanged as JSON, which would replace
+// the invalid bytes, so an item could not be read back as it was written. It
+// walks the fields by reflection, so a field added to the model is covered
+// without a change here.
+func validateUTF8(v *validator, val reflect.Value, at string) {
+	switch val.Kind() {
+	case reflect.String:
+		if !utf8.ValidString(val.String()) {
+			v.add(at, "must be valid UTF-8")
+		}
+	case reflect.Pointer:
+		if !val.IsNil() {
+			validateUTF8(v, val.Elem(), at)
+		}
+	case reflect.Slice:
+		for i := range val.Len() {
+			validateUTF8(v, val.Index(i), fmt.Sprintf("%s[%d]", at, i))
+		}
+	case reflect.Struct:
+		t := val.Type()
+		for i := range t.NumField() {
+			f := t.Field(i)
+			if !f.IsExported() {
+				continue // time.Time, for one, holds no text
+			}
+			name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+			if name == "" {
+				name = f.Name
+			}
+			if at != "" {
+				name = at + "." + name
+			}
+			validateUTF8(v, val.Field(i), name)
+		}
+	}
 }
 
 func (it Item) validateHeader(v *validator) {
@@ -167,13 +215,11 @@ func (it Item) validateEvidence(v *validator) map[string]bool {
 		if !isCommit(e.Commit) {
 			v.add(at+".commit", "must be a full commit hash, got %q", e.Commit)
 		}
+		// An excerpt that is not valid UTF-8 is reported with every other
+		// string of the item, by validateUTF8.
 		switch {
 		case e.Excerpt == "":
 			v.add(at+".excerpt", "required")
-		case !utf8.ValidString(e.Excerpt):
-			// JSON would replace the invalid bytes, so the stored excerpt
-			// would no longer be the one cited, nor match its hash.
-			v.add(at+".excerpt", "must be valid UTF-8")
 		case e.SHA256 != ExcerptSHA256(e.Excerpt):
 			v.add(at+".sha256", "does not match the excerpt")
 		}
@@ -201,8 +247,13 @@ func (it Item) validateEvidence(v *validator) map[string]bool {
 			}
 		}
 
-		if !e.CheckedAt.IsZero() && e.CheckedAt.Location() != time.UTC {
-			v.add(at+".checked_at", "must be in UTC")
+		if !e.CheckedAt.IsZero() {
+			switch {
+			case e.CheckedAt.Location() != time.UTC:
+				v.add(at+".checked_at", "must be in UTC")
+			case !inYearRange(e.CheckedAt):
+				v.add(at+".checked_at", "must be between the years 0 and 9999, got %d", e.CheckedAt.Year())
+			}
 		}
 		if e.CheckedCommit != "" && !isCommit(e.CheckedCommit) {
 			v.add(at+".checked_commit", "must be a full commit hash, got %q", e.CheckedCommit)

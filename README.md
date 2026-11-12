@@ -8,7 +8,7 @@ Raun is self-hosted and connected to your forge, in the spirit of Drone CI: a se
 
 ## Status
 
-Early development: the binary builds, its `server` and `runner` subcommands are stubs, and the knowledge model (`internal/core/knowledge`) exists with source classification, a reader of a commit on the `git` binary and deterministic evidence verification, without storage yet. The plan is in the [issues](https://github.com/kvitrvn/raun/issues) and the [implementation records](docs/implementation/README.md).
+Early development: the binary builds, its `server` and `runner` subcommands are stubs, and the knowledge model (`internal/core/knowledge`) exists with source classification, a reader of a commit on the `git` binary, deterministic evidence verification and its storage on SQLite. The plan is in the [issues](https://github.com/kvitrvn/raun/issues) and the [implementation records](docs/implementation/README.md).
 
 ## Usage
 
