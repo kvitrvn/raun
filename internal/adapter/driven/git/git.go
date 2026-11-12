@@ -39,10 +39,6 @@ const maxRecord = 64 << 10
 // maxStderr bounds what is kept of the error output of git.
 const maxStderr = 4 << 10
 
-// ErrTreeTooLarge reports a commit whose tree holds more entries than the
-// Reader lists.
-var ErrTreeTooLarge = errors.New("tree has too many entries")
-
 // Options tunes a Reader. A zero field takes its default.
 type Options struct {
 	// Git is the path of the git binary; empty means the git found in PATH.
@@ -51,7 +47,7 @@ type Options struct {
 	// TooLarge instead of being read.
 	MaxFileSize int64
 	// MaxTreeEntries is the number of entries above which listing or reading
-	// a commit fails with ErrTreeTooLarge.
+	// a commit fails with knowledge.ErrTreeTooLarge.
 	MaxTreeEntries int
 }
 
@@ -297,7 +293,7 @@ func (r *Reader) walkTree(ctx context.Context, commit string, fn func(entry)) er
 				return fmt.Errorf("git ls-tree: read entry: %w", err)
 			}
 			if count >= r.maxTreeEntries {
-				return fmt.Errorf("more than %d entries: %w", r.maxTreeEntries, ErrTreeTooLarge)
+				return fmt.Errorf("more than %d entries: %w", r.maxTreeEntries, knowledge.ErrTreeTooLarge)
 			}
 			e, err := parseEntry(record[:len(record)-1])
 			if err != nil {

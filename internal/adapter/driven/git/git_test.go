@@ -281,11 +281,11 @@ func TestListTreeRefusesWhatIsNotACommit(t *testing.T) {
 func TestListTreeBound(t *testing.T) {
 	f := newFixture(t)
 	r := open(t, f.repo.Dir(), git.Options{MaxTreeEntries: 5})
-	if _, err := r.ListTree(context.Background(), f.first); !errors.Is(err, git.ErrTreeTooLarge) {
+	if _, err := r.ListTree(context.Background(), f.first); !errors.Is(err, knowledge.ErrTreeTooLarge) {
 		t.Errorf("ListTree = %v, want ErrTreeTooLarge", err)
 	}
 	err := r.ReadFiles(context.Background(), f.first, []string{"README.md"}, func(knowledge.File) error { return nil })
-	if !errors.Is(err, git.ErrTreeTooLarge) {
+	if !errors.Is(err, knowledge.ErrTreeTooLarge) {
 		t.Errorf("ReadFiles = %v, want ErrTreeTooLarge", err)
 	}
 }

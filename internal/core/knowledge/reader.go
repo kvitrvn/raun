@@ -10,6 +10,10 @@ import (
 // commit of the repository: a typo, a shallow clone, a rewritten history.
 var ErrUnknownRevision = errors.New("unknown revision")
 
+// ErrTreeTooLarge reports a commit whose tree holds more entries than the
+// reader lists.
+var ErrTreeTooLarge = errors.New("tree has too many entries")
+
 // CommitReader reads one repository at a commit, without a checkout. It is
 // bound to its repository when it is built; no operation takes a repository.
 //
@@ -23,13 +27,15 @@ type CommitReader interface {
 	ResolveRevision(ctx context.Context, revision string) (string, error)
 
 	// ListTree returns every entry of the commit, directories included, in
-	// byte order of their paths. An unknown commit gives ErrUnknownRevision.
+	// byte order of their paths. An unknown commit gives ErrUnknownRevision,
+	// a tree above the bound of the reader ErrTreeTooLarge.
 	ListTree(ctx context.Context, commit string) ([]TreeEntry, error)
 
 	// ReadFiles calls visit once for each distinct path, in byte order, with
 	// what the commit holds there. Many paths cost the same small number of
 	// processes as one, so a caller reads the files of a commit in one call.
 	// An error returned by visit stops the reading and is returned as it is.
+	// An unknown commit and a tree above the bound fail as for ListTree.
 	ReadFiles(ctx context.Context, commit string, paths []string, visit func(File) error) error
 }
 
