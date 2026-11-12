@@ -150,6 +150,11 @@ func TestCompare(t *testing.T) {
 	r = &recorder{TB: t}
 	equal(r, filepath.Join("testdata", "sub"), []byte("x"), false)
 	r.failed(t, "does not exist")
+
+	// Forward slashes work on every system, as in the documented example.
+	r = &recorder{TB: t}
+	equal(r, "testdata/x.golden", []byte("one\ntwo\n"), false)
+	r.passed(t)
 }
 
 func TestUpdate(t *testing.T) {

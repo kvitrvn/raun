@@ -31,8 +31,9 @@ func init() {
 // Equal compares got with the golden file at path, byte for byte, and fails
 // the test on a difference or when the file is missing. With -update it
 // rewrites the file instead, creating its directories. The path is relative
-// to the package directory, where go test runs, and must lie in a testdata
-// directory, such as "testdata/listing.golden".
+// to the package directory, where go test runs, uses forward slashes or the
+// separator of the system, and must lie in a testdata directory, such as
+// "testdata/listing.golden".
 func Equal(t testing.TB, path string, got []byte) {
 	t.Helper()
 	update, err := updating(flag.CommandLine)
@@ -65,6 +66,7 @@ func updating(flags *flag.FlagSet) (bool, error) {
 
 func equal(t testing.TB, path string, got []byte, update bool) {
 	t.Helper()
+	path = filepath.FromSlash(path)
 	if err := checkPath(path); err != nil {
 		t.Errorf("golden: %v", err)
 		return
