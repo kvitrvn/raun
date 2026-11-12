@@ -43,7 +43,7 @@ Limits are constants of the server, written in its code and in `README.md`. Only
 | `WriteTimeout` | 60 s | The response is cut |
 | `IdleTimeout` | 120 s | The idle connection is closed |
 | `MaxHeaderBytes` | 32 KiB | `431` |
-| Request body | 64 KiB by default, through `http.MaxBytesReader`; a route states a larger bound explicitly (webhooks, the runner API) | `413` |
+| Request body | 64 KiB by default, through `http.MaxBytesReader`; a route states a larger bound explicitly (webhooks, the runner API) | The read fails with `*http.MaxBytesError`, which the form decoder answers with `413`; `net/http` writes no status itself |
 | Shutdown | `RAUN_SHUTDOWN_TIMEOUT`, 10 s by default | In-flight requests are dropped and the server exits with an error |
 
 A form is decoded strictly, as raun-old did: URL-encoded body fields only, each expected field once, unknown, duplicate and query fields refused with `400`.
@@ -117,8 +117,8 @@ The rules (identifier, hash, lifetimes, expiry) are pure and live in a core cont
 
 These answer T11. They apply to every route by default; a route opts out only by being named in the server's list of bypass patterns, each with its own authentication (webhooks in epic 5, the runner API in epic 6). Epic 3 bypasses none.
 
-- **Cross-origin protection.** `http.CrossOriginProtection` from the standard library, on every route: a non-safe request whose `Sec-Fetch-Site` is neither `same-origin` nor `none`, or whose `Origin` does not match `Host`, is refused with `403`. It allows requests without either header, which browsers always send on non-safe requests; the CSRF token covers the rest.
-- **CSRF token.** Each session has a token of 32 random bytes, stored in its row and replaced with its identifier. Every non-safe request on a route that uses a session must carry it, as the form field `csrf` or the header `X-CSRF-Token`; it is compared in constant time, and a missing or wrong token is refused with `403`. HTMX sends the header on every request through `hx-headers` on `<body>`, an attribute the Content Security Policy allows; forms also carry the hidden field, so they work without JavaScript.
+- **Cross-origin protection.** `http.CrossOriginProtection` from the standard library, on every route: a non-safe request whose `Sec-Fetch-Site` is `cross-site` or `same-site` is refused with `403`, and one with `same-origin` or `none` is accepted without reading `Origin`. Only when `Sec-Fetch-Site` is absent, an `Origin` whose host differs from `Host` is refused. A request with neither header is allowed, as a non-browser client or a browser too old to send them; the CSRF token covers it.
+- **CSRF token.** Each session has a token of 32 random bytes, distinct from its identifier, stored in clear in its row and replaced together with the identifier. Every non-safe request on a route that uses a session must carry it, as the form field `csrf` or the header `X-CSRF-Token`; it is compared in constant time, and a missing or wrong token is refused with `403`. HTMX sends the header on every request through `hx-headers` on `<body>`, an attribute the Content Security Policy allows; forms also carry the hidden field, so they work without JavaScript.
 - **Safe methods change nothing.** `GET`, `HEAD` and `OPTIONS` never change state, since every protection above lets them through.
 - **Rendering.** Repository text, agent output and logs are rendered as escaped text by templ (T13). `templ.Raw` and its equivalents are refused by a check of `make verify`, except for icon data, if #19 adds an icon set: a constant of the repository, never repository content.
 
