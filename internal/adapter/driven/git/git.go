@@ -127,7 +127,45 @@ func Open(ctx context.Context, dir string, opts Options) (*Reader, error) {
 	if !filepath.IsAbs(r.gitDir) {
 		return nil, fmt.Errorf("open repository %s: unexpected Git directory %q", abs, r.gitDir)
 	}
+
+	promisor, err := r.hasPromisor(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("open repository %s: %w", abs, err)
+	}
+	if promisor {
+		return nil, fmt.Errorf("open repository %s: a partial clone is not supported: Raun reads every file of a commit and never fetches a missing one", abs)
+	}
 	return r, nil
+}
+
+// hasPromisor reports whether the repository is a partial clone: Git would
+// fetch a missing object from a promisor remote. Git 2.44 and later obey
+// GIT_NO_LAZY_FETCH, older ones do not, so such a repository is refused
+// outright.
+func (r *Reader) hasPromisor(ctx context.Context) (bool, error) {
+	// Exit code 1 means the key is not set.
+	partial, err := r.output(ctx, r.gitDir, nil, "config", "--get", "extensions.partialClone")
+	var exit *exec.ExitError
+	switch {
+	case errors.As(err, &exit) && exit.ExitCode() == 1:
+	case err != nil:
+		return false, fmt.Errorf("read extensions.partialClone: %w", err)
+	case strings.TrimSpace(string(partial)) != "":
+		return true, nil
+	}
+	promisors, err := r.output(ctx, r.gitDir, nil, "config", "--type=bool", "--get-regexp", `^remote\..*\.promisor$`)
+	switch {
+	case errors.As(err, &exit) && exit.ExitCode() == 1:
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("read remote.*.promisor: %w", err)
+	}
+	for line := range strings.SplitSeq(string(promisors), "\n") {
+		if strings.HasSuffix(line, " true") {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // ResolveRevision returns the full hash of the commit revision names. A
@@ -475,6 +513,11 @@ func (r *Reader) command(ctx context.Context, dir string, extraEnv []string, arg
 		"GIT_ATTR_NOSYSTEM=1",
 		"GIT_NO_REPLACE_OBJECTS=1",
 		"GIT_NO_LAZY_FETCH=1",
+		// An empty allowlist denies every protocol, over any
+		// protocol.<name>.allow of the repository, which protocol.allow
+		// does not override. It holds on every supported Git, where
+		// GIT_NO_LAZY_FETCH needs 2.44.
+		"GIT_ALLOW_PROTOCOL=",
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_OPTIONAL_LOCKS=0",
 		"GIT_LITERAL_PATHSPECS=1",

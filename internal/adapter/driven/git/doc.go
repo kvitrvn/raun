@@ -9,10 +9,13 @@
 //
 // Git runs with an environment built from nothing and the user and system
 // configuration ignored. Options before every subcommand disable hooks, the
-// file system monitor, the pager, every transport protocol, lazy fetching of
-// missing objects and replacement objects, so neither the caller's
-// environment nor the configuration of the analyzed repository can make Git
-// run a command, reach the network or show other content than the commit's.
+// file system monitor, the pager, lazy fetching of missing objects and
+// replacement objects, and an empty GIT_ALLOW_PROTOCOL denies every transport
+// over any protocol.<name>.allow, so neither the caller's environment nor the
+// configuration of the analyzed repository can make Git run a command, reach
+// the network or show other content than the commit's. A partial clone is
+// refused by Open: Git before 2.44 would fetch its missing objects whatever
+// the environment says.
 //
 // A path never reaches Git: ReadFiles checks each one with
 // knowledge.ValidatePath, then looks it up in the tree listing and hands Git

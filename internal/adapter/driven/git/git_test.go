@@ -602,6 +602,75 @@ func TestIgnoresHostileConfiguration(t *testing.T) {
 	}
 }
 
+// makePartial turns the fixture into a partial clone whose promisor remote
+// runs a command through the ext transport, which the repository allows, and
+// removes the blob of README.md at the first commit. It returns the file the
+// command would create.
+func makePartial(t *testing.T, f fixture) string {
+	t.Helper()
+	marker := filepath.Join(t.TempDir(), "fetched")
+	blob := f.repo.Git("rev-parse", f.first+":README.md")
+	if err := os.Remove(filepath.Join(f.repo.Dir(), ".git", "objects", blob[:2], blob[2:])); err != nil {
+		t.Fatalf("remove the loose blob: %v", err)
+	}
+	f.repo.Git("config", "core.repositoryFormatVersion", "1")
+	f.repo.Git("config", "extensions.partialClone", "origin")
+	f.repo.Git("config", "remote.origin.promisor", "true")
+	f.repo.Git("config", "remote.origin.url", "ext::sh -c touch% "+marker)
+	f.repo.Git("config", "protocol.ext.allow", "always")
+	return marker
+}
+
+func TestOpenRefusesAPartialClone(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the promisor command is a shell command")
+	}
+	tests := []struct {
+		name   string
+		config []string
+	}{
+		{"partial clone extension", []string{"extensions.partialClone", "origin"}},
+		{"promisor remote", []string{"remote.backup.promisor", "yes"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.repo.Git(append([]string{"config"}, tt.config...)...)
+			_, err := git.Open(context.Background(), f.repo.Dir(), git.Options{})
+			if err == nil || !strings.Contains(err.Error(), "partial clone is not supported") {
+				t.Errorf("Open = %v, want a refusal of a partial clone", err)
+			}
+		})
+	}
+
+	f := newFixture(t)
+	f.repo.Git("config", "remote.origin.promisor", "false")
+	open(t, f.repo.Dir(), git.Options{})
+}
+
+// TestNeverFetchesAMissingObject makes the repository a partial clone after
+// Open: reading the missing blob must fail without fetching it, on any
+// supported Git.
+func TestNeverFetchesAMissingObject(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the promisor command is a shell command")
+	}
+	f := newFixture(t)
+	r := open(t, f.repo.Dir(), git.Options{})
+	marker := makePartial(t, f)
+
+	if _, err := r.ListTree(context.Background(), f.first); err == nil {
+		t.Error("ListTree read the size of a missing blob")
+	}
+	err := r.ReadFiles(context.Background(), f.first, []string{"README.md"}, func(knowledge.File) error { return nil })
+	if err == nil {
+		t.Error("ReadFiles read a missing blob")
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("Git fetched the missing blob from the promisor remote")
+	}
+}
+
 // TestReadsDoNotWrite compares every file of the fixture, its .git directory
 // included, before and after reading.
 func TestReadsDoNotWrite(t *testing.T) {
