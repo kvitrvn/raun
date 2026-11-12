@@ -134,6 +134,22 @@ Evidence verification is pure: it takes the content the commit reader returns an
 
 A core test cannot import `internal/gittest` or `internal/golden`: `make architecture` checks test imports. Core tests build their inputs in memory.
 
+### Commit reader and sources
+
+Rules made explicit while implementing the commit reader and the classification (#11):
+
+- **The reader is bound to one repository.** `knowledge.CommitReader` has three operations, `ResolveRevision`, `ListTree` and `ReadFiles`, and none takes a repository: the adapter is opened on one directory, the top of a working tree or a bare repository, as a runner gets one repository per job (T15). A directory below the root is refused, so Git never looks above it.
+- **`ReadFiles` visits instead of returning.** It calls a function once per distinct path, in byte order, so memory holds one file at a time whatever the number of paths. Every requested path is visited, with what the commit holds there: a file with its content, a directory, a link, a submodule, or nothing. A link is never followed and a submodule never entered.
+- **No path reaches Git.** A path is checked by `knowledge.ValidatePath`, which refuses a path starting with a dash on top of the rules evidence paths already had, then looked up in the tree listing; Git receives the object name only, on the standard input of one `cat-file --batch`. The same rule applies to the `path` of an evidence, so an evidence citing `-x` is refused. Only the first byte counts: `dir/-x` is a valid path. A revision starting with a dash is refused, and the others are passed after `--end-of-options`.
+- **Three processes per read.** Reading the files of one commit checks the commit, lists its tree and reads the blobs: three processes whatever the number of files, two when no file has content to read. The tree is listed whole rather than with pathspecs, so that no path becomes an argument.
+- **Git runs in a controlled environment.** The environment is built from nothing; the user and system configuration are ignored; hooks, the file system monitor, the pager, lazy fetching and replacement objects are disabled on the command line, over the configuration of the repository. Every transport is denied by an empty `GIT_ALLOW_PROTOCOL`, which overrides a `protocol.<name>.allow` of the repository where `protocol.allow=never` does not. A partial clone is refused at `Open`: Git before 2.44 ignores `GIT_NO_LAZY_FETCH` and would fetch a missing object from the promisor remote, and Raun needs every file of the commit anyway. `safe.directory` is not relaxed: a repository owned by another user is refused, as Git refuses it. Git 2.32 or later is required, the first with `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM`.
+- **Bounds.** A file above 8 MiB is reported as too large, with no content; a tree above one million entries is refused with `knowledge.ErrTreeTooLarge`. Both are options of the adapter. `ReadFiles` holds one file at a time, but `ListTree` returns the whole tree sorted, so it holds every entry: about a hundred bytes each, some hundred megabytes at the bound.
+- **Binary.** A file is binary when its first 8000 bytes hold a NUL byte, the rule Git uses. `knowledge.IsBinary` states it in the core, so an in-memory reader gives the same answer.
+- **Sources keep the model of raun-old.** The context set lists exact paths, the documentation and exclusion sets list patterns, and the precedence is context, then exclusion, then documentation, then code: a context file stays human context inside an excluded directory. The default documentation patterns are raun-old's (`**/*.md`, `**/*.rst`, `**/*.adoc`, `**/*.txt`, `docs/**`); there is no default context or exclusion. `DefaultDocs` returns a new slice, and an empty documentation set means no documentation, so epic 8 decides how a configuration that omits the set maps to the default.
+- **Patterns are matched in linear time.** `**` is matched like a wildcard over segments, going back only to the last `**`, so a pattern from the repository configuration cannot make the match explode. A pattern that could match no clean path (empty, absolute, an empty, `.` or `..` segment, a malformed class) is refused, so a typo is not silently inert.
+
+`internal/gittest` lands with #11, whose adapter tests need it; `internal/golden` stays in #12.
+
 ### Evidence limits
 
 The maximum length of a citation stays 40 lines by default. It is a parameter of the verification, with that default; the repository configuration may change it from epic 8.
@@ -147,8 +163,8 @@ The invariant of `AGENTS.md` stands: every format read or written outside the da
 | Issue | Change |
 | --- | --- |
 | #10 | Revision counter instead of a canonical hash; `NewID` in the core; evidence reasons; the transition table of `docs/format.md`. |
-| #11 | The commit reader port in the core, its Git adapter in `internal/adapter/driven/git`. |
-| #12 | `internal/gittest` and `internal/golden`; core tests do not use them. |
+| #11 | The commit reader port and the source classification in the core, its Git adapter in `internal/adapter/driven/git`, and `internal/gittest`. |
+| #12 | `internal/golden`; `internal/gittest` landed with #11. Core tests use neither. |
 | #13 | Evidence reasons, `ambiguous` included; verification is pure and takes the maximum line count as a parameter. |
 | #14 | Driver, connection settings, migrations at start on a setting, scoping, the four port operations, the contract suite and the in-memory store in `knowledgetest`. |
 | #15 | Closed as not planned: no import. |
@@ -166,6 +182,9 @@ The invariant of `AGENTS.md` stands: every format read or written outside the da
 | Whether a citation that moved at a later commit is rewritten | Epic 7 review (#44) |
 | The repository setting for the maximum citation length | Epic 8 |
 | The canonical serialization of the export | Epic 11 |
+| The reason of an evidence whose file is above the size bound | #13 |
+| How the repository configuration maps an omitted documentation set to the default | Epic 8 |
+| The Git version shipped with the runner, and whether it owns its checkouts | Epic 6 |
 
 ## Exit criteria
 

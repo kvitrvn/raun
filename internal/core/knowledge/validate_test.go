@@ -83,6 +83,7 @@ func TestValidateReportsFieldPaths(t *testing.T) {
 		{"unclean path", func(it *Item) { it.Evidence[0].Path = "billing//invoice.go" }, "evidence[0].path"},
 		{"backslash path", func(it *Item) { it.Evidence[0].Path = `billing\invoice.go` }, "evidence[0].path"},
 		{"dot path", func(it *Item) { it.Evidence[0].Path = "." }, "evidence[0].path"},
+		{"path read as an option", func(it *Item) { it.Evidence[0].Path = "-c" }, "evidence[0].path"},
 		{"short commit", func(it *Item) { it.Evidence[0].Commit = "3f1c2a9" }, "evidence[0].commit"},
 		{"uppercase commit", func(it *Item) { it.Evidence[0].Commit = strings.ToUpper(testCommit) }, "evidence[0].commit"},
 		{"empty excerpt", func(it *Item) { it.Evidence[0].Excerpt = "" }, "evidence[0].excerpt"},

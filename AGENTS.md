@@ -22,6 +22,7 @@ cmd/raun/                  wiring and subcommands; run() is testable (args, stdo
 internal/core/<context>/   domain logic: standard library and its own context only
 internal/adapter/driven/   implementations of the ports: database, forge, sandbox, Git
 internal/adapter/driving/  entry points: HTTP server, webhooks, runner API
+internal/gittest/          test helper outside the core: fixture Git repositories
 scripts/                   repository checks called by the Makefile
 docs/                      product, architecture, threat model, implementation records
 ```
@@ -76,6 +77,7 @@ No production dependency yet.
 
 - Table-driven tests; `t.TempDir()` for filesystem work.
 - Never call a real LLM, a real forge or the network in tests.
+- Build the Git repositories a test needs with `internal/gittest`; core tests build their inputs in memory instead.
 - Test the CLI through `run()` in `cmd/raun`.
 - Cover error paths and boundaries, not only the happy path.
 

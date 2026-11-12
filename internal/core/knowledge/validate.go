@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"path"
 	"strings"
 	"time"
 )
@@ -332,24 +331,6 @@ func checkRefs(v *validator, at string, refs []string, evidence map[string]bool)
 			v.add(fmt.Sprintf("%s[%d]", at, k), "no evidence %q in this item", ref)
 		}
 	}
-}
-
-// checkPath returns why p is not a clean path relative to the repository root,
-// or an empty string.
-func checkPath(p string) string {
-	switch {
-	case p == "":
-		return "required"
-	case strings.HasPrefix(p, "/"):
-		return fmt.Sprintf("must be relative to the repository root, got %q", p)
-	case strings.ContainsAny(p, "\\\x00"):
-		return fmt.Sprintf("must use forward slashes only, got %q", p)
-	case path.Clean(p) != p || p == ".":
-		return fmt.Sprintf("must be a clean path, got %q", p)
-	case p == ".." || strings.HasPrefix(p, "../"):
-		return fmt.Sprintf("must stay inside the repository, got %q", p)
-	}
-	return ""
 }
 
 // isCommit reports whether s is a full SHA-1 or SHA-256 commit hash in
