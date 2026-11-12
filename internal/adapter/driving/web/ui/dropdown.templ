@@ -1,0 +1,124 @@
+package ui
+
+// Adapted from shadcn-templ v2.0.0-beta.16, components/dropdownmenu: the
+// data-slot names and the cn-dropdown-* classes are kept; the portal, the
+// sub-menus, the checkbox and radio items and the upstream JavaScript are
+// removed. The menu is a native popover: the trigger opens it without
+// script, a click outside or Escape closes it, and ../assets/app.js only
+// places it under its trigger and moves focus with the arrow keys.
+
+// DropdownTriggerProps configures the button that opens the menu For.
+type DropdownTriggerProps struct {
+	For    string
+	Button ButtonProps
+}
+
+templ DropdownTrigger(p DropdownTriggerProps) {
+	{{ b := p.Button }}
+	{{ b.Href = "" }}
+	{{ b.Attributes = with(b.Attributes, templ.Attributes{
+	"popovertarget": p.For,
+	"aria-haspopup": "menu",
+	"aria-controls": p.For,
+	"aria-expanded": "false",
+	"data-slot":     "dropdown-menu-trigger",
+}) }}
+	@Button(b) {
+		{ children... }
+	}
+}
+
+// DropdownContentProps configures the menu. Label is its accessible name.
+type DropdownContentProps struct {
+	ID    string
+	Label string
+	Class string
+}
+
+templ DropdownContent(p DropdownContentProps) {
+	<div
+		id={ p.ID }
+		popover="auto"
+		role="menu"
+		aria-label={ p.Label }
+		data-slot="dropdown-menu-content"
+		class={ classes("cn-dropdown-content", p.Class) }
+	>
+		{ children... }
+	</div>
+}
+
+// DropdownItemVariant is the look of an item.
+type DropdownItemVariant string
+
+const (
+	DropdownItemDefault     DropdownItemVariant = "default"
+	DropdownItemDestructive DropdownItemVariant = "destructive"
+)
+
+// DropdownItemProps configures an item: a link with Href, a button
+// otherwise, which submits Form when set.
+type DropdownItemProps struct {
+	Href       string
+	Variant    DropdownItemVariant
+	Disabled   bool
+	Form       string
+	Attributes templ.Attributes
+}
+
+func dropdownItemClasses(p DropdownItemProps) string {
+	variant := p.Variant
+	if variant == "" {
+		variant = DropdownItemDefault
+	}
+	return classes("cn-dropdown-item", "cn-dropdown-item-variant-"+string(variant), "aria-disabled:pointer-events-none aria-disabled:opacity-50")
+}
+
+templ DropdownItem(props ...DropdownItemProps) {
+	{{ var p DropdownItemProps }}
+	if len(props) > 0 {
+		{{ p = props[0] }}
+	}
+	if p.Href != "" && !p.Disabled {
+		<a href={ templ.URL(p.Href) } role="menuitem" data-slot="dropdown-menu-item" class={ dropdownItemClasses(p) } { p.Attributes... }>
+			{ children... }
+		</a>
+	} else {
+		<button
+			type={ submitWhen(p.Form != "") }
+			if p.Form != "" {
+				form={ p.Form }
+			}
+			role="menuitem"
+			data-slot="dropdown-menu-item"
+			class={ dropdownItemClasses(p) }
+			if p.Disabled {
+				aria-disabled="true"
+				disabled
+			}
+			{ p.Attributes... }
+		>
+			{ children... }
+		</button>
+	}
+}
+
+templ DropdownSeparator() {
+	<div role="separator" data-slot="dropdown-menu-separator" class="cn-dropdown-separator"></div>
+}
+
+templ DropdownLabel() {
+	<div role="presentation" data-slot="dropdown-menu-label" class="cn-dropdown-label">{ children... }</div>
+}
+
+// DropdownShortcut shows the key of an item.
+templ DropdownShortcut() {
+	<kbd data-slot="dropdown-menu-shortcut" class="cn-kbd">{ children... }</kbd>
+}
+
+func submitWhen(submit bool) string {
+	if submit {
+		return "submit"
+	}
+	return "button"
+}

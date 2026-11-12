@@ -1,0 +1,52 @@
+package ui
+
+import "strconv"
+
+// EmptyProps configures an empty state: what is missing, and optionally
+// the icon that stands for it.
+type EmptyProps struct {
+	Title       string
+	Description string
+	Icon        IconName
+}
+
+// Empty shows that a list has nothing yet; its children are the actions.
+templ Empty(p EmptyProps) {
+	<section data-slot="empty" class="cn-card flex flex-col items-center gap-3.5 px-8 py-14 text-center" aria-label={ p.Title }>
+		if p.Icon != "" {
+			<span class="grid size-14 place-items-center rounded-full bg-muted text-muted-foreground">
+				@Icon(p.Icon, IconProps{Class: "size-6"})
+			</span>
+		}
+		<h2 class="text-[17px] font-semibold">{ p.Title }</h2>
+		if p.Description != "" {
+			<p class="max-w-prose text-[13.5px] text-muted-foreground">{ p.Description }</p>
+		}
+		{ children... }
+	</section>
+}
+
+// ErrorProps configures an error state.
+type ErrorProps struct {
+	Status    int
+	Title     string
+	Message   string
+	BackHref  string
+	BackLabel string
+}
+
+// ErrorState explains a failed request in a card.
+templ ErrorState(p ErrorProps) {
+	<section data-slot="error" class="cn-card flex flex-col items-start gap-2.5 px-7 py-6" aria-labelledby="error-title">
+		@Badge(BadgeProps{Variant: BadgeDanger}) {
+			{ strconv.Itoa(p.Status) }
+		}
+		<h1 id="error-title" class="text-[17px] font-semibold">{ p.Title }</h1>
+		if p.Message != "" {
+			<p class="text-[13.5px] text-muted-foreground">{ p.Message }</p>
+		}
+		if p.BackHref != "" {
+			<a class="text-[13.5px] font-medium text-primary-ink hover:underline" href={ templ.URL(p.BackHref) }>{ p.BackLabel }</a>
+		}
+	</section>
+}

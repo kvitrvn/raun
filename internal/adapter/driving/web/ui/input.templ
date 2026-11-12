@@ -1,0 +1,91 @@
+package ui
+
+// Adapted from shadcn-templ v2.0.0-beta.16, components/input/input.templ: the
+// data-slot and the cn-input class are kept; the class-merging helper is
+// removed, and Field, a label with its error, is Raun's.
+
+// InputProps configures a text input. Invalid marks it aria-invalid and,
+// unless DescribedBy says otherwise, points it at the error of its Field,
+// whose id is the input's id followed by -error.
+type InputProps struct {
+	ID           string
+	Name         string
+	Type         string
+	Value        string
+	Placeholder  string
+	Autocomplete string
+	Class        string
+	Attributes   templ.Attributes
+	Disabled     bool
+	Required     bool
+	Invalid      bool
+	DescribedBy  string
+}
+
+func (p InputProps) describedBy() string {
+	if p.DescribedBy != "" {
+		return p.DescribedBy
+	}
+	if p.Invalid && p.ID != "" {
+		return p.ID + "-error"
+	}
+	return ""
+}
+
+templ Input(props ...InputProps) {
+	{{ var p InputProps }}
+	if len(props) > 0 {
+		{{ p = props[0] }}
+	}
+	if p.Type == "" {
+		{{ p.Type = "text" }}
+	}
+	<input
+		if p.ID != "" {
+			id={ p.ID }
+		}
+		if p.Name != "" {
+			name={ p.Name }
+		}
+		type={ p.Type }
+		if p.Value != "" {
+			value={ p.Value }
+		}
+		if p.Placeholder != "" {
+			placeholder={ p.Placeholder }
+		}
+		if p.Autocomplete != "" {
+			autocomplete={ p.Autocomplete }
+		}
+		data-slot="input"
+		class={ classes("cn-input w-full min-w-0 outline-none placeholder:text-faint-foreground disabled:cursor-not-allowed disabled:opacity-50", p.Class) }
+		disabled?={ p.Disabled }
+		required?={ p.Required }
+		if p.Invalid {
+			aria-invalid="true"
+		}
+		if p.describedBy() != "" {
+			aria-describedby={ p.describedBy() }
+		}
+		{ p.Attributes... }
+	/>
+}
+
+// FieldProps configures a field: For is the id of the control inside it.
+type FieldProps struct {
+	For   string
+	Label string
+	Error string
+	Class string
+}
+
+// Field wraps a control with its label and, when set, its error message.
+templ Field(p FieldProps) {
+	<div data-slot="field" class={ classes("cn-field", p.Class) }>
+		<label class="cn-field-label" for={ p.For }>{ p.Label }</label>
+		{ children... }
+		if p.Error != "" {
+			<p class="cn-field-error" id={ p.For + "-error" }>{ p.Error }</p>
+		}
+	</div>
+}

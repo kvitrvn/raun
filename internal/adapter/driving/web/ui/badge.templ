@@ -1,0 +1,56 @@
+package ui
+
+// Adapted from shadcn-templ v2.0.0-beta.16, components/badge/badge.templ:
+// the data-slot and the cn-badge-* classes are kept; the class-merging helper
+// and the link form are removed, and the variants follow Raun's tones.
+
+// BadgeVariant is the look of a badge. The tones (info, warning, success,
+// danger) carry a status; the text inside always names it, so the colour is
+// never the only signal.
+type BadgeVariant string
+
+const (
+	BadgeDefault BadgeVariant = "default"
+	BadgePrimary BadgeVariant = "primary"
+	BadgeMono    BadgeVariant = "mono"
+	BadgeOutline BadgeVariant = "outline"
+	BadgeInfo    BadgeVariant = "info"
+	BadgeWarning BadgeVariant = "warning"
+	BadgeSuccess BadgeVariant = "success"
+	BadgeDanger  BadgeVariant = "danger"
+)
+
+// BadgeProps configures a badge.
+type BadgeProps struct {
+	ID         string
+	Class      string
+	Attributes templ.Attributes
+	Variant    BadgeVariant
+}
+
+const badgeBase = "cn-badge inline-flex w-fit shrink-0 items-center whitespace-nowrap"
+
+func badgeClasses(p BadgeProps) string {
+	variant := p.Variant
+	if variant == "" {
+		variant = BadgeDefault
+	}
+	return classes(badgeBase, "cn-badge-variant-"+string(variant), p.Class)
+}
+
+templ Badge(props ...BadgeProps) {
+	{{ var p BadgeProps }}
+	if len(props) > 0 {
+		{{ p = props[0] }}
+	}
+	<span
+		if p.ID != "" {
+			id={ p.ID }
+		}
+		data-slot="badge"
+		class={ badgeClasses(p) }
+		{ p.Attributes... }
+	>
+		{ children... }
+	</span>
+}

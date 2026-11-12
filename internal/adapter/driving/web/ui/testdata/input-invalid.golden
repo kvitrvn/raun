@@ -1,0 +1,1 @@
+<input id="reason" name="reason" type="text" data-slot="input" class="cn-input w-full min-w-0 outline-none placeholder:text-faint-foreground disabled:cursor-not-allowed disabled:opacity-50" aria-invalid="true" aria-describedby="reason-error">

@@ -1,0 +1,41 @@
+package ui
+
+// Tone is the kind of a message.
+type Tone string
+
+const (
+	ToneInfo    Tone = "info"
+	ToneSuccess Tone = "success"
+	ToneDanger  Tone = "danger"
+)
+
+// Flash is a message shown once, at the top of the page.
+type Flash struct {
+	Tone    Tone
+	Message string
+}
+
+// Toast shows a flash message. An error is an alert, read out at once; the
+// others are polite status messages.
+templ Toast(f Flash) {
+	<div
+		data-slot="toast"
+		data-tone={ string(f.Tone) }
+		class="cn-toast"
+		if f.Tone == ToneDanger {
+			role="alert"
+		} else {
+			role="status"
+		}
+	>
+		switch f.Tone {
+			case ToneSuccess:
+				@Icon(IconDiscCheck, IconProps{Class: "text-success"})
+			case ToneDanger:
+				@Icon(IconDiscAlert, IconProps{Class: "text-danger"})
+			default:
+				@Icon(IconDiscDot, IconProps{Class: "text-info"})
+		}
+		<span class="flex-1">{ f.Message }</span>
+	</div>
+}
