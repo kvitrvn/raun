@@ -213,3 +213,29 @@ func TestExcerptSHA256(t *testing.T) {
 		t.Errorf("ExcerptSHA256(abc) = %s", got)
 	}
 }
+
+func TestReasonGoesWithState(t *testing.T) {
+	// Reasons that describe the citation itself hold at the cited commit only.
+	atCitedCommitOnly := map[Reason]bool{ReasonTooLong: true, ReasonBadRange: true}
+	reasons := []Reason{ReasonNotFound, ReasonAmbiguous, ReasonMissingFile, ReasonNotRegular,
+		ReasonBinary, ReasonTooLarge, ReasonTooLong, ReasonBadRange}
+	for _, r := range reasons {
+		if !r.Valid() {
+			t.Errorf("%s is not valid", r)
+		}
+		if !r.allows(EvidenceInvalid) {
+			t.Errorf("%s refused with invalid", r)
+		}
+		if r.allows(EvidenceStale) == atCitedCommitOnly[r] {
+			t.Errorf("%s with stale: allowed = %v", r, r.allows(EvidenceStale))
+		}
+		for _, s := range []EvidenceState{EvidenceVerified, EvidenceRelocated} {
+			if r.allows(s) {
+				t.Errorf("%s allowed with %s", r, s)
+			}
+		}
+	}
+	if Reason("too-big").Valid() {
+		t.Error("an unknown reason is valid")
+	}
+}
