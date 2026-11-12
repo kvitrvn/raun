@@ -161,6 +161,9 @@ func TestCompareReportsAReadError(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("file modes do not deny reading on Windows")
 	}
+	// Root reads a file whatever its mode, so the branch is covered only for
+	// another user, as in CI. Injecting the read for this one branch is not
+	// worth a seam in the helper.
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a file whatever its mode")
 	}
@@ -251,7 +254,8 @@ func TestRefusedPaths(t *testing.T) {
 		for _, tt := range tests {
 			r := &recorder{TB: t}
 			equal(r, tt.path, []byte("x"), update)
-			r.failed(t, tt.path, tt.want)
+			// Messages name the path with the separator of the system.
+			r.failed(t, filepath.FromSlash(tt.path), tt.want)
 		}
 	}
 	entries, err := os.ReadDir("testdata")
