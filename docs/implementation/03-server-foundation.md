@@ -66,7 +66,7 @@ The variables of epic 3, read by `raun server` only. Each has a default and a ru
 
 Rules that hold for every variable, of this epic and the next:
 
-- **The catalogue grows by epic.** Epic 4 adds the forge credentials of the instance (#25, named by its review #23), and `RAUN_ADMINS`, `RAUN_SECRET_KEY` and `RAUN_SECRET_KEY_PREVIOUS` with #21, each secret with its `_FILE` form; until then they are unknown, like any variable a later epic defines.
+- **The catalogue grows by epic.** Epic 4 adds the forge credentials of the instance (#25, named by its review #23), `RAUN_SECRET_KEY` and `RAUN_SECRET_KEY_PREVIOUS` with #26, which stores the first secrets, `RAUN_SIGNUP_USERS` and `RAUN_SIGNUP_ORGS` with #26, and `RAUN_ADMINS` with #21, each secret with its `_FILE` form; until then they are unknown, like any variable a later epic defines.
 - **Unknown variables stop the server.** A variable whose name starts with `RAUN_` and that the server does not know stops it at startup, so a typo is never silently ignored (#18). The variables of the runner start with `RAUN_RUNNER_` and are ignored by the server, so one environment can hold both. A tool of the repository, such as the generation script of #19, reads no `RAUN_*` variable.
 - **Secrets from files.** A secret variable `RAUN_<NAME>` can also be given as a file, `RAUN_<NAME>_FILE`; setting both is an error (epic 1). Epic 3 defines no secret variable; the first ones are the forge credentials of epic 4.
 - **The effective configuration** is logged once at startup, each secret replaced by `[redacted]` whether set or not.
@@ -119,7 +119,7 @@ These answer T11. They apply to every route by default; a route opts out only by
 
 - **Cross-origin protection.** `http.CrossOriginProtection` from the standard library, on every route: a non-safe request whose `Sec-Fetch-Site` is `cross-site` or `same-site` is refused with `403`, and one with `same-origin` or `none` is accepted without reading `Origin`. Only when `Sec-Fetch-Site` is absent, an `Origin` whose host differs from `Host` is refused. A request with neither header is allowed, as a non-browser client or a browser too old to send them; the CSRF token covers it.
 - **CSRF token.** Each session has a token of 32 random bytes, distinct from its identifier, stored in clear in its row and replaced together with the identifier. Every non-safe request on a route that uses a session must carry it, as the form field `csrf` or the header `X-CSRF-Token`; it is compared in constant time, and a missing or wrong token is refused with `403`. HTMX sends the header on every request through `hx-headers` on `<body>`, an attribute the Content Security Policy allows; forms also carry the hidden field, so they work without JavaScript.
-- **Safe methods change nothing.** `GET`, `HEAD` and `OPTIONS` never change state, since every protection above lets them through.
+- **Safe methods change nothing.** `GET`, `HEAD` and `OPTIONS` never change state, since every protection above lets them through. The one exception is the login of epic 4, whose flow the forge drives with top-level `GET` requests: `GET /login` gives a browser without an account a session and a login state, and `GET /login/callback` renews that session and attaches the account, only with the single-use state issued to that same session. `GET /login` never replaces or downgrades a session that already has an account ([epic 4 record](04-forge-port-and-identity.md#accounts-and-login)).
 - **Rendering.** Repository text, agent output and logs are rendered as escaped text by templ (T13). `templ.Raw` is refused everywhere by a test of `make verify`, whatever name templ is imported under; icons are written as markup, so there is no exception.
 
 Security headers on every response, pages, fragments and errors alike:
@@ -186,10 +186,10 @@ Rules made explicit while implementing them (#20):
 
 There are no passwords and no local accounts (#16): the administrators are forge accounts, listed in the configuration.
 
-- **`RAUN_ADMINS`**, a comma-separated list of forge accounts, empty by default. A listed account is an administrator; the role is evaluated at each login and each request, never stored, so removing an account from the list removes the role at its next request. An empty list is valid: the instance runs, and nobody reaches the administration screens.
+- **`RAUN_ADMINS`**, a comma-separated list of forge identities, `<forge>:<stable identifier>` such as `github:583231` (epic 4), empty by default. A listed account is an administrator; the role is evaluated at each login and each request, never stored, so removing an account from the list removes the role at its next request. An empty list is valid: the instance runs, and nobody reaches the administration screens.
 - **No bootstrap.** There is no first-administrator step, token or first-login rule, so there is no second bootstrap to refuse and no default credential. The administrator is whoever the person who deploys the instance names.
 - **What the role grants.** Configuring the instance and, later, registering runners. Nothing on repository data: viewing and deciding come from the forge (T10).
-- **What epic 4 decides.** The form of an entry (forge and login, or a stable forge identifier). A login can be renamed and then taken by someone else, so epic 4 matches on an identifier that does not change when the forge has one.
+- **The form of an entry**, decided by the epic 4 review: the forge and the stable identifier it gives the person, never a login, which can be renamed and then taken by someone else ([record](04-forge-port-and-identity.md#accounts-and-login)).
 
 ### Instance settings
 
@@ -230,7 +230,7 @@ Rules made explicit while implementing the server (#18):
 | The encryption of stored secrets | Epic 4 (#26, with the first stored tokens) |
 | The first stored instance setting | The epic whose feature needs one |
 | The `_FILE` form of a variable and the secret type of the configuration | Epic 4 (#26), with its first secret variable |
-| The bypass and authentication of webhooks | Epic 5 (#30) |
+| The bypass and authentication of webhooks | Epic 5 review (#30) |
 | The bypass and authentication of the runner API | Epic 6 |
 | How an upgrade is run, and the retention of logs | Epic 13 |
 
@@ -241,7 +241,7 @@ Rules made explicit while implementing the server (#18):
 | #18 | The variables, startup order, `RAUN_DATABASE_MIGRATE` instead of a command or flag, limits, shutdown and `SIGHUP`, logs and their forbidden fields, `/healthz` and `/readyz`, the Host check and TLS. |
 | #19 | `docs/web.md` pins, copied components, templ as a tool and a dependency, the stale check without network, content-hashed assets, licenses, embedded fonts, the `templ.Raw` check. |
 | #20 | `internal/core/session`, the `0002_sessions.sql` migration, lifetimes, renewal, revocation, cookie attributes, `http.CrossOriginProtection`, the token field and header, the security headers. |
-| #21 | Moved to epic 4 and rescoped: the `RAUN_ADMINS` check once accounts exist, the read-only Instance settings screen, the encryption of stored secrets with their first consumer. No bootstrap. |
+| #21 | Moved to epic 4 and rescoped: the `RAUN_ADMINS` check once accounts exist, the read-only Instance settings screen. No bootstrap. The encryption of stored secrets moved to #26, which stores the first ones (epic 4 review). |
 | #16 | Scope and exit criteria without the administrator and the instance settings. |
 
 ## Exit criteria

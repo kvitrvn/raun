@@ -11,7 +11,7 @@ Raun reaches a forge through one port: a small set of operations every adapter i
 | Login | Yes | Authorization URL with state and PKCE; exchange of a code for the identity and the tokens of a person; refresh of a token | Epic 4 (#26) | — |
 | Repositories | Yes | The repositories a person can reach through Raun | Epic 4, epic 5 (#31) | — |
 | Permission | Yes | The permission of a person on a repository | Epic 4 (#28) | — |
-| Membership | No | Whether a person belongs to an organization | Epic 4 (#26), for `RAUN_SIGNUP_ORGS` | The server refuses to start with `RAUN_SIGNUP_ORGS` set for that forge |
+| Membership | No | Whether a person belongs to an organization | Epic 4 (#26), for `RAUN_SIGNUP_ORGS` | An entry of `RAUN_SIGNUP_ORGS` naming an organization of that forge stops the server at start |
 | Files | No | Read files of a repository at a commit | Epic 5 (#33) | The repository cannot be activated |
 | Clone credential | No | A short-lived credential to clone one repository | Epic 6 | The repository cannot be activated |
 | Webhooks | No | Activate and deactivate the events of a repository | Epic 5 (#31) | The repository cannot be activated |
