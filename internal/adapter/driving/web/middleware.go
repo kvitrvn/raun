@@ -62,9 +62,31 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
-// Unwrap lets http.ResponseController reach the connection's writer.
+// FlushError sends what is buffered. A flush commits the header, a 200 if
+// none was written, so it is recorded as one: a panic after it must abort the
+// response, not answer a 500 on top of it.
+func (w *statusWriter) FlushError() error {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return http.NewResponseController(w.ResponseWriter).Flush()
+}
+
+// Unwrap lets http.ResponseController reach the connection's writer for what
+// statusWriter does not handle itself.
 func (w *statusWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
+}
+
+// connWriter returns the writer net/http gave, below every wrapper.
+func connWriter(w http.ResponseWriter) http.ResponseWriter {
+	for {
+		u, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return w
+		}
+		w = u.Unwrap()
+	}
 }
 
 // logRequests gives each request a new identifier, in its context and in the
@@ -160,7 +182,10 @@ func (s *Server) checkHost(next http.Handler) http.Handler {
 // answers with 413 through IsBodyTooLarge.
 func limitBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, MaxBodyBytes)
+		// MaxBytesReader marks the connection to close after the reply
+		// through a method of net/http's own writer, which it does not
+		// look for below a wrapper.
+		r.Body = http.MaxBytesReader(connWriter(w), r.Body, MaxBodyBytes)
 		next.ServeHTTP(w, r)
 	})
 }

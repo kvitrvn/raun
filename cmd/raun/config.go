@@ -196,7 +196,7 @@ func parsePublicURL(c *config, value string) error {
 	if err != nil {
 		return fmt.Errorf("%q: %w", value, err)
 	}
-	if u.Scheme == "http" && !isLoopback(u.Hostname()) {
+	if u.Scheme == "http" && !isLoopback(strings.TrimSuffix(u.Hostname(), ".")) {
 		return fmt.Errorf("%q: http is allowed on a loopback address only; use https", value)
 	}
 	c.publicURL = &url.URL{Scheme: u.Scheme, Host: u.Host}

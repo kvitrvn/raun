@@ -117,6 +117,11 @@ func TestLoadConfigValues(t *testing.T) {
 				t.Errorf("publicHost = %q", c.publicHost)
 			}
 		}},
+		{"http on localhost, fully qualified", []string{"RAUN_PUBLIC_URL=http://localhost.:8080"}, func(t *testing.T, c config) {
+			if c.publicHost != "localhost:8080" {
+				t.Errorf("publicHost = %q", c.publicHost)
+			}
+		}},
 		{"http on ::1", []string{"RAUN_PUBLIC_URL=http://[::1]"}, func(t *testing.T, c config) {
 			if c.publicHost != "[::1]" {
 				t.Errorf("publicHost = %q", c.publicHost)

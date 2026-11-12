@@ -414,20 +414,74 @@ func TestPanicRecovery(t *testing.T) {
 }
 
 func TestPanicAfterTheResponseStartedAbortsIt(t *testing.T) {
-	s, logs := newTestServer(t, nil)
-	handle(s.app, "GET /partial", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, "partial")
-		if err := http.NewResponseController(w).Flush(); err != nil {
-			t.Errorf("Flush: %v", err)
-		}
-		panic("late")
-	}))
-	srv := httptest.NewUnstartedServer(s)
-	srv.Config.ErrorLog = log.New(io.Discard, "", 0)
-	srv.Start()
-	defer srv.Close()
+	tests := []struct {
+		name  string
+		write string // written before the flush, if any
+	}{
+		{"after a write", "partial"},
+		{"after a flush alone", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, logs := newTestServer(t, nil)
+			handle(s.app, "GET /partial", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tt.write != "" {
+					_, _ = io.WriteString(w, tt.write)
+				}
+				if err := http.NewResponseController(w).Flush(); err != nil {
+					t.Errorf("Flush: %v", err)
+				}
+				panic("late")
+			}))
+			srv := httptest.NewUnstartedServer(s)
+			srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+			srv.Start()
+			defer srv.Close()
 
-	req, err := http.NewRequest(http.MethodGet, srv.URL+"/partial", nil)
+			req, err := http.NewRequest(http.MethodGet, srv.URL+"/partial", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Host = testHost
+			resp, err := srv.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want the 200 already sent", resp.StatusCode)
+			}
+			body, err := io.ReadAll(resp.Body)
+			if err == nil {
+				t.Fatalf("the client read %q as a complete body", body)
+			}
+			if string(body) != tt.write {
+				t.Errorf("body read before the abort = %q, want %q", body, tt.write)
+			}
+			// The panic and the request are both logged. Close waits for
+			// the handler, whose deferred calls write them.
+			srv.Close()
+			recs := records(t, logs)
+			access := find(recs, "request")
+			if len(find(recs, "panic")) != 1 || len(access) != 1 || access[0]["status"] != float64(200) {
+				t.Errorf("records = %v", recs)
+			}
+		})
+	}
+}
+
+func TestBodyLimitClosesTheConnection(t *testing.T) {
+	s, _ := newTestServer(t, nil)
+	handle(s.app, "POST /upload", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(io.Discard, r.Body); IsBodyTooLarge(err) {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	srv := httptest.NewServer(s)
+	defer srv.Close()
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/upload", bytes.NewReader(make([]byte, MaxBodyBytes+1)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -436,23 +490,9 @@ func TestPanicAfterTheResponseStartedAbortsIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want the 200 already sent", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err == nil {
-		t.Fatalf("the client read %q as a complete body", body)
-	}
-	if string(body) != "partial" {
-		t.Errorf("body read before the abort = %q", body)
-	}
-	// The panic and the request are both logged. Close waits for the
-	// handler, whose deferred calls write them.
-	srv.Close()
-	recs := records(t, logs)
-	if len(find(recs, "panic")) != 1 || len(find(recs, "request")) != 1 {
-		t.Errorf("records = %v", recs)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusRequestEntityTooLarge || !resp.Close {
+		t.Errorf("status = %d, close = %v; want 413 and the connection closed", resp.StatusCode, resp.Close)
 	}
 }
 
