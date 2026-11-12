@@ -3,10 +3,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"runtime/debug"
+	"syscall"
 )
 
 // Exit codes of run.
@@ -23,7 +26,7 @@ Usage:
   raun <command>
 
 Commands:
-  server    Run the Raun server (not implemented yet)
+  server    Run the Raun server, configured by RAUN_* variables (see README.md)
   runner    Run a Raun runner (not implemented yet)
   version   Print the version
   help      Print this help
@@ -47,7 +50,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "version":
 		fmt.Fprintln(stdout, versionLine(readBuildInfo()))
 		return exitOK
-	case "server", "runner":
+	case "server":
+		if len(args) > 1 {
+			fmt.Fprintf(stderr, "raun server: takes no arguments; it reads RAUN_* variables\n\n%s", usage)
+			return exitUsage
+		}
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return runServer(ctx, os.Environ(), stderr, serverDeps{})
+	case "runner":
 		fmt.Fprintf(stderr, "raun %s: not implemented yet\n", args[0])
 		return exitNotImplemented
 	default:

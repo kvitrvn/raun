@@ -45,10 +45,10 @@ func TestRun(t *testing.T) {
 			wantStdout: []string{"raun "},
 		},
 		{
-			name:       "server is not implemented",
-			args:       []string{"server"},
-			wantCode:   exitNotImplemented,
-			wantStderr: []string{"raun server: not implemented yet"},
+			name:       "server takes no arguments",
+			args:       []string{"server", "--port", "80"},
+			wantCode:   exitUsage,
+			wantStderr: []string{"raun server: takes no arguments", "Usage:"},
 		},
 		{
 			name:       "runner is not implemented",
