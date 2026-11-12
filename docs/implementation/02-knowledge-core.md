@@ -160,6 +160,19 @@ Rules made explicit while implementing the golden-file helper (#12):
 
 The maximum length of a citation stays 40 lines by default. It is a parameter of the verification, with that default; the repository configuration may change it from epic 8.
 
+### Evidence verification
+
+Decided by the owner on 2026-11-12 (#13): a citation whose file is larger than the reader reads gets a new reason, `too-large`, allowed with `invalid` and `stale` like `missing-file`. Its content was not read, so `binary` or `not-found` would not be true, and failing the whole check would let one citation of a large file block every other. The reason is a value of the item document, which has no `version` field and holds no stored data yet (#14 is not merged), so nothing is migrated.
+
+Rules made explicit while implementing it (#13):
+
+- **A verifier on the port.** `knowledge.Verifier` is built once from a `CommitReader` and the maximum number of lines (0 for the default of 40, a negative value refused). `Integrity` checks evidence at the commits they cite, `Freshness` at a later commit. Both take the time of the check from the caller, return new evidence in the order given and never change the input. They read each commit once, through one `ReadFiles` call with the distinct paths, normalize each file once, and decide every citation of a file while it is visited, so one file is held at a time. The caller picks the later commit of a freshness check; the verifier cannot tell whether it comes after the cited ones. An error means the check could not run (an invalid input, an unknown commit, a tree above the bound, a canceled context); it never stands for a state.
+- **The order of integrity.** A range that starts before line 1 or is reversed is `bad-range` whatever the content (the file is still read and normalized, in the one call for its commit); then a citation longer than the maximum is `too-long`; then the file gives `missing-file`, `not-regular`, `too-large` or `binary`; then a range past the last line is `bad-range`. A range that is both reversed and long is `bad-range`, since the model keeps the range of a `bad-range` citation only.
+- **What the maximum counts.** Both the cited range and the excerpt without its blank ends; either one above the maximum is `too-long`. Freshness does not apply it: the maximum was checked at integrity and may change with the repository configuration (epic 8).
+- **What blank means.** Only spaces and tabs, as `docs/format.md` says; raun-old also collapsed every Unicode space. Normalization works on bytes, so every other byte is compared as it is: two lines that differ in an invalid UTF-8 byte still differ, where decoding them would have made both U+FFFD. An excerpt must be valid UTF-8, which item validation now checks and the verifier refuses as an input error: it travels in JSON, which would replace invalid bytes. Such an excerpt fails the whole call, like a bad path or commit, since no item may hold it; a file the reader could not read, such as a too-large one, is a reason of one citation instead. A line of the file that is not valid UTF-8 therefore matches no excerpt and its citation is `not-found`. Blank lines are dropped at both ends of the excerpt and of the cited range, and kept inside them. An excerpt that is blank once normalized is found nowhere: `not-found`.
+- **A match at the cited lines wins.** An excerpt at the cited lines is `verified` even if it also appears elsewhere. Otherwise its occurrences are counted, overlapping ones included: one is a relocation, two or more are `ambiguous`. A relocation corrects the lines to the occurrence without its blank ends, and never changes the excerpt or its hash.
+- **Freshness gives verified or stale.** A `relocated` evidence that holds at a later commit becomes `verified`, as the table of states says; its corrected lines stay. An `invalid` evidence is returned as it is and its file is not read. An evidence without a state is refused.
+
 ### Format versions
 
 The invariant of `AGENTS.md` stands: every format read or written outside the database carries a `version` field, and the database schema is versioned by its migrations. The table is in [docs/format.md](../format.md#format-versions). A format with an unknown version is refused.
@@ -171,7 +184,7 @@ The invariant of `AGENTS.md` stands: every format read or written outside the da
 | #10 | Revision counter instead of a canonical hash; `NewID` in the core; evidence reasons; the transition table of `docs/format.md`. |
 | #11 | The commit reader port and the source classification in the core, its Git adapter in `internal/adapter/driven/git`, and `internal/gittest`. |
 | #12 | `internal/golden`; `internal/gittest` landed with #11. Core tests use neither. |
-| #13 | Evidence reasons, `ambiguous` included; verification is pure and takes the maximum line count as a parameter. |
+| #13 | Evidence reasons, `ambiguous` and `too-large` included; verification is pure and takes the maximum line count as a parameter. |
 | #14 | Driver, connection settings, migrations at start on a setting, scoping, the four port operations, the contract suite and the in-memory store in `knowledgetest`. |
 | #15 | Closed as not planned: no import. |
 | #8, #43, #44, #45, #79 | Mentions of an import removed. |
@@ -188,7 +201,6 @@ The invariant of `AGENTS.md` stands: every format read or written outside the da
 | Whether a citation that moved at a later commit is rewritten | Epic 7 review (#44) |
 | The repository setting for the maximum citation length | Epic 8 |
 | The canonical serialization of the export | Epic 11 |
-| The reason of an evidence whose file is above the size bound | #13 |
 | How the repository configuration maps an omitted documentation set to the default | Epic 8 |
 | The Git version shipped with the runner, and whether it owns its checkouts | Epic 6 |
 
@@ -196,6 +208,6 @@ The invariant of `AGENTS.md` stands: every format read or written outside the da
 
 - [x] This page records the choices.
 - [ ] A test stores items, updates them with a revision check and refuses a stale revision (#14).
-- [ ] A test verifies, relocates and invalidates citations, an ambiguous one included, on a fixture repository (#11, #13).
+- [x] A test verifies, relocates and invalidates citations, an ambiguous one included, on a fixture repository (#11, #13): `TestVerifyOnARepository` in `internal/adapter/driven/git/verify_test.go`.
 - [ ] The store contract suite passes on SQLite and on the in-memory store, and proves that one repository cannot read another (#14).
 - [ ] `make verify` passes.

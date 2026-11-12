@@ -127,6 +127,7 @@ const (
 	ReasonMissingFile Reason = "missing-file"
 	ReasonNotRegular  Reason = "not-regular"
 	ReasonBinary      Reason = "binary"
+	ReasonTooLarge    Reason = "too-large"
 	ReasonTooLong     Reason = "too-long"
 	ReasonBadRange    Reason = "bad-range"
 )
@@ -135,7 +136,7 @@ const (
 func (r Reason) Valid() bool {
 	switch r {
 	case ReasonNotFound, ReasonAmbiguous, ReasonMissingFile, ReasonNotRegular,
-		ReasonBinary, ReasonTooLong, ReasonBadRange:
+		ReasonBinary, ReasonTooLarge, ReasonTooLong, ReasonBadRange:
 		return true
 	}
 	return false

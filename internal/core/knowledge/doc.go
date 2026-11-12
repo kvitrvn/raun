@@ -1,7 +1,7 @@
 // Package knowledge is the knowledge core of Raun: the model of a knowledge
 // item, its validation, its identifiers and its status transitions, the
-// classification of repository paths into sources, and the port through which
-// it reads a repository at a commit.
+// classification of repository paths into sources, the port through which it
+// reads a repository at a commit, and the verification of evidence against it.
 //
 // The model is specified in docs/format.md, and the choices behind it in
 // docs/implementation/02-knowledge-core.md. This package implements both and
@@ -15,6 +15,12 @@
 // documentation patterns, whose only syntax beyond path.Match is a whole **
 // segment. It works on paths alone and never asks whether a file exists.
 //
+// A Verifier checks evidence without any LLM: Integrity at the commit a
+// citation was made at, Freshness at a later commit. It reads files through a
+// CommitReader only, one call per commit, takes the time of the check from the
+// caller, and never changes an excerpt, its hash or, at freshness, the stored
+// commit and lines.
+//
 // Every operation (New, AppendFromRun, Decide, Reopen, ResolveOpenPoint,
 // MarkNeedsReview) takes the time and the actor as arguments, works on a copy
 // of the item, validates the result and returns it. On error the input is left
@@ -23,7 +29,8 @@
 // event.
 //
 // What this package does not do:
-//   - verify a citation against the code (evidence verification, #13);
+//   - decide which commit to check, or record the result: the callers do,
+//     on a push or a pull request (epic 7) and after an analysis (epic 10);
 //   - read the repository configuration: the source sets are given by the
 //     caller, and DefaultDocs stands in until epic 8;
 //   - store items or check that the personas a requirement names exist (#14);

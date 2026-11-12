@@ -1,6 +1,6 @@
 # Knowledge format
 
-> Status: decided by the [epic 2 review](implementation/02-knowledge-core.md) (#9). The item model, its validation, its identifiers and its transitions are implemented in `internal/core/knowledge` (#10), and so are the classification of sources and the reading of a commit (#11). Evidence verification (#13) and storage (#14) are not implemented yet: for them, this page is the specification.
+> Status: decided by the [epic 2 review](implementation/02-knowledge-core.md) (#9). The item model, its validation, its identifiers and its transitions are implemented in `internal/core/knowledge` (#10), and so are the classification of sources, the reading of a commit (#11) and evidence verification (#13). Storage (#14) is not implemented yet: for it, this page is the specification.
 
 This page defines a knowledge item: its fields, its statuses and who may change them, its evidence and how Raun verifies it, and the versions of Raun's formats. The model is the one of raun-old (`docs/format.md` at `330e634`), stored in a database instead of YAML files.
 
@@ -62,8 +62,8 @@ A later run appends support; it never changes an existing entry.
 | `path` | Clean path relative to the repository root, see [Paths](#paths). |
 | `commit` | Full hash of the commit the citation was made at. |
 | `start_line`, `end_line` | 1-based, inclusive. |
-| `excerpt` | The cited lines. |
-| `sha256` | Hex SHA-256 of `excerpt`. |
+| `excerpt` | The cited lines, as UTF-8 text. |
+| `sha256` | Hex SHA-256 of `excerpt`, as UTF-8 text, the way it travels. |
 | `state` | Set by Raun, never by an agent. See [Evidence states](#evidence-states). |
 | `reason` | Why the evidence has no ground, see the table below. Required for `invalid` and `stale`, empty for `verified` and `relocated`. |
 | `checked_at`, `checked_commit` | When and at which commit the state was last computed. |
@@ -176,13 +176,15 @@ Raun reads a commit without a checkout and reports what it holds at a path. The 
 | A directory, a symbolic link or a submodule; a link is never followed | `not-regular` |
 | A regular file with a NUL byte in its first 8000 bytes, the rule Git uses | `binary` |
 
-A regular file larger than the reader reads (8 MiB by default) is reported as too large, with no content. Which reason it gives is decided with evidence verification (#13).
+A regular file larger than the reader reads (8 MiB by default) is reported as too large, with no content, and gives the reason `too-large`: its content was not read, so it can be neither found nor called binary.
 
 ## Evidence states
 
 Raun checks evidence without any LLM, against the content of the repository at a commit.
 
-The excerpt must equal the cited lines, as whole lines. Before comparing, CRLF is read as LF, runs of spaces and tabs count as one space, the edges of each line are trimmed, and blank lines at both ends are ignored. A fragment of a line never matches. A citation longer than the maximum number of lines (40 by default) is invalid.
+The excerpt must equal the cited lines, as whole lines. Before comparing, CRLF is read as LF, runs of spaces and tabs count as one space, the edges of each line are trimmed, and blank lines at both ends of the excerpt and of the cited range are ignored; blank lines inside them count. Only spaces and tabs are blank: another space character is compared as it is, and so is every other byte. An excerpt is UTF-8 text, so a line of the file that is not valid UTF-8, such as Latin-1, matches no excerpt: a citation of it is `not-found`, never verified by approximation. A citation whose hash covers bytes that are not UTF-8 never gets that far: its excerpt reaches Raun with those bytes replaced, no longer matches its hash, and the item is refused at validation. A fragment of a line never matches, and an excerpt that is blank once normalized is found nowhere. A last line without a newline is a line.
+
+A citation whose range, or whose excerpt without its blank ends, holds more lines than the maximum (40 by default, a parameter of the verification) is invalid. The maximum applies at the cited commit only: freshness never gives `too-long`.
 
 | State | Meaning |
 | --- | --- |
@@ -198,17 +200,24 @@ The excerpt must equal the cited lines, as whole lines. Before comparing, CRLF i
 | `missing-file` | `invalid`, `stale` | The file does not exist at that commit. |
 | `not-regular` | `invalid`, `stale` | The path is a directory, a link or a submodule. |
 | `binary` | `invalid`, `stale` | The file is not text. |
+| `too-large` | `invalid`, `stale` | The file is larger than Raun reads, so its content was not checked. |
 | `too-long` | `invalid` | The citation exceeds the maximum number of lines. |
 | `bad-range` | `invalid` | At the cited commit, the line range is empty, reversed or outside the file. |
 
 Two checks exist:
 
-- **Integrity**, at the cited commit: does the citation hold where the agent made it? It gives `verified`, `relocated` or `invalid`.
+- **Integrity**, at the cited commit: does the citation hold where the agent made it? It gives `verified`, `relocated` or `invalid`. The first rule that holds wins:
+  1. the range starts before line 1 or ends before it starts: `bad-range`;
+  2. the citation is longer than the maximum: `too-long`;
+  3. the file is missing, not regular, too large or binary: that reason;
+  4. the range ends after the last line: `bad-range`;
+  5. the excerpt is at the cited lines, even if it is also elsewhere: `verified`;
+  6. it is at one other place only: `relocated`, the lines corrected to that place without its blank ends; at several: `ambiguous`; nowhere: `not-found`.
 - **Freshness**, at a later commit, usually the head of the default branch: does it still hold? It applies to evidence stored as `verified`, `relocated` (whose lines were already corrected at the cited commit) or `stale`, never to `invalid` evidence, which had no ground to begin with. It gives `verified` or `stale`:
   - the excerpt is at the stored lines, or at one other place only: `verified`;
   - it appears at several other places: `stale`, reason `ambiguous`;
   - it is nowhere in the file, including when the stored range no longer fits a shorter file: `stale`, reason `not-found`;
-  - the file is missing, not regular or binary: `stale` with that reason.
+  - the file is missing, not regular, too large or binary: `stale` with that reason.
 
   A `stale` evidence that holds again goes back to `verified`. When the excerpt is found at another place, the stored commit and lines stay as they are, and the evidence keeps verifying against them at its own commit; whether they move to the later commit is decided by the epic 7 review (#44).
 

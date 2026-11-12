@@ -87,6 +87,10 @@ func TestValidateReportsFieldPaths(t *testing.T) {
 		{"short commit", func(it *Item) { it.Evidence[0].Commit = "3f1c2a9" }, "evidence[0].commit"},
 		{"uppercase commit", func(it *Item) { it.Evidence[0].Commit = strings.ToUpper(testCommit) }, "evidence[0].commit"},
 		{"empty excerpt", func(it *Item) { it.Evidence[0].Excerpt = "" }, "evidence[0].excerpt"},
+		{"excerpt not in UTF-8", func(it *Item) {
+			it.Evidence[0].Excerpt = "caf\xe9"
+			it.Evidence[0].SHA256 = ExcerptSHA256("caf\xe9")
+		}, "evidence[0].excerpt"},
 		{"sha256 of another excerpt", func(it *Item) { it.Evidence[0].SHA256 = ExcerptSHA256("other") }, "evidence[0].sha256"},
 		{"unknown state", func(it *Item) { it.Evidence[0].State = "fine" }, "evidence[0].state"},
 		{"reason on verified evidence", func(it *Item) { it.Evidence[0].Reason = ReasonNotFound }, "evidence[0].reason"},
@@ -211,5 +215,31 @@ func TestJSONRoundTrip(t *testing.T) {
 func TestExcerptSHA256(t *testing.T) {
 	if got := ExcerptSHA256("abc"); got != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
 		t.Errorf("ExcerptSHA256(abc) = %s", got)
+	}
+}
+
+func TestReasonGoesWithState(t *testing.T) {
+	// Reasons that describe the citation itself hold at the cited commit only.
+	atCitedCommitOnly := map[Reason]bool{ReasonTooLong: true, ReasonBadRange: true}
+	reasons := []Reason{ReasonNotFound, ReasonAmbiguous, ReasonMissingFile, ReasonNotRegular,
+		ReasonBinary, ReasonTooLarge, ReasonTooLong, ReasonBadRange}
+	for _, r := range reasons {
+		if !r.Valid() {
+			t.Errorf("%s is not valid", r)
+		}
+		if !r.allows(EvidenceInvalid) {
+			t.Errorf("%s refused with invalid", r)
+		}
+		if r.allows(EvidenceStale) == atCitedCommitOnly[r] {
+			t.Errorf("%s with stale: allowed = %v", r, r.allows(EvidenceStale))
+		}
+		for _, s := range []EvidenceState{EvidenceVerified, EvidenceRelocated} {
+			if r.allows(s) {
+				t.Errorf("%s allowed with %s", r, s)
+			}
+		}
+	}
+	if Reason("too-big").Valid() {
+		t.Error("an unknown reason is valid")
 	}
 }
