@@ -157,6 +157,26 @@ func TestCompare(t *testing.T) {
 	r.passed(t)
 }
 
+func TestCompareReportsAReadError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file modes do not deny reading on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file whatever its mode")
+	}
+	t.Chdir(t.TempDir())
+	path := filepath.Join("testdata", "locked.golden")
+	if err := os.MkdirAll("testdata", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("x"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	r := &recorder{TB: t}
+	equal(r, path, []byte("x"), false)
+	r.failed(t, "read "+path, "permission denied")
+}
+
 func TestUpdate(t *testing.T) {
 	t.Chdir(t.TempDir())
 	path := filepath.Join("testdata", "nested", "x.golden")
