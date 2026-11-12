@@ -22,6 +22,7 @@ type Repo struct {
 	git     string
 	dir     string
 	env     []string
+	hashLen int
 	commits int
 }
 
@@ -45,9 +46,10 @@ func newRepo(t testing.TB, format string) *Repo {
 		t.Fatalf("gittest: git not found: %v", err)
 	}
 	r := &Repo{
-		t:   t,
-		git: git,
-		dir: t.TempDir(),
+		t:       t,
+		git:     git,
+		dir:     t.TempDir(),
+		hashLen: map[string]int{"sha1": 40, "sha256": 64}[format],
 		// The environment is built from nothing: a variable such as GIT_DIR
 		// inherited from the caller would point git at another repository,
 		// and the user or system configuration would change identifiers.
@@ -112,9 +114,13 @@ func (r *Repo) Symlink(name, target string) {
 }
 
 // Submodule records a submodule at name pointing to commit, without cloning
-// anything: the commit only has to look like an object name.
+// anything: the commit only has to be a full object name in the format of the
+// fixture, 40 hexadecimal digits for New and 64 for NewSHA256.
 func (r *Repo) Submodule(name, commit string) {
 	r.t.Helper()
+	if len(commit) != r.hashLen || strings.Trim(commit, "0123456789abcdef") != "" {
+		r.t.Fatalf("gittest: submodule commit %q is not a full object name of %d hexadecimal digits", commit, r.hashLen)
+	}
 	// An empty directory keeps the next Commit from staging the submodule as
 	// deleted.
 	if err := os.MkdirAll(r.path(name), 0o755); err != nil {

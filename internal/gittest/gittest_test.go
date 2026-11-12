@@ -82,8 +82,7 @@ func TestTreeHoldsEveryKind(t *testing.T) {
 		}, "\n")},
 	}
 	for _, tt := range tests {
-		got := r.Git("ls-tree", "-r", "--format=%(objectmode) %(objecttype) %(path)", tt.commit)
-		if got != tt.want {
+		if got := tree(r, tt.commit); got != tt.want {
 			t.Errorf("tree of %s:\n%s\nwant:\n%s", tt.commit, got, tt.want)
 		}
 	}
@@ -101,9 +100,30 @@ func TestRewriteChangesTheMode(t *testing.T) {
 	r.WriteExecutable("a.sh", []byte("x\n"))
 	r.WriteFile("a.sh", []byte("x\n"))
 	c := r.Commit("first")
-	if got := r.Git("ls-tree", "--format=%(objectmode)", c, "a.sh"); got != "100644" {
-		t.Errorf("mode = %s, want 100644", got)
+	if got := tree(r, c); got != "100644 blob a.sh" {
+		t.Errorf("tree = %s, want a.sh in mode 100644", got)
 	}
+}
+
+func TestSubmoduleInSHA256(t *testing.T) {
+	r := NewSHA256(t)
+	r.Submodule("lib", strings.Repeat("2", 64))
+	c := r.Commit("first")
+	if got := tree(r, c); got != "160000 commit lib" {
+		t.Errorf("tree = %s", got)
+	}
+}
+
+// tree lists the tree of commit as "<mode> <type> <path>" lines, without the
+// object names, with the output format every supported Git has.
+func tree(r *Repo, commit string) string {
+	var lines []string
+	for line := range strings.SplitSeq(r.Git("ls-tree", "-r", commit), "\n") {
+		meta, path, _ := strings.Cut(line, "\t")
+		fields := strings.Fields(meta)
+		lines = append(lines, fields[0]+" "+fields[1]+" "+path)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func TestEnvironmentIgnoresTheCaller(t *testing.T) {
