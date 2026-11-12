@@ -152,9 +152,9 @@ Rules made explicit while implementing the commit reader and the classification 
 
 Rules made explicit while implementing the golden-file helper (#12):
 
-- **One function.** `golden.Equal(t, path, got)` compares byte for byte, with no normalization of line endings or order: the caller makes its output deterministic, and golden files are committed with LF line endings. A failure names the first line that differs, quoted and bounded, and the size of both sides.
-- **The flag without a variable.** The package registers `-update` at init unless another package already did, and reads it back through `flag.Lookup` when `Equal` runs, so it holds no package-level state and a consumer needs no `TestMain`. Files are refreshed one package at a time, `go test ./<pkg> -update`: a test binary that does not import the helper refuses the flag, so `./...` cannot be used.
-- **Writes stay in testdata.** Under `-update`, a path must be local to the package directory and lie in a `testdata` directory; the file is written with mode 0644 whatever the umask. Without `-update`, nothing is written.
+- **One function.** `golden.Equal(t, path, got)` compares byte for byte, with no normalization of line endings or order: the caller makes its output deterministic. `.gitattributes` marks every `testdata` directory `-text`, so Git never converts line endings on checkout. A failure names the first line that differs, quoted and bounded, and the size of both sides.
+- **The flag without a variable.** The package registers `-update` at init unless another package already did, and reads it back through `flag.Lookup` when `Equal` runs, so it holds no package-level state and a consumer needs no `TestMain`. A flag of that name defined elsewhere is accepted only if it is a boolean that defaults to false; otherwise `Equal` fails, since such a flag could rewrite every golden file on a plain run. Files are refreshed one package at a time, `go test ./<pkg> -update`: a test binary that does not import the helper refuses the flag, so `./...` cannot be used.
+- **Writes stay in testdata.** A golden path must be clean, local to the package directory, lie in a `testdata` directory, go through no symbolic link and name a regular file, when comparing as when updating, so a file that can be read can always be refreshed and an update never writes through a link. An update writes a temporary file in the same directory and renames it, with mode 0644 whatever the umask, so it never leaves a partial file. Without `-update`, nothing is written.
 
 ### Evidence limits
 

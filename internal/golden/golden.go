@@ -35,22 +35,41 @@ func init() {
 // directory, such as "testdata/listing.golden".
 func Equal(t testing.TB, path string, got []byte) {
 	t.Helper()
-	equal(t, path, got, updating())
+	update, err := updating(flag.CommandLine)
+	if err != nil {
+		t.Errorf("golden: %v", err)
+		return
+	}
+	equal(t, path, got, update)
 }
 
-// updating reports whether the test binary runs with -update.
-func updating() bool {
-	f := flag.Lookup(flagName)
-	return f != nil && f.Value.String() == "true"
+// updating reports whether -update is set in flags. A flag of that name that
+// another package defined is accepted only if it is a boolean that defaults
+// to false: anything else could rewrite every golden file on a plain run, or
+// never.
+func updating(flags *flag.FlagSet) (bool, error) {
+	f := flags.Lookup(flagName)
+	if f == nil {
+		return false, fmt.Errorf("the -%s flag is not defined", flagName)
+	}
+	getter, ok := f.Value.(flag.Getter)
+	if !ok {
+		return false, fmt.Errorf("the -%s flag of this test binary is not a boolean flag", flagName)
+	}
+	value, ok := getter.Get().(bool)
+	if !ok || f.DefValue != "false" {
+		return false, fmt.Errorf("the -%s flag of this test binary is not a boolean flag that defaults to false", flagName)
+	}
+	return value, nil
 }
 
 func equal(t testing.TB, path string, got []byte, update bool) {
 	t.Helper()
+	if err := checkPath(path); err != nil {
+		t.Errorf("golden: %v", err)
+		return
+	}
 	if update {
-		if err := checkPath(path); err != nil {
-			t.Errorf("golden: %v", err)
-			return
-		}
 		if err := write(path, got); err != nil {
 			t.Errorf("golden: %v", err)
 		}
@@ -71,28 +90,61 @@ func equal(t testing.TB, path string, got []byte, update bool) {
 	}
 }
 
-// checkPath refuses a path -update may not write: one that leaves the package
-// directory or lies outside a testdata directory.
+// checkPath refuses a golden path that -update could not write where it
+// says: one that is not clean, leaves the package directory, lies outside a
+// testdata directory, goes through a symbolic link, or names something other
+// than a regular file. Comparing applies the same rule, so a file that can be
+// read can always be refreshed.
 func checkPath(path string) error {
-	if !filepath.IsLocal(path) {
-		return fmt.Errorf("%s: must be a local path below the package directory", path)
+	if !filepath.IsLocal(path) || filepath.Clean(path) != path {
+		return fmt.Errorf("%s: must be a clean local path below the package directory", path)
 	}
-	if !slices.Contains(strings.Split(filepath.Dir(path), string(filepath.Separator)), "testdata") {
+	parts := strings.Split(path, string(filepath.Separator))
+	if !slices.Contains(parts[:len(parts)-1], "testdata") {
 		return fmt.Errorf("%s: must lie in a testdata directory", path)
+	}
+	// A link would send the write elsewhere, so none is followed. Checking
+	// stops at the first component that does not exist: the write creates
+	// it and everything below.
+	for i := range parts {
+		prefix := filepath.Join(parts[:i+1]...)
+		info, err := os.Lstat(prefix)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%s: %s is a symbolic link", path, prefix)
+		}
+		if i == len(parts)-1 && !info.Mode().IsRegular() {
+			return fmt.Errorf("%s: not a regular file", path)
+		}
 	}
 	return nil
 }
 
+// write replaces the file at path through a temporary file in the same
+// directory, so an interrupted update never leaves a partial golden file.
 func write(path string, content []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
-	if err := os.WriteFile(path, content, 0o644); err != nil {
+	tmp, err := os.CreateTemp(dir, ".golden-*")
+	if err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
-	// WriteFile keeps the mode of a file that exists, and the umask applies
-	// to a new one.
-	if err := os.Chmod(path, 0o644); err != nil {
+	defer func() { _ = os.Remove(tmp.Name()) }() // Fails once renamed, as it should.
+	_, err = tmp.Write(content)
+	// The mode is set here: the umask does not apply, and the mode of a file
+	// being replaced is not kept.
+	err = errors.Join(err, tmp.Chmod(0o644), tmp.Close())
+	if err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil
