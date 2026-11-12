@@ -377,6 +377,31 @@ func TestReadFilesAtEachCommit(t *testing.T) {
 	}
 }
 
+func TestReadFilesSharingABlob(t *testing.T) {
+	repo := gittest.New(t)
+	repo.WriteFile("a.txt", []byte("same\n"))
+	repo.WriteFile("b/copy.txt", []byte("same\n"))
+	repo.WriteFile("c.txt", []byte("other\n"))
+	repo.WriteFile("d.txt", []byte("same\n"))
+	commit := repo.Commit("shared")
+	r := open(t, repo.Dir(), git.Options{})
+
+	got := readAll(t, r, commit, "d.txt", "c.txt", "b/copy.txt", "a.txt")
+	want := map[string]string{"a.txt": "same\n", "b/copy.txt": "same\n", "c.txt": "other\n", "d.txt": "same\n"}
+	if len(got) != len(want) {
+		t.Fatalf("visited %d files, want %d", len(got), len(want))
+	}
+	for _, f := range got {
+		if string(f.Content) != want[f.Path] {
+			t.Errorf("%s = %q, want %q", f.Path, f.Content, want[f.Path])
+		}
+	}
+	got[0].Content[0] = 'X'
+	if got[1].Content[0] == 'X' || got[3].Content[0] == 'X' {
+		t.Error("two files share their content")
+	}
+}
+
 func TestReadFilesTooLarge(t *testing.T) {
 	f := newFixture(t)
 	r := open(t, f.repo.Dir(), git.Options{MaxFileSize: 10})
