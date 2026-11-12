@@ -225,10 +225,11 @@ Rules made explicit while implementing the server (#18):
 | Topic | Where |
 | --- | --- |
 | Accounts, login, the account of a session, logout | Epic 4 (#26) |
-| The form of an entry of `RAUN_ADMINS` | Epic 4 review (#23) |
-| The `RAUN_ADMINS` check, the Instance settings screen and the encryption of stored secrets | Epic 4 (#21) |
+| The form of an entry of `RAUN_ADMINS` | Decided by the epic 4 review: `github:<stable identifier>` ([record](04-forge-port-and-identity.md#accounts-and-login)) |
+| The `RAUN_ADMINS` check and the Instance settings screen | Epic 4 (#21) |
+| The encryption of stored secrets | Epic 4 (#26, with the first stored tokens) |
 | The first stored instance setting | The epic whose feature needs one |
-| The `_FILE` form of a variable and the secret type of the configuration | Epic 4, with its first secret variable |
+| The `_FILE` form of a variable and the secret type of the configuration | Epic 4 (#26), with its first secret variable |
 | The bypass and authentication of webhooks | Epic 5 (#30) |
 | The bypass and authentication of the runner API | Epic 6 |
 | How an upgrade is run, and the retention of logs | Epic 13 |
