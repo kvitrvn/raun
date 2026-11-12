@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // FieldError is one problem of an item, at a field path such as
@@ -166,9 +167,14 @@ func (it Item) validateEvidence(v *validator) map[string]bool {
 		if !isCommit(e.Commit) {
 			v.add(at+".commit", "must be a full commit hash, got %q", e.Commit)
 		}
-		if e.Excerpt == "" {
+		switch {
+		case e.Excerpt == "":
 			v.add(at+".excerpt", "required")
-		} else if e.SHA256 != ExcerptSHA256(e.Excerpt) {
+		case !utf8.ValidString(e.Excerpt):
+			// JSON would replace the invalid bytes, so the stored excerpt
+			// would no longer be the one cited, nor match its hash.
+			v.add(at+".excerpt", "must be valid UTF-8")
+		case e.SHA256 != ExcerptSHA256(e.Excerpt):
 			v.add(at+".sha256", "does not match the excerpt")
 		}
 

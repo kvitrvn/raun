@@ -87,6 +87,10 @@ func TestValidateReportsFieldPaths(t *testing.T) {
 		{"short commit", func(it *Item) { it.Evidence[0].Commit = "3f1c2a9" }, "evidence[0].commit"},
 		{"uppercase commit", func(it *Item) { it.Evidence[0].Commit = strings.ToUpper(testCommit) }, "evidence[0].commit"},
 		{"empty excerpt", func(it *Item) { it.Evidence[0].Excerpt = "" }, "evidence[0].excerpt"},
+		{"excerpt not in UTF-8", func(it *Item) {
+			it.Evidence[0].Excerpt = "caf\xe9"
+			it.Evidence[0].SHA256 = ExcerptSHA256("caf\xe9")
+		}, "evidence[0].excerpt"},
 		{"sha256 of another excerpt", func(it *Item) { it.Evidence[0].SHA256 = ExcerptSHA256("other") }, "evidence[0].sha256"},
 		{"unknown state", func(it *Item) { it.Evidence[0].State = "fine" }, "evidence[0].state"},
 		{"reason on verified evidence", func(it *Item) { it.Evidence[0].Reason = ReasonNotFound }, "evidence[0].reason"},

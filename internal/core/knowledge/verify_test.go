@@ -174,8 +174,8 @@ func TestIntegrity(t *testing.T) {
 		{"a bad range before the file is looked at", cite("billing/gone.go", 0, 1, "x"), EvidenceInvalid, ReasonBadRange, 0, 1},
 		{"a reversed range is not too long", cite("long.txt", 50, 1, lines(3)), EvidenceInvalid, ReasonBadRange, 50, 1},
 		{"too long before the file is looked at", cite("billing/gone.go", 1, 41, "x"), EvidenceInvalid, ReasonTooLong, 1, 41},
-		{"invalid UTF-8 compared as it is", cite("latin1.txt", 1, 1, "caf\xe9"), EvidenceVerified, "", 1, 1},
-		{"another invalid byte", cite("latin1.txt", 1, 1, "caf\xe8"), EvidenceInvalid, ReasonNotFound, 1, 1},
+		// What JSON makes of an excerpt of a Latin-1 line: decoding the file
+		// the same way would verify it.
 		{"the replacement character is not an invalid byte", cite("latin1.txt", 1, 1, "caf\uFFFD"), EvidenceInvalid, ReasonNotFound, 1, 1},
 	}
 	for _, tt := range tests {
@@ -255,7 +255,7 @@ func TestFreshness(t *testing.T) {
 		{"binary", stored("logo.png", 1, 1, "x", EvidenceVerified, ""), EvidenceStale, ReasonBinary},
 		{"too large", stored("big.sql", 1, 1, "x", EvidenceVerified, ""), EvidenceStale, ReasonTooLarge},
 		{"no cap at freshness", stored("long.txt", 1, 10, lines(10), EvidenceVerified, ""), EvidenceVerified, ""},
-		{"an invalid byte that changed", stored("latin1.txt", 1, 1, "caf\xe9", EvidenceVerified, ""), EvidenceStale, ReasonNotFound},
+		{"a Latin-1 line against the replacement character", stored("latin1.txt", 1, 1, "caf\uFFFD", EvidenceVerified, ""), EvidenceStale, ReasonNotFound},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -366,6 +366,7 @@ func TestVerifierRefusesBadInput(t *testing.T) {
 	badPath := cite("-a.go", 1, 1, "a")
 	badCommit := cite("a.go", 1, 1, "a")
 	badCommit.Commit = "main"
+	badExcerpt := cite("a.go", 1, 1, "caf\xe9")
 
 	tests := []struct {
 		name  string
@@ -380,6 +381,10 @@ func TestVerifierRefusesBadInput(t *testing.T) {
 			_, err := v.Integrity(context.Background(), []Evidence{badCommit}, checkedAt())
 			return err
 		}, "evidence[0]: commit"},
+		{"excerpt", func() error {
+			_, err := v.Integrity(context.Background(), []Evidence{badExcerpt}, checkedAt())
+			return err
+		}, "evidence[0]: excerpt must be valid UTF-8"},
 		{"zero time", func() error { _, err := v.Integrity(context.Background(), []Evidence{ok}, time.Time{}); return err }, "UTC"},
 		{"local time", func() error {
 			_, err := v.Integrity(context.Background(), []Evidence{ok}, checkedAt().In(time.FixedZone("CET", 3600)))

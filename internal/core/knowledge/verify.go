@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // DefaultMaxCitationLines is the longest citation, in lines, that integrity
@@ -332,13 +333,17 @@ func occurrences(lines, block []string) []int {
 }
 
 // checkCitation refuses an evidence the verifier cannot even look up: a path
-// that is not a valid repository path, or a commit that is not a full hash.
+// that is not a valid repository path, a commit that is not a full hash, or an
+// excerpt that is not UTF-8 text, which no item may hold.
 func checkCitation(e Evidence) error {
 	if err := ValidatePath(e.Path); err != nil {
 		return fmt.Errorf("path: %w", err)
 	}
 	if !isCommit(e.Commit) {
 		return fmt.Errorf("commit must be a full commit hash, got %q", e.Commit)
+	}
+	if !utf8.ValidString(e.Excerpt) {
+		return errors.New("excerpt must be valid UTF-8")
 	}
 	return nil
 }
