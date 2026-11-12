@@ -1,6 +1,6 @@
 # Threat model
 
-> Status: written in epic 1, before any feature exists. Each threat names the epic that answers it; that epic updates this page and links the test that proves the answer. **Implemented so far:** the Git part of T16 (epic 2, #11). No other control is implemented yet.
+> Status: written in epic 1, before any feature exists. Each threat names the epic that answers it; that epic updates this page and links the test that proves the answer. **Implemented so far:** the Git part of T16 (epic 2, #11) and the verification of T5 (epic 2, #13). No other control is implemented yet.
 
 ## Scope
 
@@ -49,7 +49,7 @@ One Raun instance serves one organization: a server, one or more runners, and th
 | T2 | Prompt injection in the analyzed code turns an agent against Raun | Agents run in ephemeral containers that see one snapshot, with an empty environment and only their declared secrets. They cannot reach the runner, the server, the forge or the local network. | 9 |
 | T3 | An agent exfiltrates code or secrets over the network | Egress is denied by default and limited to an allowlist set on the runner, never by the repository. No forge credential enters a container. | 9 |
 | T4 | Secrets inherited from the runner or server environment reach an agent | Nothing is inherited. Declared secrets are injected by name and redacted from logs and artifacts. | 9 |
-| T5 | An agent invents or alters a citation to support a claim | Raun verifies every citation against the checkout of the analyzed commit, never against a snapshot an agent could change. Unverified evidence supports nothing. | 2, 10 |
+| T5 | An agent invents or alters a citation to support a claim | Raun verifies every citation against the checkout of the analyzed commit, never against a snapshot an agent could change. Unverified evidence supports nothing. Epic 2: the verifier reads the commit itself through the commit reader, never the agent's output, and gives a state and a reason by deterministic rules; an excerpt that matches several places is never moved to one of them (`internal/core/knowledge/verify_test.go`: `TestIntegrity`, `TestFreshness`; `internal/adapter/driven/git/verify_test.go`: `TestVerifyOnARepository`). Epic 10 runs it on every agent report. | 2, 10 |
 | T6 | An agent report breaks the parser, or a plan drops or forges elements | Agent output is size-bounded and decoded strictly, element by element. A lead plan or reconciler answer that refers to unknown elements, or omits any, is rejected. | 8, 10 |
 | T7 | A run validates, rejects or rewrites knowledge | Only an authenticated human decision moves an item to `validated` or `rejected`. A run appends; it never rewrites validated content. | 2, 10, 11 |
 | T8 | A pull request from a fork reaches secrets or LLM analysis | A single policy point decides which jobs an event may create, deny by default. Forks get the deterministic check only, with no secret. The fork's `.raun.yaml` changes nothing. | 7 |
