@@ -22,9 +22,9 @@ type SourceSets struct {
 	// Context lists exact paths of files written by the team for Raun. They
 	// are cited as human context, never as facts derived from the code.
 	Context []string
-	// Docs lists patterns of documentation paths. DefaultDocs is the value a
-	// configuration that sets none stands for; an empty list means no
-	// documentation.
+	// Docs lists patterns of documentation paths. The classifier applies
+	// exactly this list, so an empty one means no documentation; DefaultDocs
+	// is for the caller that builds the sets from a configuration.
 	Docs []string
 	// Exclude lists patterns of paths that no evidence may cite.
 	Exclude []string

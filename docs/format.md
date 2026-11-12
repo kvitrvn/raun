@@ -160,13 +160,13 @@ The first rule that holds wins:
 3. a path matching a documentation pattern is `doc`;
 4. any other path is `code`.
 
-The order of the entries in a set never changes the result. The repository configuration sets them from epic 8; until then, the defaults apply.
+The order of the entries in a set never changes the result. Raun applies exactly the sets it is given: an empty set holds nothing. The defaults above are what an omitted set stands for; the repository configuration provides the sets from epic 8, which decides how it maps an omitted set to them.
 
 A pattern is matched against the whole path, segment by segment. Within a segment, `*` matches any run of characters, `?` one character, `[...]` a class (`[^...]` negates it) and `\` escapes the next character. A segment that is exactly `**` matches any number of segments, none included. So `*.md` matches at the root only, `**/*.md` anywhere, and `docs/**` matches `docs` itself and everything below it. Unlike `.gitignore`, a pattern without a slash is not matched at every depth, and there is no negation. A pattern that is empty, absolute, or has an empty, `.` or `..` segment, or a malformed class, is refused: it could match no path.
 
 ## Paths
 
-A path from outside Raun, in an evidence or in the repository configuration, must be relative to the repository root, use forward slashes, be clean (no empty, `.` or `..` segment, no trailing slash), stay inside the repository, and not start with a dash, which Git would read as an option. Anything else is refused before any file is read.
+A path from outside Raun, in an evidence or in the repository configuration, must be relative to the repository root, use forward slashes, be clean (no empty, `.` or `..` segment, no trailing slash), stay inside the repository, and not start with a dash, which Git would read as an option. Anything else is refused before any file is read. A file whose name starts with a dash can therefore never be cited, even though the tree of the commit lists it.
 
 Raun reads a commit without a checkout and reports what it holds at a path. The evidence reasons follow from it:
 

@@ -16,8 +16,13 @@
 //
 // A path never reaches Git: ReadFiles checks each one with
 // knowledge.ValidatePath, then looks it up in the tree listing and hands Git
-// the object name only. A revision that starts with a dash is refused, and
-// the others are passed after --end-of-options.
+// the object name only. A file whose name starts with a dash is listed by
+// ListTree but can never be read. A revision that starts with a dash is
+// refused, and the others are passed after --end-of-options.
+//
+// ReadFiles holds one file at a time. ListTree returns the whole tree, sorted,
+// so it holds every entry at once: about a hundred bytes each, some hundred
+// megabytes at the default bound.
 //
 // What this package does not do:
 //   - write to the repository: no checkout, no index, no lock, no reference;
@@ -27,7 +32,7 @@
 //     Git refuses it;
 //   - read a file above the size bound (8 MiB by default), reported as
 //     TooLarge, or list a tree above the entry bound (one million by
-//     default), refused with ErrTreeTooLarge.
+//     default), refused with knowledge.ErrTreeTooLarge.
 //
 // It needs Git 2.32 or later, checked by Open.
 package git
