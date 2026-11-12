@@ -8,6 +8,7 @@ This directory describes what Raun is and what is implemented. A page never desc
 | [architecture.md](architecture.md) | Server, runner, forge and agents; flows; code layout |
 | [threat-model.md](threat-model.md) | Assets, actors, trust boundaries and the answer to each threat |
 | [format.md](format.md) | Knowledge items, statuses and transitions, evidence states, identifiers, revisions, format versions |
+| [web.md](web.md) | The web interface: pinned frontend tools, components, Content Security Policy, generation, licenses |
 | [implementation/](implementation/README.md) | One record per epic with the choices of its review |
 
 Contributor and agent guidance is in [AGENTS.md](../AGENTS.md).
