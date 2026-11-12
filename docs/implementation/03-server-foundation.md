@@ -91,7 +91,7 @@ Both are unauthenticated, outside the Host check and the session, answer `text/p
 `RAUN_PUBLIC_URL` is the address people and forges use: it builds absolute links, OAuth callbacks (epic 4) and webhook URLs (epic 5). It is validated at startup:
 
 - an absolute URL with scheme `https`, or `http` only when its host is a loopback address (`localhost`, `127.0.0.0/8`, `::1`), for development;
-- no user information, query or fragment, and no path other than empty or `/`: a sub-path would break the `__Host-` cookie, which requires `Path=/`.
+- no user information, query or fragment, and no path other than empty or `/`: the instance is served at the root of its host, since its links, OAuth callbacks and webhook URLs are built from this address, and its `Path=/` session cookie would reach anything else served on that host. A deployment under a prefix is not supported.
 
 **No header from a proxy is trusted.** `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host` and `Forwarded` are ignored. The scheme and the host come from `RAUN_PUBLIC_URL`, and the access log records the address of the TCP peer. A client can therefore not change what the server thinks its own address is.
 
