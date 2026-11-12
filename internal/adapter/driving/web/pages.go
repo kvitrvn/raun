@@ -10,14 +10,14 @@ import (
 	"github.com/kvitrvn/raun/internal/adapter/driving/web/ui"
 )
 
-// page returns what the layout needs for a page with this title; current is
-// the href of the top bar link to mark.
-func (s *Server) page(title, current string) ui.Page {
+// page returns what the layout needs for a page of the request r with this
+// title; current is the href of the top bar link to mark.
+func (s *Server) page(r *http.Request, title, current string) ui.Page {
 	nav := []ui.NavItem{{Label: "Repositories", Href: "/"}}
 	for i := range nav {
 		nav[i].Current = nav[i].Href == current
 	}
-	return ui.Page{
+	page := ui.Page{
 		Title:    title,
 		Instance: s.publicHost,
 		Assets: ui.Assets{
@@ -29,6 +29,10 @@ func (s *Server) page(title, current string) ui.Page {
 		},
 		Nav: nav,
 	}
+	if sess, ok := sessionFrom(r.Context()); ok {
+		page.CSRF = sess.CSRF
+	}
+	return page
 }
 
 // render writes a page with status. It renders into a buffer first, so a
@@ -51,9 +55,9 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, c te
 }
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, http.StatusOK, ui.HomePage(s.page("Repositories", "/")))
+	s.render(w, r, http.StatusOK, ui.HomePage(s.page(r, "Repositories", "/")))
 }
 
 func (s *Server) notFound(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, http.StatusNotFound, ui.NotFoundPage(s.page("Not found", "")))
+	s.render(w, r, http.StatusNotFound, ui.NotFoundPage(s.page(r, "Not found", "")))
 }

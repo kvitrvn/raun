@@ -71,6 +71,12 @@ templ Input(props ...InputProps) {
 	/>
 }
 
+// CSRFField is the hidden field that carries the CSRF token of the session
+// in a form, so that the form works without JavaScript.
+templ CSRFField(token string) {
+	<input type="hidden" name="csrf" value={ token }/>
+}
+
 // FieldProps configures a field: For is the id of the control inside it.
 type FieldProps struct {
 	For   string

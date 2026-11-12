@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kvitrvn/raun/internal/core/session/sessiontest"
 )
 
 const testHost = "raun.example"
@@ -22,16 +24,24 @@ const testHost = "raun.example"
 // the returned buffer as JSON, and whose readiness is ready.
 func newTestServer(t *testing.T, ready func(context.Context) error) (*Server, *bytes.Buffer) {
 	t.Helper()
+	return newTestServerBypassing(t, ready)
+}
+
+// newTestServerBypassing is newTestServer with routes that opt out of the
+// request protections, for tests of what lies behind them.
+func newTestServerBypassing(t *testing.T, ready func(context.Context) error, bypass ...string) (*Server, *bytes.Buffer) {
+	t.Helper()
 	var logs bytes.Buffer
 	if ready == nil {
 		ready = func(context.Context) error { return nil }
 	}
-	s, err := New(Options{
+	s, err := newServer(Options{
 		Logger:     slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		PublicHost: testHost,
 		Scheme:     "https",
 		Ready:      ready,
-	})
+		Sessions:   &sessiontest.Memory{},
+	}, bypass)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,15 +101,17 @@ func find(recs []map[string]any, msg string) []map[string]any {
 func TestNewRefusesBadOptions(t *testing.T) {
 	logger := slog.New(slog.DiscardHandler)
 	ready := func(context.Context) error { return nil }
+	sessions := &sessiontest.Memory{}
 	tests := []struct {
 		name string
 		opts Options
 	}{
-		{"no logger", Options{PublicHost: testHost, Scheme: "https", Ready: ready}},
-		{"no readiness", Options{Logger: logger, PublicHost: testHost, Scheme: "https"}},
-		{"no host", Options{Logger: logger, Scheme: "https", Ready: ready}},
-		{"bad scheme", Options{Logger: logger, PublicHost: testHost, Scheme: "ftp", Ready: ready}},
-		{"host not canonical", Options{Logger: logger, PublicHost: "Raun.Example:443", Scheme: "https", Ready: ready}},
+		{"no logger", Options{PublicHost: testHost, Scheme: "https", Ready: ready, Sessions: sessions}},
+		{"no readiness", Options{Logger: logger, PublicHost: testHost, Scheme: "https", Sessions: sessions}},
+		{"no sessions", Options{Logger: logger, PublicHost: testHost, Scheme: "https", Ready: ready}},
+		{"no host", Options{Logger: logger, Scheme: "https", Ready: ready, Sessions: sessions}},
+		{"bad scheme", Options{Logger: logger, PublicHost: testHost, Scheme: "ftp", Ready: ready, Sessions: sessions}},
+		{"host not canonical", Options{Logger: logger, PublicHost: "Raun.Example:443", Scheme: "https", Ready: ready, Sessions: sessions}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -170,9 +182,11 @@ func TestHealth(t *testing.T) {
 func TestHealthRefusesOtherMethods(t *testing.T) {
 	s, _ := newTestServer(t, nil)
 	// Only GET and HEAD reach the health endpoints.
+	// Another method goes to the application, whose protections refuse a
+	// state change without a session.
 	resp := serve(s, request(http.MethodPost, "/healthz", testHost, nil))
-	if resp.StatusCode != http.StatusMethodNotAllowed {
-		t.Errorf("POST /healthz = %d, want 405", resp.StatusCode)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("POST /healthz = %d, want 403", resp.StatusCode)
 	}
 	resp = serve(s, request(http.MethodHead, "/readyz", testHost, nil))
 	if resp.StatusCode != http.StatusOK {
@@ -261,7 +275,7 @@ func TestBodyLimit(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s, _ := newTestServer(t, nil)
+			s, _ := newTestServerBypassing(t, nil, "POST /upload")
 			handle(s.app, "POST /upload", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if _, err := io.Copy(io.Discard, r.Body); err != nil {
 					if IsBodyTooLarge(err) {
@@ -470,7 +484,7 @@ func TestPanicAfterTheResponseStartedAbortsIt(t *testing.T) {
 }
 
 func TestBodyLimitClosesTheConnection(t *testing.T) {
-	s, _ := newTestServer(t, nil)
+	s, _ := newTestServerBypassing(t, nil, "POST /upload")
 	handle(s.app, "POST /upload", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, err := io.Copy(io.Discard, r.Body); IsBodyTooLarge(err) {
 			w.WriteHeader(http.StatusRequestEntityTooLarge)
@@ -612,15 +626,5 @@ func TestPagesNeedThePublicHost(t *testing.T) {
 	s, _ := newTestServer(t, nil)
 	if resp := serve(s, request(http.MethodGet, "/", "evil.example", nil)); resp.StatusCode != http.StatusMisdirectedRequest {
 		t.Errorf("home with a foreign Host = %d, want 421", resp.StatusCode)
-	}
-}
-
-func TestWrongMethodOnAPage(t *testing.T) {
-	s, _ := newTestServer(t, nil)
-	for _, target := range []string{"/", "/nowhere"} {
-		resp := serve(s, request(http.MethodPost, target, testHost, nil))
-		if resp.StatusCode != http.StatusMethodNotAllowed || !strings.Contains(resp.Header.Get("Allow"), "GET") {
-			t.Errorf("POST %s = %d, Allow %q; want 405 with GET", target, resp.StatusCode, resp.Header.Get("Allow"))
-		}
 	}
 }
