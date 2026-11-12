@@ -110,6 +110,29 @@ func TestUpdating(t *testing.T) {
 	}
 }
 
+func TestEqualRefusesAForeignFlag(t *testing.T) {
+	t.Chdir(t.TempDir())
+	path := filepath.Join("testdata", "x.golden")
+	if err := os.MkdirAll("testdata", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("kept\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A string flag set to "true" would pass a check on its text: it must
+	// neither update nor compare.
+	set := flag.NewFlagSet("foreign", flag.ContinueOnError)
+	set.String(flagName, "", "")
+	if err := set.Parse([]string{"-" + flagName + "=true"}); err != nil {
+		t.Fatal(err)
+	}
+	r := &recorder{TB: t}
+	equalWith(r, set, path, []byte("replaced\n"))
+	r.failed(t, "-update", "not a boolean flag")
+	assertFile(t, path, "kept\n")
+}
+
 func TestUpdateFlag(t *testing.T) {
 	f := flag.Lookup(flagName)
 	if f == nil {

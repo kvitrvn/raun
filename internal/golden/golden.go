@@ -36,7 +36,14 @@ func init() {
 // "testdata/listing.golden".
 func Equal(t testing.TB, path string, got []byte) {
 	t.Helper()
-	update, err := updating(flag.CommandLine)
+	equalWith(t, flag.CommandLine, path, got)
+}
+
+// equalWith is Equal with the flags it reads -update from. A flag it cannot
+// trust fails the test before anything is compared or written.
+func equalWith(t testing.TB, flags *flag.FlagSet, path string, got []byte) {
+	t.Helper()
+	update, err := updating(flags)
 	if err != nil {
 		t.Errorf("golden: %v", err)
 		return
