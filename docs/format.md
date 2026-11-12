@@ -63,7 +63,7 @@ A later run appends support; it never changes an existing entry.
 | `commit` | Full hash of the commit the citation was made at. |
 | `start_line`, `end_line` | 1-based, inclusive. |
 | `excerpt` | The cited lines, as UTF-8 text. |
-| `sha256` | Hex SHA-256 of `excerpt`. |
+| `sha256` | Hex SHA-256 of `excerpt`, as UTF-8 text, the way it travels. |
 | `state` | Set by Raun, never by an agent. See [Evidence states](#evidence-states). |
 | `reason` | Why the evidence has no ground, see the table below. Required for `invalid` and `stale`, empty for `verified` and `relocated`. |
 | `checked_at`, `checked_commit` | When and at which commit the state was last computed. |
@@ -182,7 +182,7 @@ A regular file larger than the reader reads (8 MiB by default) is reported as to
 
 Raun checks evidence without any LLM, against the content of the repository at a commit.
 
-The excerpt must equal the cited lines, as whole lines. Before comparing, CRLF is read as LF, runs of spaces and tabs count as one space, the edges of each line are trimmed, and blank lines at both ends of the excerpt and of the cited range are ignored; blank lines inside them count. Only spaces and tabs are blank: another space character is compared as it is, and so is every other byte. An excerpt is UTF-8 text, so a line of the file that is not valid UTF-8, such as Latin-1, matches no excerpt: a citation of it is `not-found`, never verified by approximation. A fragment of a line never matches, and an excerpt that is blank once normalized is found nowhere. A last line without a newline is a line.
+The excerpt must equal the cited lines, as whole lines. Before comparing, CRLF is read as LF, runs of spaces and tabs count as one space, the edges of each line are trimmed, and blank lines at both ends of the excerpt and of the cited range are ignored; blank lines inside them count. Only spaces and tabs are blank: another space character is compared as it is, and so is every other byte. An excerpt is UTF-8 text, so a line of the file that is not valid UTF-8, such as Latin-1, matches no excerpt: a citation of it is `not-found`, never verified by approximation. A citation whose hash covers bytes that are not UTF-8 never gets that far: its excerpt reaches Raun with those bytes replaced, no longer matches its hash, and the item is refused at validation. A fragment of a line never matches, and an excerpt that is blank once normalized is found nowhere. A last line without a newline is a line.
 
 A citation whose range, or whose excerpt without its blank ends, holds more lines than the maximum (40 by default, a parameter of the verification) is invalid. The maximum applies at the cited commit only: freshness never gives `too-long`.
 
