@@ -60,6 +60,8 @@ func purgeSessionsEvery(ctx context.Context, logger *slog.Logger, sessions sessi
 		select {
 		case <-done:
 			return
+		case <-ctx.Done():
+			return
 		case now := <-ticks:
 			_ = purgeSessions(ctx, logger, sessions, now)
 		}
