@@ -144,6 +144,23 @@ func TestConcurrentMigrations(t *testing.T) {
 	}
 }
 
+// TestNewerSchemaSeenUnderTheLock covers a binary that read an older version,
+// then waited for the lock while a newer binary migrated past it.
+func TestNewerSchemaSeenUnderTheLock(t *testing.T) {
+	ctx := context.Background()
+	s := freshStore(t)
+	if err := migrate(ctx, s, synthetic(t, 2), true); err != nil {
+		t.Fatal(err)
+	}
+	old := synthetic(t, 1)
+	if err := apply(ctx, s, old[0], 1); !errors.Is(err, ErrSchemaTooNew) {
+		t.Errorf("apply over a newer schema = %v, want ErrSchemaTooNew", err)
+	}
+	if v := version(t, s); v != 2 {
+		t.Errorf("version = %d, want 2", v)
+	}
+}
+
 func TestFailingMigrationLeavesNothing(t *testing.T) {
 	ctx := context.Background()
 	s := freshStore(t)

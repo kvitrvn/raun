@@ -102,37 +102,44 @@ func migrate(ctx context.Context, s *Store, migrations []migration, enabled bool
 		return fmt.Errorf("%w: database at version %d, binary at %d; set RAUN_DATABASE_MIGRATE=true to migrate it at start", ErrSchemaTooOld, current, latest)
 	}
 	for _, m := range migrations[current:] {
-		err := s.write(ctx, func(tx *sql.Tx) error {
-			// Another process may have migrated since the version was read:
-			// read it again under the write lock.
-			applied, err := schemaVersion(ctx, tx)
-			if err != nil {
-				return err
-			}
-			if applied >= m.version {
-				return nil
-			}
-			if applied != m.version-1 {
-				return fmt.Errorf("database at version %d, expected %d", applied, m.version-1)
-			}
-			if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
-				version    INTEGER PRIMARY KEY,
-				applied_at TEXT NOT NULL
-			) STRICT`); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, m.sql); err != nil {
-				return err
-			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`,
-				m.version, formatTime(time.Now().UTC()))
-			return err
-		})
-		if err != nil {
+		if err := apply(ctx, s, m, latest); err != nil {
 			return fmt.Errorf("apply migration %s: %w", m.name, err)
 		}
 	}
 	return nil
+}
+
+// apply runs one migration and records it, in one write transaction. Another
+// process may have migrated since the version was first read, so it is read
+// again under the write lock: a migration already applied is skipped, and a
+// schema now newer than the binary's latest is refused.
+func apply(ctx context.Context, s *Store, m migration, latest int) error {
+	return s.write(ctx, func(tx *sql.Tx) error {
+		applied, err := schemaVersion(ctx, tx)
+		if err != nil {
+			return err
+		}
+		switch {
+		case applied > latest:
+			return fmt.Errorf("%w: database at version %d, binary at %d", ErrSchemaTooNew, applied, latest)
+		case applied >= m.version:
+			return nil
+		case applied != m.version-1:
+			return fmt.Errorf("database at version %d, expected %d", applied, m.version-1)
+		}
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+			version    INTEGER PRIMARY KEY,
+			applied_at TEXT NOT NULL
+		) STRICT`); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, m.sql); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`,
+			m.version, formatTime(time.Now().UTC()))
+		return err
+	})
 }
 
 // querier is what schemaVersion reads through: the writer pool, or a
