@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync/atomic"
@@ -49,6 +50,7 @@ type Server struct {
 	publicHost string
 	scheme     string
 	ready      func(context.Context) error
+	assets     *assets
 	stopping   atomic.Bool
 	app        *http.ServeMux
 	handler    http.Handler
@@ -69,13 +71,23 @@ func New(opts Options) (*Server, error) {
 	if canonical != opts.PublicHost {
 		return nil, errors.New("web: Options.PublicHost is not canonical: " + opts.PublicHost)
 	}
+	files, err := loadAssets(embeddedAssets)
+	if err != nil {
+		return nil, fmt.Errorf("web: %w", err)
+	}
 	s := &Server{
 		logger:     opts.Logger,
 		publicHost: opts.PublicHost,
 		scheme:     opts.Scheme,
 		ready:      opts.Ready,
+		assets:     files,
 		app:        http.NewServeMux(),
 	}
+	handle(s.app, "GET /{$}", http.HandlerFunc(s.home))
+	handle(s.app, "GET /assets/{file...}", http.HandlerFunc(s.assets.serve))
+	// Any other path of the application is a page that does not exist; it
+	// has no route pattern in the access log.
+	s.app.Handle("/", http.HandlerFunc(s.notFound))
 
 	root := http.NewServeMux()
 	handle(root, "GET /healthz", http.HandlerFunc(s.healthz))

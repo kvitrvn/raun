@@ -1,6 +1,11 @@
 // Package web is the HTTP entry point of the Raun server: its handler, its
-// middleware and its health endpoints. cmd/raun builds the http.Server with
-// the limits of this package and serves the handler New returns.
+// middleware, its health endpoints, its pages and its assets. cmd/raun builds
+// the http.Server with the limits of this package and serves the handler New
+// returns.
+//
+// The pages are rendered by the templates of package ui. The files of
+// assets/ are embedded and served under /assets/ at URLs that carry the hash
+// of their content; see docs/web.md.
 //
 // Every request goes through, from the outside in: the request identifier and
 // the access log, panic recovery, then, except on /healthz and /readyz, the
