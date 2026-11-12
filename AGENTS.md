@@ -71,8 +71,7 @@ Dependencies:
 | --- | --- | --- |
 | `honnef.co/go/tools/cmd/staticcheck` | tool | Pinned linter, run with `go tool` |
 | `golang.org/x/vuln/cmd/govulncheck` | tool | Pinned vulnerability scanner, run with `go tool` |
-
-No production dependency yet.
+| `modernc.org/sqlite` | library | Pure-Go SQLite driver of the knowledge store: the binary keeps building with `CGO_ENABLED=0` (epic 2 record) |
 
 ## Testing
 
