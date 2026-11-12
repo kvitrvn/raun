@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -215,6 +216,33 @@ func TestJSONRoundTrip(t *testing.T) {
 func TestExcerptSHA256(t *testing.T) {
 	if got := ExcerptSHA256("abc"); got != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
 		t.Errorf("ExcerptSHA256(abc) = %s", got)
+	}
+}
+
+func TestValidateRefusesInvalidUTF8Anywhere(t *testing.T) {
+	it := fullItem(t)
+	it.Title = "caf\xe9"
+	it.Support[0].Statement = "\xff"
+	it.OpenPoints[0].Positions[1].Agents[0] = "\xfe"
+	it.History[0].Reason = "\xc3"
+	err := it.Validate()
+	var invalid *ValidationError
+	if !errors.As(err, &invalid) {
+		t.Fatalf("Validate = %v, want a validation error", err)
+	}
+	for _, at := range []string{"title", "support[0].statement", "open_points[0].positions[1].agents[0]", "history[0].reason"} {
+		found := false
+		for _, fe := range invalid.Errors {
+			if fe.Path == at && fe.Message == "must be valid UTF-8" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no UTF-8 error at %s in %v", at, err)
+		}
+	}
+	if err := fullItem(t).Validate(); err != nil {
+		t.Errorf("valid UTF-8 refused: %v", err)
 	}
 }
 
