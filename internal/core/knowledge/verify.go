@@ -59,8 +59,8 @@ func (v *Verifier) Integrity(ctx context.Context, evidence []Evidence, at time.T
 
 	out := cloneSlice(evidence)
 	for _, commit := range sortedKeys(byCommit) {
-		err := v.read(ctx, commit, evidence, byCommit[commit], func(i int, f File) {
-			out[i] = v.integrity(evidence[i], f, at)
+		err := v.read(ctx, commit, evidence, byCommit[commit], func(i int, c content) {
+			out[i] = v.integrity(evidence[i], c, at)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("check integrity at %s: %w", commit, err)
@@ -76,6 +76,10 @@ func (v *Verifier) Integrity(ctx context.Context, evidence []Evidence, at time.T
 // begin with: it is returned as it is and its file is not read. The commit,
 // the lines, the excerpt and its hash are never changed, even when the excerpt
 // is found at another place. at is the time of the check, in UTC.
+//
+// The caller picks commit, usually the head of the default branch: the
+// verifier cannot tell whether it comes after the commits the evidence cites,
+// and does not try.
 //
 // An error means the check could not run, as for Integrity.
 func (v *Verifier) Freshness(ctx context.Context, evidence []Evidence, commit string, at time.Time) ([]Evidence, error) {
@@ -104,8 +108,8 @@ func (v *Verifier) Freshness(ctx context.Context, evidence []Evidence, commit st
 	if len(checked) == 0 {
 		return out, nil
 	}
-	err := v.read(ctx, commit, evidence, checked, func(i int, f File) {
-		out[i] = freshness(evidence[i], f, commit, at)
+	err := v.read(ctx, commit, evidence, checked, func(i int, c content) {
+		out[i] = freshness(evidence[i], c, commit, at)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("check freshness at %s: %w", commit, err)
@@ -114,9 +118,9 @@ func (v *Verifier) Freshness(ctx context.Context, evidence []Evidence, commit st
 }
 
 // read reads, in one call, the files the evidence at indexes cite at commit,
-// and calls decide for each of them with its file. Only one file is held at a
-// time.
-func (v *Verifier) read(ctx context.Context, commit string, evidence []Evidence, indexes []int, decide func(int, File)) error {
+// and calls decide for each of them with the content of its file, computed
+// once per file. Only one file is held at a time.
+func (v *Verifier) read(ctx context.Context, commit string, evidence []Evidence, indexes []int, decide func(int, content)) error {
 	byPath := map[string][]int{}
 	for _, i := range indexes {
 		byPath[evidence[i].Path] = append(byPath[evidence[i].Path], i)
@@ -129,8 +133,9 @@ func (v *Verifier) read(ctx context.Context, commit string, evidence []Evidence,
 			return fmt.Errorf("reader gave %q, which was not asked for or was given twice", f.Path)
 		}
 		visited[f.Path] = true
+		c := contentOf(f)
 		for _, i := range at {
-			decide(i, f)
+			decide(i, c)
 		}
 		return nil
 	})
@@ -145,9 +150,23 @@ func (v *Verifier) read(ctx context.Context, commit string, evidence []Evidence,
 	return nil
 }
 
-// integrity decides the state of e at its own commit, from what the commit
-// holds at its path.
-func (v *Verifier) integrity(e Evidence, f File, at time.Time) Evidence {
+// content is what a file gives the checks: the reason it cannot ground a
+// citation, or its normalized lines.
+type content struct {
+	reason Reason
+	lines  []string
+}
+
+func contentOf(f File) content {
+	if reason, ok := fileReason(f); !ok {
+		return content{reason: reason}
+	}
+	return content{lines: fileLines(f.Content)}
+}
+
+// integrity decides the state of e at its own commit, from the content of the
+// file at its path.
+func (v *Verifier) integrity(e Evidence, c content, at time.Time) Evidence {
 	block := excerptBlock(e.Excerpt)
 	set := func(state EvidenceState, reason Reason) Evidence {
 		e.State, e.Reason, e.CheckedAt, e.CheckedCommit = state, reason, at, e.Commit
@@ -162,10 +181,10 @@ func (v *Verifier) integrity(e Evidence, f File, at time.Time) Evidence {
 	if rangeLonger(e.StartLine, e.EndLine, v.maxLines) || len(block) > v.maxLines {
 		return set(EvidenceInvalid, ReasonTooLong)
 	}
-	if reason, ok := fileReason(f); !ok {
-		return set(EvidenceInvalid, reason)
+	if c.reason != "" {
+		return set(EvidenceInvalid, c.reason)
 	}
-	lines := fileLines(f.Content)
+	lines := c.lines
 	if e.EndLine > len(lines) {
 		return set(EvidenceInvalid, ReasonBadRange)
 	}
@@ -187,22 +206,23 @@ func (v *Verifier) integrity(e Evidence, f File, at time.Time) Evidence {
 }
 
 // freshness decides the state of e at commit, a later commit than its own,
-// from what commit holds at its path. The cap on the length of a citation
-// does not apply: it was checked at integrity, and may have changed since.
-func freshness(e Evidence, f File, commit string, at time.Time) Evidence {
+// from the content of the file at its path. The cap on the length of a
+// citation does not apply: it was checked at integrity, and may have changed
+// since.
+func freshness(e Evidence, c content, commit string, at time.Time) Evidence {
 	set := func(state EvidenceState, reason Reason) Evidence {
 		e.State, e.Reason, e.CheckedAt, e.CheckedCommit = state, reason, at, commit
 		return e
 	}
 
-	if reason, ok := fileReason(f); !ok {
-		return set(EvidenceStale, reason)
+	if c.reason != "" {
+		return set(EvidenceStale, c.reason)
 	}
 	block := excerptBlock(e.Excerpt)
 	if len(block) == 0 {
 		return set(EvidenceStale, ReasonNotFound)
 	}
-	lines := fileLines(f.Content)
+	lines := c.lines
 	if e.StartLine >= 1 && e.EndLine >= e.StartLine && e.EndLine <= len(lines) && matchesAt(lines, block, e.StartLine, e.EndLine) {
 		return set(EvidenceVerified, "")
 	}

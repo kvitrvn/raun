@@ -194,9 +194,7 @@ func TestIntegrity(t *testing.T) {
 			if e.Excerpt != tt.evidence.Excerpt || e.SHA256 != tt.evidence.SHA256 || e.Commit != tt.evidence.Commit || e.Path != tt.evidence.Path {
 				t.Errorf("the citation changed: %+v", e)
 			}
-			if e.State != EvidenceInvalid || e.Reason != ReasonBadRange {
-				assertValidEvidence(t, e)
-			}
+			assertValidEvidence(t, e)
 		})
 	}
 }
