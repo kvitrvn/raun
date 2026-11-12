@@ -24,6 +24,7 @@ internal/adapter/driven/   implementations of the ports: database, forge, sandbo
 internal/adapter/driving/  entry points: HTTP server, webhooks, runner API
 internal/gittest/          test helper outside the core: fixture Git repositories
 internal/golden/           test helper outside the core: golden files, rewritten with -update
+internal/forgetest/        test helper outside the core: the fake forge and the contract suite of forge adapters
 scripts/                   repository checks called by the Makefile, and generate-web.sh (docs/web.md)
 docs/                      product, architecture, threat model, implementation records
 ```

@@ -85,6 +85,17 @@ The model already holds them: an account has identities, each of one forge, and 
 | `internal/adapter/driven/sqlite` | Accounts, identities, names, workspaces, members, login states and encrypted tokens, in new numbered migrations; the `account` column of `sessions`. |
 | `internal/adapter/driving/web` | Login, callback, sign-up, logout, the workspace screens and switcher, the account in the top bar. |
 
+### Port (#24)
+
+Rules made explicit while implementing the port (#24):
+
+- **Five errors.** `ErrUnauthorized` (the access token is refused: refresh and try again), `ErrRevoked` (refused for good: log in again), `ErrUnavailable` (transient), `ErrInvalidCode` (the code of a login) and none else: an adapter wraps its causes in them, so the rules of the tokens and of the permission cache are written once, against the port.
+- **No access is not an error.** A repository the person cannot reach through Raun, because the forge gives no access or the App is not installed on it, has the permission `none`; the forge's own refusal of the token stays `ErrUnauthorized`.
+- **Repositories** come sorted by full name, so screens and tests are deterministic whatever the forge returns.
+- **Tokens are secrets.** `identity.Secret` prints as `[redacted]` in every `fmt` verb, `slog` value and text encoding; only `Reveal` gives the value.
+- **PKCE in the core.** `NewVerifier` draws 32 bytes from the reader it is given, `Challenge` is S256; the adapter only carries them.
+- **The fake has what exists.** It implements the port of epic 4 and `Memberships`; the capabilities of epics 5 to 7 are declared by the contexts that consume them, and each such epic adds them to the fake and to the suite. `make architecture` refuses a test helper (`internal/forgetest`, `internal/gittest`, `internal/golden`, the `*test` packages of the core) linked into `cmd/raun`.
+
 ## Deferred
 
 | Topic | Where |
@@ -112,4 +123,4 @@ The model already holds them: an account has identities, each of one forge, and 
 - [x] This page records the choices.
 - [ ] A user logs in through the fake forge in a test and gets an account and a default workspace (#26, #27).
 - [ ] A test proves that a permission removed on the forge is refused after the cache expires (#28).
-- [ ] `make verify` passes.
+- [ ] `make verify` passes (checked at the end of the epic).
