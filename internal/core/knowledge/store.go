@@ -102,7 +102,8 @@ type Store interface {
 	// result. Nothing is written when an error is returned.
 	//
 	// mutate runs once, while the store holds its write lock: it must be
-	// short and must not call the store.
+	// short and must not call the store, where a call that needs the write
+	// lock waits until its context ends.
 	Update(ctx context.Context, scope Scope, id string, revision int64, mutate Mutation) (Item, error)
 }
 
@@ -110,7 +111,7 @@ type Store interface {
 // whose revision is not 1. Every store calls it.
 func CheckCreate(it Item) error {
 	if it.Revision != 1 {
-		return fmt.Errorf("create %s: revision must be 1, got %d", it.ID, it.Revision)
+		return fmt.Errorf("revision must be 1, got %d", it.Revision)
 	}
 	return it.Validate()
 }
@@ -118,26 +119,31 @@ func CheckCreate(it Item) error {
 // CheckUpdate refuses next as the update of stored: a change of identifier,
 // type or creation time, an event of the stored history changed or removed
 // (ErrHistoryChanged), an update time before the stored one, or an invalid
-// item. The revision is not checked: the store sets it. Every store calls it.
+// item. The revision next holds is ignored: the store sets it. Every store
+// calls it. Like CheckCreate, its errors do not name the operation: the store
+// adds it.
 func CheckUpdate(stored, next Item) error {
 	switch {
 	case next.ID != stored.ID:
-		return fmt.Errorf("update %s: identifier changed to %q", stored.ID, next.ID)
+		return fmt.Errorf("identifier changed to %q", next.ID)
 	case next.Type != stored.Type:
-		return fmt.Errorf("update %s: type changed to %q", stored.ID, next.Type)
+		return fmt.Errorf("type changed to %q", next.Type)
 	case !next.CreatedAt.Equal(stored.CreatedAt):
-		return fmt.Errorf("update %s: creation time changed", stored.ID)
+		return errors.New("creation time changed")
 	case next.UpdatedAt.Before(stored.UpdatedAt):
-		return fmt.Errorf("update %s: update time before the stored one", stored.ID)
+		return errors.New("update time before the stored one")
 	}
 	if len(next.History) < len(stored.History) {
-		return fmt.Errorf("update %s: %w: %d events removed", stored.ID, ErrHistoryChanged, len(stored.History)-len(next.History))
+		return fmt.Errorf("%w: %d events removed", ErrHistoryChanged, len(stored.History)-len(next.History))
 	}
 	for i, e := range stored.History {
 		if !sameEvent(e, next.History[i]) {
-			return fmt.Errorf("update %s: %w: event %d", stored.ID, ErrHistoryChanged, i)
+			return fmt.Errorf("%w: event %d", ErrHistoryChanged, i)
 		}
 	}
+	// Validated with a revision the store accepts, whatever the mutation
+	// left in the field.
+	next.Revision = stored.Revision
 	return next.Validate()
 }
 

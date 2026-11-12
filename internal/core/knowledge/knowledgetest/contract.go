@@ -52,6 +52,7 @@ func Suite(t *testing.T, open func(t *testing.T) knowledge.Store) {
 	t.Run("invalid result", func(t *testing.T) { testInvalidResult(t, open(t)) })
 	t.Run("persona references", func(t *testing.T) { testReferences(t, open(t)) })
 	t.Run("copies", func(t *testing.T) { testCopies(t, open(t)) })
+	t.Run("text", func(t *testing.T) { testText(t, open(t)) })
 	t.Run("concurrent writers", func(t *testing.T) { testConcurrentWriters(t, open(t)) })
 	t.Run("invalid input", func(t *testing.T) { testInvalidInput(t, open(t)) })
 }
@@ -309,13 +310,46 @@ func testUpdate(t *testing.T, s knowledge.Store) {
 		t.Errorf("revision after an update without change = %d, want 3", same.Revision)
 	}
 
-	// The revision is the store's: a mutation cannot set it.
-	forged, err := s.Update(ctx, scopeA(), personaID, 3, func(it knowledge.Item) (knowledge.Item, error) {
-		it.Revision = 99
+	// The revision is the store's: what a mutation leaves in it is ignored.
+	for i, rev := range []int64{99, 0, -5} {
+		read := int64(3 + i)
+		forged, err := s.Update(ctx, scopeA(), personaID, read, func(it knowledge.Item) (knowledge.Item, error) {
+			it.Revision = rev
+			return it, nil
+		})
+		if err != nil || forged.Revision != read+1 || get(t, s, scopeA(), personaID).Revision != read+1 {
+			t.Errorf("a mutation returning revision %d: %d, %v, want %d", rev, forged.Revision, err, read+1)
+		}
+	}
+}
+
+// testText stores text as it is: every valid UTF-8 string comes back byte for
+// byte, and a string that is not valid UTF-8 is refused, since a store that
+// keeps JSON could not give it back.
+func testText(t *testing.T, s knowledge.Store) {
+	ctx := context.Background()
+	p := Persona(t, personaID)
+	p.Persona.Description = "Comptable — café ☕, <&> \u2028 \"quoted\" \\ \x00 end"
+	create(t, s, scopeA(), p)
+	if got := get(t, s, scopeA(), personaID).Persona.Description; got != p.Persona.Description {
+		t.Errorf("description = %q, want %q", got, p.Persona.Description)
+	}
+
+	bad := Persona(t, otherPersona)
+	bad.Persona.Description = "caf\xe9"
+	var invalid *knowledge.ValidationError
+	if err := s.Create(ctx, scopeA(), bad); !errors.As(err, &invalid) || !strings.Contains(err.Error(), "persona.description") {
+		t.Errorf("create with invalid UTF-8: %v, want a validation error at persona.description", err)
+	}
+	_, err := s.Update(ctx, scopeA(), personaID, 1, func(it knowledge.Item) (knowledge.Item, error) {
+		it.Persona.Goals = append(it.Persona.Goals, "\xff")
 		return it, nil
 	})
-	if err != nil || forged.Revision != 4 || get(t, s, scopeA(), personaID).Revision != 4 {
-		t.Errorf("a mutation set the revision: %+v, %v", forged.Revision, err)
+	if !errors.As(err, &invalid) {
+		t.Errorf("update with invalid UTF-8: %v, want a validation error", err)
+	}
+	if got := get(t, s, scopeA(), personaID); got.Revision != 1 || len(got.Persona.Goals) != 1 {
+		t.Errorf("a refused update was stored: revision %d, goals %q", got.Revision, got.Persona.Goals)
 	}
 }
 

@@ -6,16 +6,16 @@ import (
 	"math"
 	"slices"
 	"strings"
-	"sync"
 
 	"github.com/kvitrvn/raun/internal/core/knowledge"
 )
 
-// Memory is a knowledge.Store held in memory. One mutex covers every
+// Memory is a knowledge.Store held in memory. One lock covers every
 // operation, so an update reads, checks, mutates and publishes an item
-// without any other operation in between.
+// without any other operation in between. Waiting for the lock honours the
+// context, as waiting for the SQLite writer does.
 type Memory struct {
-	mu    sync.Mutex
+	lock  chan struct{}
 	items map[key]knowledge.Item
 }
 
@@ -28,8 +28,21 @@ var _ knowledge.Store = (*Memory)(nil)
 
 // NewMemory returns an empty in-memory store.
 func NewMemory() *Memory {
-	return &Memory{items: map[key]knowledge.Item{}}
+	return &Memory{lock: make(chan struct{}, 1), items: map[key]knowledge.Item{}}
 }
+
+// acquire takes the lock, or gives up when ctx ends: a mutation that calls
+// the store waits for it, never forever.
+func (m *Memory) acquire(ctx context.Context) error {
+	select {
+	case m.lock <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (m *Memory) release() { <-m.lock }
 
 // List returns the items of the scope that match the filter, by identifier.
 func (m *Memory) List(ctx context.Context, scope knowledge.Scope, filter knowledge.Filter) ([]knowledge.Item, error) {
@@ -39,8 +52,10 @@ func (m *Memory) List(ctx context.Context, scope knowledge.Scope, filter knowled
 	if err := filter.Validate(); err != nil {
 		return nil, fmt.Errorf("list items: %w", err)
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	if err := m.acquire(ctx); err != nil {
+		return nil, fmt.Errorf("list items: %w", err)
+	}
+	defer m.release()
 	var out []knowledge.Item
 	for k, it := range m.items {
 		if k.scope == scope && filter.Matches(it) {
@@ -56,8 +71,10 @@ func (m *Memory) Get(ctx context.Context, scope knowledge.Scope, id string) (kno
 	if err := check(ctx, scope); err != nil {
 		return knowledge.Item{}, fmt.Errorf("get %s: %w", id, err)
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	if err := m.acquire(ctx); err != nil {
+		return knowledge.Item{}, fmt.Errorf("get %s: %w", id, err)
+	}
+	defer m.release()
 	it, ok := m.items[key{scope, id}]
 	if !ok {
 		return knowledge.Item{}, fmt.Errorf("get %s: %w", id, knowledge.ErrNotFound)
@@ -71,10 +88,12 @@ func (m *Memory) Create(ctx context.Context, scope knowledge.Scope, it knowledge
 		return fmt.Errorf("create %s: %w", it.ID, err)
 	}
 	if err := knowledge.CheckCreate(it); err != nil {
-		return err
+		return fmt.Errorf("create %s: %w", it.ID, err)
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	if err := m.acquire(ctx); err != nil {
+		return fmt.Errorf("create %s: %w", it.ID, err)
+	}
+	defer m.release()
 	if _, ok := m.items[key{scope, it.ID}]; ok {
 		return fmt.Errorf("create %s: %w", it.ID, knowledge.ErrIDTaken)
 	}
@@ -91,8 +110,10 @@ func (m *Memory) Update(ctx context.Context, scope knowledge.Scope, id string, r
 	if err := check(ctx, scope); err != nil {
 		return knowledge.Item{}, fmt.Errorf("update %s: %w", id, err)
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	if err := m.acquire(ctx); err != nil {
+		return knowledge.Item{}, fmt.Errorf("update %s: %w", id, err)
+	}
+	defer m.release()
 	stored, ok := m.items[key{scope, id}]
 	if !ok {
 		return knowledge.Item{}, fmt.Errorf("update %s: %w", id, knowledge.ErrNotFound)
@@ -108,7 +129,7 @@ func (m *Memory) Update(ctx context.Context, scope knowledge.Scope, id string, r
 		return knowledge.Item{}, err
 	}
 	if err := knowledge.CheckUpdate(stored, next); err != nil {
-		return knowledge.Item{}, err
+		return knowledge.Item{}, fmt.Errorf("update %s: %w", id, err)
 	}
 	if err := m.checkReferences(scope, next); err != nil {
 		return knowledge.Item{}, fmt.Errorf("update %s: %w", id, err)

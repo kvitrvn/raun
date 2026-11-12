@@ -107,7 +107,7 @@ func (s *Store) Create(ctx context.Context, scope knowledge.Scope, it knowledge.
 		return fmt.Errorf("create %s: %w", it.ID, err)
 	}
 	if err := knowledge.CheckCreate(it); err != nil {
-		return err
+		return fmt.Errorf("create %s: %w", it.ID, err)
 	}
 	doc, err := encodeDocument(it)
 	if err != nil {
