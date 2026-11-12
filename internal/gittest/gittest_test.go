@@ -105,6 +105,13 @@ func TestRewriteChangesTheMode(t *testing.T) {
 	}
 }
 
+func TestEmptyCommit(t *testing.T) {
+	r := New(t)
+	if got := tree(r, r.Commit("empty")); got != "" {
+		t.Errorf("tree of an empty commit = %q", got)
+	}
+}
+
 func TestSubmoduleInSHA256(t *testing.T) {
 	r := NewSHA256(t)
 	r.Submodule("lib", strings.Repeat("2", 64))
@@ -117,10 +124,17 @@ func TestSubmoduleInSHA256(t *testing.T) {
 // tree lists the tree of commit as "<mode> <type> <path>" lines, without the
 // object names, with the output format every supported Git has.
 func tree(r *Repo, commit string) string {
+	r.t.Helper()
 	var lines []string
 	for line := range strings.SplitSeq(r.Git("ls-tree", "-r", commit), "\n") {
+		if line == "" {
+			continue
+		}
 		meta, path, _ := strings.Cut(line, "\t")
 		fields := strings.Fields(meta)
+		if len(fields) != 3 {
+			r.t.Fatalf("unexpected ls-tree line %q", line)
+		}
 		lines = append(lines, fields[0]+" "+fields[1]+" "+path)
 	}
 	return strings.Join(lines, "\n")
