@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -17,6 +18,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/kvitrvn/raun/internal/adapter/driven/sqlite"
+	"github.com/kvitrvn/raun/internal/core/session"
 )
 
 // wait bounds every wait of these tests, so that a regression fails rather
@@ -438,5 +442,61 @@ func TestServerBoundsHeaders(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusRequestHeaderFieldsTooLarge {
 		t.Errorf("64 KiB of headers = %d, want 431", resp.StatusCode)
+	}
+}
+
+// TestServerPurgesExpiredSessions proves that expired sessions are deleted
+// at start and on each tick of the purge, and live ones kept.
+func TestServerPurgesExpiredSessions(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	store, err := sqlite.Open(ctx, filepath.Join(dir, "raun.db"), sqlite.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Migrate(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	hash := func(c string) string { return strings.Repeat(c, 64) }
+	add := func(h string, created, seen time.Time) {
+		t.Helper()
+		if err := store.Sessions().Create(ctx, session.Session{Hash: h, CSRF: "t", CreatedAt: created, LastSeenAt: seen}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	add(hash("a"), now.Add(-time.Hour), now.Add(-time.Minute))
+	add(hash("b"), now.Add(-10*24*time.Hour), now.Add(-8*24*time.Hour))
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	ticks := make(chan time.Time)
+	s := start(t, dir, nil, serverDeps{purge: ticks})
+	if !strings.Contains(s.stderr.String(), `"msg":"expired sessions deleted","count":1`) {
+		t.Errorf("the purge at start is not logged:\n%s", s.stderr)
+	}
+	// The next tick, 31 days later, ends the live one too.
+	ticks <- now.Add(31 * 24 * time.Hour)
+	deadline := time.Now().Add(wait)
+	for strings.Count(s.stderr.String(), "expired sessions deleted") < 2 {
+		if time.Now().After(deadline) {
+			t.Fatal("the purge tick did nothing")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if code := s.stop(t); code != exitOK {
+		t.Fatalf("exit code = %d", code)
+	}
+
+	store, err = sqlite.Open(ctx, filepath.Join(dir, "raun.db"), sqlite.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	for _, h := range []string{hash("a"), hash("b")} {
+		if _, err := store.Sessions().Get(ctx, h); !errors.Is(err, session.ErrNotFound) {
+			t.Errorf("session %s… kept: %v", h[:4], err)
+		}
 	}
 }

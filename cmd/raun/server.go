@@ -11,9 +11,11 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/kvitrvn/raun/internal/adapter/driven/sqlite"
 	"github.com/kvitrvn/raun/internal/adapter/driving/web"
+	"github.com/kvitrvn/raun/internal/core/session"
 )
 
 // serverDeps holds what tests replace in the server's wiring. The zero value
@@ -27,6 +29,40 @@ type serverDeps struct {
 	wrap func(http.Handler) http.Handler
 	// started, when set, is called once the server accepts connections.
 	started func(addr net.Addr)
+	// purge, when set, receives the times of the hourly session purge
+	// instead of a ticker.
+	purge <-chan time.Time
+}
+
+// sessionPurgeInterval is how often expired sessions are deleted, after the
+// purge at start.
+const sessionPurgeInterval = time.Hour
+
+// purgeSessions deletes the sessions that have ended at now. At start, an
+// error stops the server: the database does not answer.
+func purgeSessions(ctx context.Context, logger *slog.Logger, sessions session.Store, now time.Time) error {
+	n, err := sessions.DeleteExpired(ctx, now)
+	if err != nil {
+		logger.Error("delete expired sessions", slog.String("error", err.Error()))
+		return err
+	}
+	if n > 0 {
+		logger.Info("expired sessions deleted", slog.Int("count", n))
+	}
+	return nil
+}
+
+// purgeSessionsEvery deletes expired sessions on each tick until done. A
+// failure is logged and the next tick tries again.
+func purgeSessionsEvery(logger *slog.Logger, sessions session.Store, ticks <-chan time.Time, done <-chan struct{}) {
+	for {
+		select {
+		case <-done:
+			return
+		case now := <-ticks:
+			_ = purgeSessions(context.Background(), logger, sessions, now)
+		}
+	}
 }
 
 // newLogger returns the logger of the server: one record per line on w, in
@@ -66,12 +102,17 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		logger.Error("migrate the database", slog.String("error", err.Error()))
 		return exitFailure
 	}
+	sessions := store.Sessions()
+	if err := purgeSessions(ctx, logger, sessions, time.Now()); err != nil {
+		return exitFailure
+	}
 
 	handler, err := web.New(web.Options{
 		Logger:     logger,
 		PublicHost: cfg.publicHost,
 		Scheme:     cfg.publicURL.Scheme,
 		Ready:      store.CheckReady,
+		Sessions:   sessions,
 	})
 	if err != nil {
 		logger.Error("build the handler", slog.String("error", err.Error()))
@@ -114,6 +155,13 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 	done := make(chan struct{})
 	defer close(done)
 	go reloadCertificates(logger, cfg.certificates, reload, done)
+	ticks := deps.purge
+	if ticks == nil {
+		ticker := time.NewTicker(sessionPurgeInterval)
+		defer ticker.Stop()
+		ticks = ticker.C
+	}
+	go purgeSessionsEvery(logger, sessions, ticks, done)
 
 	served := make(chan error, 1)
 	go func() {
