@@ -150,6 +150,12 @@ Rules made explicit while implementing the commit reader and the classification 
 
 `internal/gittest` lands with #11, whose adapter tests need it; `internal/golden` stays in #12.
 
+Rules made explicit while implementing the golden-file helper (#12):
+
+- **One function.** `golden.Equal(t, path, got)` compares byte for byte, with no normalization of line endings or order: the caller makes its output deterministic, and golden files are committed with LF line endings. A failure names the first line that differs, quoted and bounded, and the size of both sides.
+- **The flag without a variable.** The package registers `-update` at init unless another package already did, and reads it back through `flag.Lookup` when `Equal` runs, so it holds no package-level state and a consumer needs no `TestMain`. Files are refreshed one package at a time, `go test ./<pkg> -update`: a test binary that does not import the helper refuses the flag, so `./...` cannot be used.
+- **Writes stay in testdata.** Under `-update`, a path must be local to the package directory and lie in a `testdata` directory; the file is written with mode 0644 whatever the umask. Without `-update`, nothing is written.
+
 ### Evidence limits
 
 The maximum length of a citation stays 40 lines by default. It is a parameter of the verification, with that default; the repository configuration may change it from epic 8.
