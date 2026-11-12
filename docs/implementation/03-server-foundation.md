@@ -183,6 +183,18 @@ Epic 3 stores no secret: sessions and CSRF tokens are random values, the first s
 - **Failure.** A stored secret whose key identifier matches neither key stops the server at startup, naming the variable. A secret that fails to decrypt is an error of the operation that reads it, never a value.
 - **Never rendered.** A stored secret is written, replaced or deleted; no screen or API returns it (#21).
 
+### Server (#18)
+
+Rules made explicit while implementing the server (#18):
+
+- **Where the configuration lives.** `cmd/raun` reads it, as this page says: `config.go` holds the catalogue, one read-only table of names, defaults and rules, so adding a variable is one row. A shared package waits for a second consumer. `loadConfig` takes the environment as `os.Environ` gives it, so tests never touch the process environment; the first value of a duplicated variable wins, as for `os.Getenv`.
+- **Every error at once.** All the errors of a configuration are reported together, sorted, each starting with its variable. The value of an unknown variable is never shown, since it may be a misspelled secret. `RAUN_DATABASE_PATH` is checked by the rule of the SQLite adapter, `sqlite.CheckPath`, so the two never disagree.
+- **Secrets wait for the first one.** No variable of epic 3 is secret, so the `_FILE` form and the secret type come with the first secret variable (epic 4). Until then a row of the catalogue marks a variable secret, and the startup log shows `[redacted]` for it whether set or not; a test proves it with a secret row of its own. The TLS files are paths, not secrets, and are logged.
+- **Health.** Only `GET` and `HEAD` reach `/healthz` and `/readyz`; any other method goes to the application. `/readyz` asks the database at each probe through `(*sqlite.Store).CheckReady`, which reads the schema version on the read pool and never migrates, so a schema migrated by another binary after start is seen. A probe gets 2 seconds, since the route is reachable without the Host check, and the version of the binary is computed once, when the store opens.
+- **Logs.** The `route` of the access log is the pattern the server matched, empty when none did. The host of a `421` is logged bounded to 256 bytes, since it comes from the client. A panic logs its type and the stack; its value only when it is a runtime error, whose text the program wrote, since any other value could hold request data. A panic after the response has started aborts the connection, so a client never takes a truncated body for a complete one. `net/http`'s own messages go through the same logger, at `warn`.
+- **Host.** The Host check drops one final dot of a DNS name, so `raun.example.` is `raun.example`; an IP address is compared as it is.
+- **Exit codes.** `raun server` takes no argument (exit 2). A failure before the listener opens, an error of the listener, or in-flight requests dropped at the deadline exit 1; a clean stop exits 0.
+
 ## Deferred
 
 | Topic | Where |
@@ -191,6 +203,7 @@ Epic 3 stores no secret: sessions and CSRF tokens are random values, the first s
 | The form of an entry of `RAUN_ADMINS` | Epic 4 review (#23) |
 | The `RAUN_ADMINS` check, the Instance settings screen and the encryption of stored secrets | Epic 4 (#21) |
 | The first stored instance setting | The epic whose feature needs one |
+| The `_FILE` form of a variable and the secret type of the configuration | Epic 4, with its first secret variable |
 | The bypass and authentication of webhooks | Epic 5 (#30) |
 | The bypass and authentication of the runner API | Epic 6 |
 | How an upgrade is run, and the retention of logs | Epic 13 |

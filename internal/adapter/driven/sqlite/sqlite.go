@@ -34,6 +34,8 @@ type Options struct {
 type Store struct {
 	writer *sql.DB
 	reader *sql.DB
+	// latest is the version of the last embedded migration.
+	latest int
 }
 
 var _ knowledge.Store = (*Store)(nil)
@@ -43,14 +45,8 @@ var _ knowledge.Store = (*Store)(nil)
 // It applies no migration and creates no table: the server calls Migrate at
 // start when the administrator enables it.
 func Open(ctx context.Context, path string, opts Options) (*Store, error) {
-	if path == "" {
-		return nil, errors.New("open database: empty path")
-	}
-	// A plain file name ends at the first question mark, where the driver
-	// reads its parameters; a path holding one, or a URI, would open
-	// another file than the one asked for.
-	if strings.ContainsAny(path, "?#") || strings.HasPrefix(path, "file:") || path == ":memory:" {
-		return nil, fmt.Errorf("open database: path %q must be a plain file name", path)
+	if err := CheckPath(path); err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
 	}
 	readConns := opts.ReadConns
 	if readConns < 0 {
@@ -74,6 +70,11 @@ func Open(ctx context.Context, path string, opts Options) (*Store, error) {
 	settings.Set("_query_only", "1")
 	readDSN := path + "?" + settings.Encode()
 
+	migrations, err := loadMigrations(migrationFiles)
+	if err != nil {
+		return nil, fmt.Errorf("open database %s: %w", path, err)
+	}
+
 	writer, err := openPool(ctx, writeDSN, 1)
 	if err != nil {
 		return nil, fmt.Errorf("open database %s: writer: %w", path, err)
@@ -83,7 +84,21 @@ func Open(ctx context.Context, path string, opts Options) (*Store, error) {
 		_ = writer.Close()
 		return nil, fmt.Errorf("open database %s: readers: %w", path, err)
 	}
-	return &Store{writer: writer, reader: reader}, nil
+	return &Store{writer: writer, reader: reader, latest: migrations[len(migrations)-1].version}, nil
+}
+
+// CheckPath reports whether path is a database path Open accepts: a plain,
+// non-empty file name. A plain file name ends at the first question mark,
+// where the driver reads its parameters, so a path holding one or a hash, a
+// file: URI or :memory: would open another database than the one asked for.
+func CheckPath(path string) error {
+	if path == "" {
+		return errors.New("empty path")
+	}
+	if strings.ContainsAny(path, "?#") || strings.HasPrefix(path, "file:") || path == ":memory:" {
+		return fmt.Errorf("path %q must be a plain file name", path)
+	}
+	return nil
 }
 
 func openPool(ctx context.Context, dsn string, conns int) (*sql.DB, error) {
