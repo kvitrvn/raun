@@ -69,7 +69,7 @@ In `ui`, adapted from shadcn-templ at the pinned commit. They keep the upstream 
 | Input | `Input`, `Field` | `Field` holds the label and the error, which `Input` names through `aria-describedby` when invalid |
 | Table | `Table`, `TableCaption`, `TableHeader`, `TableBody`, `TableRow`, `TableHead`, `TableCell` | A head cell is a column header; the table scrolls inside its container |
 | Dialog | `Dialog`, `DialogTrigger`, `DialogClose`, `DialogFooter` | The native `<dialog>`, opened by the platform's invoker commands (`commandfor`, `command`), and by `app.js` where a browser lacks them |
-| Dropdown menu | `DropdownTrigger`, `DropdownContent`, `DropdownItem`, `DropdownSeparator`, `DropdownLabel`, `DropdownShortcut` | A native popover: it opens and closes without script; `app.js` places it and moves focus with the arrow keys |
+| Dropdown menu | `DropdownTrigger`, `DropdownContent`, `DropdownItem`, `DropdownSeparator`, `DropdownLabel`, `DropdownShortcut` | A native popover: it opens and closes without script, centred in the viewport; `app.js` places it under or above its trigger and moves focus with the arrow keys |
 
 Raun's own: `Icon` (the icon set, drawn as markup), `Toast`, `Layout` (document, skip link, top bar, flash messages, main region), `Empty`, `ErrorState`, and the pages `HomePage` and `NotFoundPage`.
 

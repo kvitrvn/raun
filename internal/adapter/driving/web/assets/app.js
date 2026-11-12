@@ -65,6 +65,8 @@
     var box = trigger.getBoundingClientRect();
     menu.style.position = "fixed";
     menu.style.margin = "0";
+    // Measured without the bound of a previous opening.
+    menu.style.maxHeight = "";
     var below = window.innerHeight - box.bottom - gap - edge;
     var above = box.top - gap - edge;
     var height = menu.offsetHeight;
