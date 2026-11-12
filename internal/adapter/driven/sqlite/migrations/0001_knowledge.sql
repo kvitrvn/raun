@@ -1,5 +1,8 @@
 -- Knowledge items and their history (epic 2, #14).
 --
+-- Released: never change this file. A change of the schema is a new numbered
+-- migration.
+--
 -- An item is one row: the columns that queries filter or sort on, and a JSON
 -- document for the rest. Its history is a table of its own, append-only.
 -- Workspaces and repositories have no table yet (epics 4 and 5): their

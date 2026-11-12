@@ -47,6 +47,11 @@ type migration struct {
 //     otherwise, each migration in its own transaction with its row in
 //     schema_migrations;
 //   - an up-to-date one is left as it is.
+//
+// The checks hold at start only: a server that started on its own version
+// keeps running if a newer binary migrates the file afterwards, so servers of
+// an older version are stopped before a newer one migrates. A released
+// migration file never changes; a change of the schema is a new file.
 func (s *Store) Migrate(ctx context.Context, enabled bool) error {
 	migrations, err := loadMigrations(migrationFiles)
 	if err != nil {

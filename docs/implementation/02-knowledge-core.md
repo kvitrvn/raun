@@ -95,12 +95,14 @@ No SQLite syntax leaves the adapter, which keeps a PostgreSQL adapter possible (
 
 ### Migrations
 
-Migrations are numbered SQL files (`0001_<slug>.sql`, ...) embedded in the binary, applied in order, each in its own transaction, and recorded in a `schema_migrations` table.
+Migrations are numbered SQL files (`0001_<slug>.sql`, ...) embedded in the binary, applied in order, each in its own transaction, and recorded in a `schema_migrations` table. A migration is known by its number only: once released, its file never changes, and every change of the schema is a new numbered file.
 
 They run at server start, and only when the administrator enables it with a setting (`RAUN_DATABASE_MIGRATE=true`; epic 3 defines the variable). Without it:
 
 - a schema older than the binary stops the server, with a message naming the setting;
-- a schema newer than the binary always stops the server, enabled or not: an older binary never writes to a database it does not know.
+- a schema newer than the binary always stops the server, enabled or not: an older binary never starts on a database it does not know.
+
+These checks hold at start only (#14 made that explicit; the page first said an older binary never writes to such a database, which no start-time check can promise). A server already running when a newer binary migrates the file keeps running on it, so servers of an older version are stopped before a newer one migrates; how an upgrade is run is settled in epic 13.
 
 Migrations are never applied on first use of a connection. There are no down migrations; whether downgrades are supported is settled in epic 13. The runner never opens the database. Epic 2 provides the migration function in the SQLite adapter; epic 3 (#18) calls it at start.
 
@@ -209,6 +211,7 @@ The invariant of `AGENTS.md` stands: every format read or written outside the da
 | Binding `by` to an account | Epic 4 |
 | The setting that enables migrations at start | Epic 3 (#18) |
 | Whether downgrades are supported | Epic 13 |
+| How an upgrade stops the servers of an older version before migrating | Epic 13 |
 | Whether a citation that moved at a later commit is rewritten | Epic 7 review (#44) |
 | The repository setting for the maximum citation length | Epic 8 |
 | The canonical serialization of the export | Epic 11 |
