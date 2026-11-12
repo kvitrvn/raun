@@ -8,3 +8,7 @@ review.md
 
 # Left by a golden update killed before its rename
 .golden-*
+
+# The database raun server creates by default (RAUN_DATABASE_PATH=raun.db)
+/raun.db
+/raun.db-*
