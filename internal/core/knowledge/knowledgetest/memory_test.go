@@ -3,6 +3,7 @@ package knowledgetest
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +12,13 @@ import (
 
 func TestMemory(t *testing.T) {
 	Suite(t, func(*testing.T) knowledge.Store { return NewMemory() })
+}
+
+func TestZeroMemoryRefuses(t *testing.T) {
+	var m Memory
+	if err := m.Create(context.Background(), scopeA(), Persona(t, personaID)); err == nil || !strings.Contains(err.Error(), "NewMemory") {
+		t.Errorf("a zero Memory: %v, want an error naming NewMemory", err)
+	}
 }
 
 // A mutation must not call the store. If it does, the call waits for the lock

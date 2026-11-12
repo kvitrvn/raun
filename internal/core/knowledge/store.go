@@ -102,8 +102,8 @@ type Store interface {
 	// result. Nothing is written when an error is returned.
 	//
 	// mutate runs once, while the store holds its write lock: it must be
-	// short and must not call the store, where a call that needs the write
-	// lock waits until its context ends.
+	// short and must not call the store. If it does, the call never waits
+	// longer than its context; what it sees is not specified.
 	Update(ctx context.Context, scope Scope, id string, revision int64, mutate Mutation) (Item, error)
 }
 

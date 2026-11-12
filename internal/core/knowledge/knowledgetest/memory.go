@@ -2,6 +2,7 @@ package knowledgetest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -13,7 +14,8 @@ import (
 // Memory is a knowledge.Store held in memory. One lock covers every
 // operation, so an update reads, checks, mutates and publishes an item
 // without any other operation in between. Waiting for the lock honours the
-// context, as waiting for the SQLite writer does.
+// context, as waiting for the SQLite writer does. Build one with NewMemory: a
+// Memory of another origin refuses every operation.
 type Memory struct {
 	lock  chan struct{}
 	items map[key]knowledge.Item
@@ -34,6 +36,9 @@ func NewMemory() *Memory {
 // acquire takes the lock, or gives up when ctx ends: a mutation that calls
 // the store waits for it, never forever.
 func (m *Memory) acquire(ctx context.Context) error {
+	if m.lock == nil {
+		return errors.New("memory store not built with NewMemory")
+	}
 	select {
 	case m.lock <- struct{}{}:
 		return nil
