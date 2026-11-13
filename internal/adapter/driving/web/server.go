@@ -114,6 +114,9 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 	if opts.Login != nil && opts.Workspaces == nil {
 		return nil, errors.New("web: Options.Workspaces is nil with a Login")
 	}
+	if opts.Login != nil && opts.Permissions == nil {
+		return nil, errors.New("web: Options.Permissions is nil with a Login")
+	}
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}

@@ -34,7 +34,10 @@ type stubForge struct {
 	permErr   error
 	permCalls int
 	// refuseOnce makes the next Permission refuse the token once.
-	refuseOnce     bool
+	refuseOnce bool
+	// during, when set, runs inside each Permission, as time passes while
+	// the forge answers.
+	during         func()
 	permissionWait chan struct{}
 }
 
@@ -117,6 +120,12 @@ func (f *stubForge) Permission(_ context.Context, t identity.Tokens, r identity.
 	if wait != nil {
 		wait <- struct{}{}
 		<-wait
+	}
+	f.mu.Lock()
+	during := f.during
+	f.mu.Unlock()
+	if during != nil {
+		during()
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()

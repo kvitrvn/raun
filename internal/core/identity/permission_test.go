@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/kvitrvn/raun/internal/core/identity"
-	"github.com/kvitrvn/raun/internal/core/identity/identitytest"
 )
 
 // permissionsOf is a permission service on the stub forge where Alice (a1)
@@ -195,12 +194,14 @@ func TestPermissionsAreKeptPerAccountAndRepository(t *testing.T) {
 	}
 }
 
-// twoIdentities is a store where every account has two identities on the
-// stub forge.
-type twoIdentities struct{ *identitytest.Memory }
+// listed lists the identities of every account, or fails with err.
+type listed struct {
+	ids []identity.Identity
+	err error
+}
 
-func (twoIdentities) IdentitiesOf(context.Context, string) ([]identity.Identity, error) {
-	return []identity.Identity{{Forge: "stub", ID: "1001"}, {Forge: "stub", ID: "1009"}}, nil
+func (l listed) IdentitiesOf(context.Context, string) ([]identity.Identity, error) {
+	return l.ids, l.err
 }
 
 func TestPermissionsNeedOneIdentity(t *testing.T) {
@@ -219,7 +220,7 @@ func TestPermissionsNeedOneIdentity(t *testing.T) {
 			t.Errorf("%s: Permission = %s, %v; want a refusal", name, got, err)
 		}
 	}
-	two := identity.NewPermissionService(s.forge, s.service, twoIdentities{s.store}, func() time.Time { return s.now })
+	two := identity.NewPermissionService(s.forge, s.service, listed{ids: []identity.Identity{{Forge: "stub", ID: "1001"}, {Forge: "stub", ID: "1009"}}}, func() time.Time { return s.now })
 	if got, err := two.Permission(context.Background(), "a1", api()); got != identity.PermissionNone || !errors.Is(err, identity.ErrNoIdentity) {
 		t.Errorf("two identities on the forge: Permission = %s, %v; want a refusal", got, err)
 	}
@@ -280,4 +281,94 @@ func TestPermissionsUnderConcurrency(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// TestTheLifetimeCountsFromTheAnswer: a forge slow to answer does not
+// shorten the life of what it answered.
+func TestTheLifetimeCountsFromTheAnswer(t *testing.T) {
+	s := newPermissionsOf(t)
+	s.forge.grant("1001", "2001", identity.PermissionDecide)
+	s.forge.during = func() { s.now = s.now.Add(2 * time.Minute) }
+	s.check(t, "a1", api(), identity.PermissionDecide, nil)
+	s.forge.during = nil
+	s.now = s.now.Add(identity.PermissionLifetime - time.Second)
+	s.check(t, "a1", api(), identity.PermissionDecide, nil)
+	if n := s.forge.calls(); n != 1 {
+		t.Errorf("%d calls to the forge: the entry lived less than its lifetime from the answer", n)
+	}
+}
+
+// TestCallersShareOneQuestion: callers that miss the same entry together ask
+// the forge once.
+func TestCallersShareOneQuestion(t *testing.T) {
+	s := newPermissionsOf(t)
+	s.forge.grant("1001", "2001", identity.PermissionDecide)
+	wait := make(chan struct{})
+	s.forge.mu.Lock()
+	s.forge.permissionWait = wait
+	s.forge.mu.Unlock()
+	var wg sync.WaitGroup
+	got := make([]identity.Permission, 6)
+	for i := range got {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			got[i], _ = s.permissions.Permission(context.Background(), "a1", api())
+		}()
+	}
+	<-wait // one caller is asking the forge
+	time.Sleep(20 * time.Millisecond)
+	s.forge.mu.Lock()
+	s.forge.permissionWait = nil
+	s.forge.mu.Unlock()
+	wait <- struct{}{}
+	wg.Wait()
+	if n := s.forge.calls(); n != 1 {
+		t.Errorf("%d calls to the forge for one entry, want 1", n)
+	}
+	for _, p := range got {
+		if p != identity.PermissionDecide {
+			t.Fatalf("permissions = %v, want decide for every caller", got)
+		}
+	}
+}
+
+// TestARefusalOfOneRepositoryKeepsTheOthers: Refused on one repository does
+// not spoil an answer in flight about another.
+func TestARefusalOfOneRepositoryKeepsTheOthers(t *testing.T) {
+	s := newPermissionsOf(t)
+	s.forge.grant("1001", "2002", identity.PermissionView)
+	other := identity.Repository{Forge: "stub", ID: "2002"}
+	wait := make(chan struct{})
+	s.forge.mu.Lock()
+	s.forge.permissionWait = wait
+	s.forge.mu.Unlock()
+	done := make(chan error)
+	go func() {
+		_, err := s.permissions.Permission(context.Background(), "a1", other)
+		done <- err
+	}()
+	<-wait
+	s.permissions.Refused("a1", api())
+	s.forge.mu.Lock()
+	s.forge.permissionWait = nil
+	s.forge.mu.Unlock()
+	wait <- struct{}{}
+	if err := <-done; err != nil {
+		t.Errorf("an answer about another repository across a Refused = %v", err)
+	}
+	s.check(t, "a1", other, identity.PermissionView, nil)
+	if n := s.forge.calls(); n != 1 {
+		t.Errorf("%d calls to the forge: the answer was not kept", n)
+	}
+}
+
+func TestFailuresOutsideTheForgeAreTransient(t *testing.T) {
+	s := newPermissionsOf(t)
+	broken := identity.NewPermissionService(s.forge, s.service, listed{err: errors.New("database locked")}, func() time.Time { return s.now })
+	if got, err := broken.Permission(context.Background(), "a1", api()); got != identity.PermissionNone || !errors.Is(err, identity.ErrUnavailable) {
+		t.Errorf("Permission with a failing store = %s, %v; want a refusal to try again", got, err)
+	}
+	s.forge.grant("1001", "2001", identity.Permission("admin"))
+	s.check(t, "a1", api(), identity.PermissionNone, identity.ErrUnavailable)
 }

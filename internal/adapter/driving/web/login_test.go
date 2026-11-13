@@ -429,6 +429,31 @@ func TestLoginWithoutAForge(t *testing.T) {
 	}
 }
 
+func TestALoginNeedsItsServices(t *testing.T) {
+	fake, _ := forgetest.Scenario("github", false)
+	store := &identitytest.Memory{}
+	login := identity.NewLogin(fake, identity.Policy{}, store, rand.Reader, time.Now)
+	base := Options{
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), PublicHost: testHost, Scheme: "https",
+		Ready: func(context.Context) error { return nil }, Sessions: &sessiontest.Memory{}, Login: login,
+		Accounts: store, Workspaces: identity.NewWorkspaces(store, rand.Reader, time.Now), Permissions: &forgotten{},
+	}
+	for name, drop := range map[string]func(o *Options){
+		"Accounts":    func(o *Options) { o.Accounts = nil },
+		"Workspaces":  func(o *Options) { o.Workspaces = nil },
+		"Permissions": func(o *Options) { o.Permissions = nil },
+	} {
+		o := base
+		drop(&o)
+		if _, err := New(o); err == nil || !strings.Contains(err.Error(), name) {
+			t.Errorf("New without %s = %v", name, err)
+		}
+	}
+	if _, err := New(base); err != nil {
+		t.Errorf("New with every service = %v", err)
+	}
+}
+
 func TestRequireAccount(t *testing.T) {
 	l := newLoginServer(t)
 	handle(l.app, "GET /private", l.requireAccount(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

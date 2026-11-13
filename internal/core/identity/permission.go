@@ -20,25 +20,34 @@ var (
 	errChanged = errors.New("the permissions of the account changed during the check")
 )
 
+// IdentityLister lists the forge identities of an account.
+type IdentityLister interface {
+	IdentitiesOf(ctx context.Context, account string) ([]Identity, error)
+}
+
 // PermissionService decides what an account may do on a repository: it is
 // the one place that does, for every screen and action on repository data.
 // It asks the forge with the account's own tokens, and keeps the answer
-// PermissionLifetime, in memory, per account and stable identifier of the
-// repository. A permission that cannot be established is a refusal: the
-// service answers PermissionNone with the error. No role of the instance or
-// of a workspace gives any permission. It is safe for concurrent use.
+// PermissionLifetime from that answer, in memory, per account and stable
+// identifier of the repository. Callers that miss the same entry together
+// share one question to the forge. A permission that cannot be established
+// is a refusal: the service answers PermissionNone with the error. No role of
+// the instance or of a workspace gives any permission. It is safe for
+// concurrent use.
 type PermissionService struct {
-	forge  Forge
-	tokens *TokenService
-	store  Store
-	now    func() time.Time
+	forge      Forge
+	tokens     *TokenService
+	identities IdentityLister
+	now        func() time.Time
 
-	mu      sync.Mutex
-	entries map[permissionKey]permissionEntry
-	// accounts and identities count the invalidations of each account and
-	// of each identity: an answer the forge gave across one is not kept.
-	accounts   map[string]uint64
-	identities map[string]uint64
+	mu       sync.Mutex
+	entries  map[permissionKey]permissionEntry
+	inflight map[permissionKey]*permissionCall
+	// The invalidations of each account, of each identity and of each
+	// entry: an answer the forge gave across one is not kept.
+	accountGen  map[string]uint64
+	identityGen map[string]uint64
+	keyGen      map[permissionKey]uint64
 }
 
 type permissionKey struct {
@@ -51,18 +60,28 @@ type permissionEntry struct {
 	identity   string
 }
 
+// permissionCall is a question to the forge in progress, which the callers
+// of the same entry wait on.
+type permissionCall struct {
+	done       chan struct{}
+	permission Permission
+	err        error
+}
+
 // NewPermissionService returns the permission service of forge, whose tokens
-// tokens gives, for the accounts of store, at the time now gives. It forgets
-// the permissions of an identity whose tokens tokens revokes.
-func NewPermissionService(forge Forge, tokens *TokenService, store Store, now func() time.Time) *PermissionService {
+// tokens gives, for the accounts identities lists, at the time now gives. It
+// forgets the permissions of an identity whose tokens tokens revokes.
+func NewPermissionService(forge Forge, tokens *TokenService, identities IdentityLister, now func() time.Time) *PermissionService {
 	p := &PermissionService{
-		forge:      forge,
-		tokens:     tokens,
-		store:      store,
-		now:        now,
-		entries:    map[permissionKey]permissionEntry{},
-		accounts:   map[string]uint64{},
-		identities: map[string]uint64{},
+		forge:       forge,
+		tokens:      tokens,
+		identities:  identities,
+		now:         now,
+		entries:     map[permissionKey]permissionEntry{},
+		inflight:    map[permissionKey]*permissionCall{},
+		accountGen:  map[string]uint64{},
+		identityGen: map[string]uint64{},
+		keyGen:      map[permissionKey]uint64{},
 	}
 	tokens.OnRevoke(p.revoked)
 	return p
@@ -74,27 +93,56 @@ func NewPermissionService(forge Forge, tokens *TokenService, store Store, now fu
 // and a forge that cannot answer refuses. Any error comes with
 // PermissionNone: ErrNoIdentity, the errors of the token service (ErrRevoked,
 // ErrNotFound when the tokens are gone) and of the forge (ErrUnauthorized,
-// ErrUnavailable). A PermissionNone the forge gives comes with no error.
+// ErrUnavailable, which also wraps a failure of the store, an answer the
+// forge should not give, and an answer given across an invalidation). A
+// PermissionNone the forge gives comes with no error.
 func (p *PermissionService) Permission(ctx context.Context, account string, repo Repository) (Permission, error) {
 	if account == "" || repo.ID == "" || repo.Forge != p.forge.Name() {
 		return PermissionNone, ErrNoIdentity
 	}
 	key := permissionKey{account: account, forge: repo.Forge, repository: repo.ID}
-	now := p.now()
-	p.mu.Lock()
-	if e, ok := p.entries[key]; ok && now.Before(e.expires) {
+	for {
+		p.mu.Lock()
+		if e, ok := p.entries[key]; ok && p.now().Before(e.expires) {
+			p.mu.Unlock()
+			return e.permission, nil
+		}
+		if c, ok := p.inflight[key]; ok {
+			p.mu.Unlock()
+			select {
+			case <-c.done:
+			case <-ctx.Done():
+				return PermissionNone, fmt.Errorf("%w: %w", ErrUnavailable, ctx.Err())
+			}
+			// A question given up by its own caller is asked again.
+			if c.err != nil && (errors.Is(c.err, context.Canceled) || errors.Is(c.err, context.DeadlineExceeded)) && ctx.Err() == nil {
+				continue
+			}
+			return c.permission, c.err
+		}
+		c := &permissionCall{done: make(chan struct{})}
+		p.inflight[key] = c
+		gens := [2]uint64{p.accountGen[account], p.keyGen[key]}
 		p.mu.Unlock()
-		return e.permission, nil
-	}
-	accountGen := p.accounts[account]
-	p.mu.Unlock()
 
-	identity, err := p.identityOf(ctx, account, repo.Forge)
+		c.permission, c.err = p.ask(ctx, key, repo, gens)
+		p.mu.Lock()
+		delete(p.inflight, key)
+		p.mu.Unlock()
+		close(c.done)
+		return c.permission, c.err
+	}
+}
+
+// ask asks the forge the permission of key and keeps it, unless the
+// account or the entry was invalidated since gens were read.
+func (p *PermissionService) ask(ctx context.Context, key permissionKey, repo Repository, gens [2]uint64) (Permission, error) {
+	identity, err := p.identityOf(ctx, key.account, repo.Forge)
 	if err != nil {
 		return PermissionNone, err
 	}
 	p.mu.Lock()
-	identityGen := p.identities[identity]
+	identityGen := p.identityGen[identity]
 	p.mu.Unlock()
 
 	var got Permission
@@ -106,11 +154,11 @@ func (p *PermissionService) Permission(ctx context.Context, account string, repo
 	switch {
 	case errors.Is(err, ErrRevoked) || errors.Is(err, ErrNotFound):
 		// The tokens are gone: nothing of the account holds any more.
-		p.Forget(account)
+		p.Forget(key.account)
 		return PermissionNone, err
 	case errors.Is(err, ErrUnauthorized):
 		// The forge refuses even a refreshed token for this repository.
-		p.Refused(account, repo)
+		p.Refused(key.account, repo)
 		return PermissionNone, err
 	case err != nil:
 		// A transient failure keeps what is kept: a permission still kept
@@ -118,14 +166,16 @@ func (p *PermissionService) Permission(ctx context.Context, account string, repo
 		return PermissionNone, err
 	}
 	if got != PermissionNone && got != PermissionView && got != PermissionDecide {
-		return PermissionNone, fmt.Errorf("the forge gave the unknown permission %q", got)
+		return PermissionNone, fmt.Errorf("%w: the forge gave the unknown permission %q", ErrUnavailable, got)
 	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.accounts[account] != accountGen || p.identities[identity] != identityGen {
+	if p.accountGen[key.account] != gens[0] || p.keyGen[key] != gens[1] || p.identityGen[identity] != identityGen {
 		return PermissionNone, fmt.Errorf("%w: %w", ErrUnavailable, errChanged)
 	}
+	// The lifetime counts from the answer, however long the question took.
+	now := p.now()
 	p.sweep(now)
 	p.entries[key] = permissionEntry{permission: got, expires: now.Add(PermissionLifetime), identity: identity}
 	return got, nil
@@ -133,9 +183,9 @@ func (p *PermissionService) Permission(ctx context.Context, account string, repo
 
 // identityOf returns the key of the one identity of account on forge.
 func (p *PermissionService) identityOf(ctx context.Context, account, forge string) (string, error) {
-	ids, err := p.store.IdentitiesOf(ctx, account)
+	ids, err := p.identities.IdentitiesOf(ctx, account)
 	if err != nil {
-		return "", fmt.Errorf("find the identity of the account: %w", err)
+		return "", fmt.Errorf("%w: find the identity of the account: %w", ErrUnavailable, err)
 	}
 	var key string
 	for _, id := range ids {
@@ -172,16 +222,18 @@ func (p *PermissionService) Forget(account string) {
 			delete(p.entries, k)
 		}
 	}
-	p.accounts[account]++
+	p.accountGen[account]++
 }
 
-// Refused drops the permission of the account on repo: the forge refused a
-// call about it, a call of the service or of a caller of epic 5 or later.
+// Refused drops the permission of the account on repo, and only it: the
+// forge refused a call about it, a call of the service or of a caller of
+// epic 5 or later.
 func (p *PermissionService) Refused(account string, repo Repository) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	delete(p.entries, permissionKey{account: account, forge: repo.Forge, repository: repo.ID})
-	p.accounts[account]++
+	key := permissionKey{account: account, forge: repo.Forge, repository: repo.ID}
+	delete(p.entries, key)
+	p.keyGen[key]++
 }
 
 // revoked drops the permissions given through the identity with this key,
@@ -195,5 +247,5 @@ func (p *PermissionService) revoked(key string) {
 			delete(p.entries, k)
 		}
 	}
-	p.identities[key]++
+	p.identityGen[key]++
 }
