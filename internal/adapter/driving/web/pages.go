@@ -14,6 +14,11 @@ import (
 // title; current is the href of the top bar link to mark.
 func (s *Server) page(r *http.Request, title, current string) ui.Page {
 	nav := []ui.NavItem{{Label: "Repositories", Href: "/"}}
+	// The link shows to administrators only; the screen checks the role
+	// again itself.
+	if s.isAdministrator(r) {
+		nav = append(nav, ui.NavItem{Label: "Instance settings", Href: "/instance"})
+	}
 	for i := range nav {
 		nav[i].Current = nav[i].Href == current
 	}
