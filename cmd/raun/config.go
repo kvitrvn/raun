@@ -300,7 +300,13 @@ func (c *config) checkIdentities() []error {
 	for _, list := range []struct {
 		name    string
 		entries []identity.Entry
-	}{{"RAUN_ADMINS", c.signup.Admins}, {"RAUN_SIGNUP_ORGS", c.signup.Orgs}, {"RAUN_SIGNUP_USERS", c.signup.Users}} {
+		// hint says how to find the identifier on GitHub.
+		hint string
+	}{
+		{"RAUN_ADMINS", c.signup.Admins, "gh api users/<login> -q .id"},
+		{"RAUN_SIGNUP_ORGS", c.signup.Orgs, "gh api orgs/<org> -q .id"},
+		{"RAUN_SIGNUP_USERS", c.signup.Users, "gh api users/<login> -q .id"},
+	} {
 		for _, e := range list.entries {
 			switch {
 			case !slices.Contains(forges, e.Forge):
@@ -309,7 +315,7 @@ func (c *config) checkIdentities() []error {
 				// A login would pass the form and never match: the
 				// instance would refuse everyone without saying why.
 				if err := github.CheckIdentifier(e.ID); err != nil {
-					errs = append(errs, fmt.Errorf("%s: %s: %w; gh api users/<login> -q .id gives it", list.name, e, err))
+					errs = append(errs, fmt.Errorf("%s: %s: %w; %s gives it", list.name, e, err, list.hint))
 				}
 			}
 		}
