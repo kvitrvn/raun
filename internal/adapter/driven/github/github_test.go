@@ -16,6 +16,8 @@ func TestCheckWebURL(t *testing.T) {
 		{"https://github.com/", true},
 		{"https://ghe.example.com", true},
 		{"https://ghe.example.com:8443", true},
+		{"https://github.com:443", true},
+		{"https://github.com:8443", false},
 		{"http://ghe.example.com", false},
 		{"https://user:pass@ghe.example.com", false},
 		{"https://ghe.example.com/github", false},
@@ -35,6 +37,7 @@ func TestAPIOf(t *testing.T) {
 	for web, want := range map[string]string{
 		"https://github.com":          "https://api.github.com",
 		"https://GitHub.com":          "https://api.github.com",
+		"https://github.com:443":      "https://api.github.com",
 		"https://ghe.example.com":     "https://ghe.example.com/api/v3",
 		"https://ghe.example.com:444": "https://ghe.example.com:444/api/v3",
 	} {

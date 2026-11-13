@@ -305,10 +305,10 @@ func TestRepositoriesSkipLostInstallations(t *testing.T) {
 func TestMalformedListings(t *testing.T) {
 	key := testKey(t)
 	for name, body := range map[string]string{
-		"no identifier":     `{"repositories": [{"full_name": "acme/api", "default_branch": "main"}]}`,
-		"no default branch": `{"repositories": [{"id": 2001, "full_name": "acme/api"}]}`,
-		"a string id":       `{"repositories": [{"id": "2001", "full_name": "acme/api", "default_branch": "main"}]}`,
-		"two documents":     `{"repositories": []} {}`,
+		"no identifier": `{"repositories": [{"full_name": "acme/api", "default_branch": "main"}]}`,
+		"no full name":  `{"repositories": [{"id": 2001, "default_branch": "main"}]}`,
+		"a string id":   `{"repositories": [{"id": "2001", "full_name": "acme/api", "default_branch": "main"}]}`,
+		"two documents": `{"repositories": []} {}`,
 	} {
 		g := newGitHub(t, key)
 		a := g.app(t, key, nil)
@@ -320,6 +320,37 @@ func TestMalformedListings(t *testing.T) {
 		if _, err := a.Repositories(context.Background(), tokens); !errors.Is(err, identity.ErrUnavailable) {
 			t.Errorf("%s: Repositories = %v", name, err)
 		}
+	}
+}
+
+// TestAnEmptyRepository: GitHub gives a repository without a commit no
+// default branch. It is left out of the listing, which still succeeds, and
+// its permission still resolves.
+func TestAnEmptyRepository(t *testing.T) {
+	key := testKey(t)
+	for name, branch := range map[string]string{"null": `null`, "absent": ``} {
+		t.Run(name, func(t *testing.T) {
+			g := newGitHub(t, key)
+			a := g.app(t, key, nil)
+			tokens := login(t, g, a, 1001)
+			field := ``
+			if branch != "" {
+				field = `, "default_branch": ` + branch
+			}
+			g.on("/api/v3/user/installations/501/repositories", func(w http.ResponseWriter, _ *http.Request) bool {
+				_, _ = w.Write([]byte(`{"total_count": 2, "repositories": [
+					{"id": 2001, "full_name": "acme/api", "default_branch": "main", "permissions": {"admin": true, "pull": true}},
+					{"id": 2005, "full_name": "acme/empty"` + field + `, "permissions": {"push": true, "pull": true}}]}`))
+				return true
+			})
+			repos, err := a.Repositories(context.Background(), tokens)
+			if err != nil || len(repos) != 1 || repos[0].FullName != "acme/api" {
+				t.Errorf("Repositories = %v, %v; want acme/api only", repos, err)
+			}
+			if p, err := a.Permission(context.Background(), tokens, identity.Repository{Forge: "github", ID: "2005"}); err != nil || p != identity.PermissionDecide {
+				t.Errorf("Permission of the empty repository = %s, %v", p, err)
+			}
+		})
 	}
 }
 
@@ -395,7 +426,7 @@ func TestARevokedInstallation(t *testing.T) {
 	if p, err := a.Permission(ctx, tokens, identity.Repository{Forge: "github", ID: "2001"}); err != nil || p != identity.PermissionNone {
 		t.Errorf("Permission = %s, %v; want none", p, err)
 	}
-	a.forgetToken(s)
+	a.forgetInstallation(501)
 	if _, err := a.installationToken(ctx, s); !errors.Is(err, errInstallation) {
 		t.Errorf("installationToken = %v, want an unavailable installation", err)
 	}

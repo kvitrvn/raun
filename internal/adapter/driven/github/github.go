@@ -88,6 +88,9 @@ func CheckWebURL(raw string) error {
 	if u.Path != "" && u.Path != "/" {
 		return fmt.Errorf("%q has a path: GitHub is served at the root of its host", raw)
 	}
+	if strings.EqualFold(u.Hostname(), "github.com") && u.Port() != "" && u.Port() != "443" {
+		return fmt.Errorf("%q: github.com is served on port 443 only", raw)
+	}
 	return nil
 }
 
@@ -157,7 +160,7 @@ func New(opts Options) (*App, error) {
 // https://api.github.com for github.com, <web>/api/v3 for a GitHub
 // Enterprise Server.
 func apiOf(web string) string {
-	if u, err := url.Parse(web); err == nil && strings.EqualFold(u.Host, "github.com") {
+	if u, err := url.Parse(web); err == nil && strings.EqualFold(u.Hostname(), "github.com") {
 		return "https://api.github.com"
 	}
 	return web + "/api/v3"

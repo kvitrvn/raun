@@ -162,9 +162,13 @@ func (a *App) installationToken(ctx context.Context, s scope) (identity.Secret, 
 	key := s.key()
 	for {
 		a.tokens.mu.Lock()
-		if t, ok := a.tokens.tokens[key]; ok && a.now().Add(tokenMargin).Before(t.expires) {
-			a.tokens.mu.Unlock()
-			return t.token, nil
+		if t, ok := a.tokens.tokens[key]; ok {
+			if a.now().Add(tokenMargin).Before(t.expires) {
+				a.tokens.mu.Unlock()
+				return t.token, nil
+			}
+			// Past its margin, a token is dropped rather than kept.
+			delete(a.tokens.tokens, key)
 		}
 		if m, ok := a.tokens.inflight[key]; ok {
 			a.tokens.mu.Unlock()
@@ -237,6 +241,14 @@ func (a *App) mintToken(ctx context.Context, s scope, key string) (identity.Secr
 	}
 	t := installationToken{installation: s.installation, token: identity.Secret(out.Token), expires: out.ExpiresAt}
 	a.tokens.mu.Lock()
+	// Tokens of other scopes past their margin are dropped too, so the
+	// cache holds no token that would not be used.
+	now := a.now()
+	for k, old := range a.tokens.tokens {
+		if !now.Add(tokenMargin).Before(old.expires) {
+			delete(a.tokens.tokens, k)
+		}
+	}
 	a.tokens.tokens[key] = t
 	a.tokens.mu.Unlock()
 	return t.token, nil
@@ -253,11 +265,16 @@ func (a *App) forgetInstallation(installation int64) {
 	}
 }
 
-// forgetToken drops the token of s, which GitHub refused.
-func (a *App) forgetToken(s scope) {
+// forgetToken drops token, a token of s GitHub refused, unless the cache
+// already holds another one: a late refusal of an old token never drops the
+// token minted to replace it.
+func (a *App) forgetToken(s scope, token identity.Secret) {
 	a.tokens.mu.Lock()
 	defer a.tokens.mu.Unlock()
-	delete(a.tokens.tokens, s.key())
+	key := s.key()
+	if t, ok := a.tokens.tokens[key]; ok && t.token == token {
+		delete(a.tokens.tokens, key)
+	}
 }
 
 // asInstallation sends the request build makes with a token of s. A token
@@ -277,7 +294,7 @@ func (a *App) asInstallation(ctx context.Context, s scope, build func(auth strin
 		if r.status != http.StatusUnauthorized {
 			return r, nil
 		}
-		a.forgetToken(s)
+		a.forgetToken(s, token)
 		if attempt == 2 {
 			return nil, fail(req, identity.ErrUnavailable, "GitHub refuses a new installation token")
 		}

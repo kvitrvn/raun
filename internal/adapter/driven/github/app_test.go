@@ -166,9 +166,8 @@ func TestARevokedInstallationIsNeverCached(t *testing.T) {
 		"removed":   func() { delete(g.installations, 501) },
 	} {
 		g.change(change)
-		// The cached token is dropped with the installation once GitHub
-		// refuses a mint for it.
-		a.forgetToken(s)
+		// The cached token is dropped, so the next call mints.
+		a.forgetInstallation(501)
 		for range 2 {
 			_, err := a.installationToken(ctx, s)
 			if !errors.Is(err, identity.ErrUnavailable) || !errors.Is(err, errInstallation) {
@@ -229,6 +228,48 @@ func TestARefusedInstallationTokenIsMintedAgainOnce(t *testing.T) {
 	}
 	if len(g.recorded()) != 3 {
 		t.Errorf("%d mints, want one more and no other", len(g.recorded()))
+	}
+}
+
+// TestALateRefusalKeepsTheNewToken: a refusal of an old token, arriving once
+// its replacement is cached, never drops the replacement.
+func TestALateRefusalKeepsTheNewToken(t *testing.T) {
+	key := testKey(t)
+	g := newGitHub(t, key)
+	a := g.app(t, key, nil)
+	ctx := context.Background()
+	s := scope{installation: 501, repositories: []int64{2001}, permissions: contents()}
+	old, err := a.installationToken(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.forgetToken(s, old)
+	fresh, err := a.installationToken(ctx, s)
+	if err != nil || fresh == old {
+		t.Fatalf("installationToken after a refusal = %v, %v", fresh, err)
+	}
+	a.forgetToken(s, old)
+	if again, _ := a.installationToken(ctx, s); again != fresh || len(g.recorded()) != 2 {
+		t.Errorf("a late refusal of the old token dropped the new one: %d mints", len(g.recorded()))
+	}
+}
+
+// TestExpiredTokensLeaveTheCache: a token past its margin is not kept.
+func TestExpiredTokensLeaveTheCache(t *testing.T) {
+	key := testKey(t)
+	g := newGitHub(t, key)
+	a := g.app(t, key, nil)
+	ctx := context.Background()
+	first := scope{installation: 501, repositories: []int64{2001}, permissions: contents()}
+	if _, err := a.installationToken(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	g.clock.Advance(time.Hour - tokenMargin)
+	if _, err := a.installationToken(ctx, scope{installation: 501, repositories: []int64{2002}, permissions: contents()}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(a.tokens.tokens); n != 1 {
+		t.Errorf("%d tokens cached, want only the one minted last", n)
 	}
 }
 

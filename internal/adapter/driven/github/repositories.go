@@ -20,8 +20,10 @@ type installation struct {
 // repository is a repository as GitHub lists it for a person, with that
 // person's rights on it.
 type repository struct {
-	ID            int64  `json:"id"`
-	FullName      string `json:"full_name"`
+	ID       int64  `json:"id"`
+	FullName string `json:"full_name"`
+	// DefaultBranch may be null or absent for a repository without a
+	// commit, which holds nothing to analyze.
 	DefaultBranch string `json:"default_branch"`
 	Private       bool   `json:"private"`
 	Permissions   struct {
@@ -102,7 +104,7 @@ func (a *App) walk(ctx context.Context, t identity.Tokens, visit func(repository
 				return 0, err
 			}
 			for _, repo := range out.Repositories {
-				if repo.ID <= 0 || repo.FullName == "" || repo.DefaultBranch == "" {
+				if repo.ID <= 0 || repo.FullName == "" {
 					return 0, fail(req, identity.ErrUnavailable, "malformed response")
 				}
 				if !visit(repo) {
@@ -128,7 +130,9 @@ func (a *App) Repositories(ctx context.Context, t identity.Tokens) ([]identity.R
 	seen := map[int64]bool{}
 	var out []identity.Repository
 	err := a.walk(ctx, t, func(r repository) bool {
-		if !seen[r.ID] && r.permission() != identity.PermissionNone {
+		// A repository without a default branch has no commit: there is
+		// nothing to activate yet. Permission still resolves it.
+		if !seen[r.ID] && r.DefaultBranch != "" && r.permission() != identity.PermissionNone {
 			seen[r.ID] = true
 			out = append(out, identity.Repository{
 				Forge:         Name,

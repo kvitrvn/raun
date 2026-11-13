@@ -236,7 +236,35 @@ func TestPagesStopsAtTheBound(t *testing.T) {
 		}
 		return len(out), nil
 	})
-	if !errors.Is(err, identity.ErrUnavailable) || s.count() != maxPages {
-		t.Errorf("pages = %v after %d calls, want ErrUnavailable after %d", err, s.count(), maxPages)
+	if !errors.Is(err, identity.ErrUnavailable) || s.count() != maxPages+1 {
+		t.Errorf("pages = %v after %d calls, want ErrUnavailable after %d", err, s.count(), maxPages+1)
+	}
+}
+
+// TestPagesTakesExactlyTheBound: a listing of exactly maxPages full pages is
+// whole, and the page past the bound, empty, is never given to the caller.
+func TestPagesTakesExactlyTheBound(t *testing.T) {
+	for name, empty := range map[string]string{"array": `[]`, "object": `{"total_count": 10000, "repositories": []}`} {
+		s := newScripted(t, func(w http.ResponseWriter, r *http.Request) {
+			if n, _ := strconv.Atoi(r.URL.Query().Get("page")); n > maxPages {
+				_, _ = w.Write([]byte(empty))
+				return
+			}
+			_, _ = w.Write([]byte("[" + strings.TrimSuffix(strings.Repeat(`"x",`, perPage), ",") + "]"))
+		})
+		var waits []time.Duration
+		a := scriptedApp(t, s, &waits)
+		pages := 0
+		err := a.pages(context.Background(), "/x", nil, "", func(req request, r *response) (int, error) {
+			pages++
+			var out []string
+			if err := decode(req, r, &out); err != nil {
+				return 0, err
+			}
+			return len(out), nil
+		})
+		if err != nil || pages != maxPages || s.count() != maxPages+1 {
+			t.Errorf("%s: pages = %v, %d pages given, %d calls", name, err, pages, s.count())
+		}
 	}
 }
