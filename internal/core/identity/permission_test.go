@@ -456,7 +456,11 @@ func TestALeaderThatGivesUp(t *testing.T) {
 		p, _ := s.permissions.Permission(context.Background(), "a1", api())
 		waiter <- p
 	}()
-	time.Sleep(20 * time.Millisecond)
+	// The waiter joins the question before the leader gives up, so the
+	// answer it gets is the one it asks again.
+	for identity.Waiters(s.permissions, "a1", api()) == 0 {
+		time.Sleep(time.Millisecond)
+	}
 	cancel()
 	unblock(s, wait)
 	if err := <-leader; !errors.Is(err, context.Canceled) {

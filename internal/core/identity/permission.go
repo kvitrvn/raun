@@ -67,6 +67,7 @@ type permissionCall struct {
 	done        chan struct{}
 	permission  Permission
 	err         error
+	waiters     int
 	accountGen  uint64
 	keyGen      uint64
 	identity    string
@@ -98,9 +99,10 @@ func NewPermissionService(forge Forge, tokens *TokenService, identities Identity
 // and a forge that cannot answer refuses. Any error comes with
 // PermissionNone: ErrNoIdentity, the errors of the token service (ErrRevoked,
 // ErrNotFound when the tokens are gone) and of the forge (ErrUnauthorized,
-// ErrUnavailable, which also wraps a failure of the store, an answer the
-// forge should not give, and an answer given across an invalidation). A
-// PermissionNone the forge gives comes with no error.
+// ErrUnavailable, which also wraps a failure of a store, a context the caller
+// gave up, an answer the forge should not give, and an answer given across
+// an invalidation: a refusal to try again). A PermissionNone the forge gives
+// comes with no error.
 func (p *PermissionService) Permission(ctx context.Context, account string, repo Repository) (Permission, error) {
 	if account == "" || repo.ID == "" || repo.Forge != p.forge.Name() {
 		return PermissionNone, ErrNoIdentity
@@ -113,6 +115,7 @@ func (p *PermissionService) Permission(ctx context.Context, account string, repo
 			return e.permission, nil
 		}
 		if c, ok := p.inflight[key]; ok {
+			c.waiters++
 			p.mu.Unlock()
 			select {
 			case <-c.done:
