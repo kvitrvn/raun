@@ -63,15 +63,18 @@ while IFS= read -r package; do
     done < <(sort -u <<<"$imports")
 done <<<"$packages"
 
-# Test helpers are never linked into the binary: the fake forge, the fixture
-# repositories, the golden files and the in-memory stores of the core.
+# Test helpers are never linked into the binary. A test helper is a package of
+# the module with a path element named golden or ending in test: the fake
+# forge, the fixture repositories, the golden files and the contract suites of
+# the core, and the next one that follows the convention.
 deps="$(go list -deps ./cmd/raun)" || {
     echo "architecture: cannot list the dependencies of cmd/raun" >&2
     exit 1
 }
 while IFS= read -r dep; do
-    case "$dep" in
-        "$module"/internal/forgetest* | "$module"/internal/gittest* | "$module"/internal/golden* | "$module"/internal/core/*/*test)
+    [[ "$dep" == "$module"/* ]] || continue
+    case "/${dep#"$module"/}/" in
+        */golden/* | *test/*)
             echo "cmd/raun must not link the test helper $dep" >&2
             failed=1
             ;;
