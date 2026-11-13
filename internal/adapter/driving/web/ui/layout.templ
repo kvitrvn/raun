@@ -12,6 +12,14 @@ type Assets struct {
 	Icon    string
 }
 
+// WorkspaceItem is a workspace of the switcher of the top bar.
+type WorkspaceItem struct {
+	Name     string
+	Href     string
+	Personal bool
+	Current  bool
+}
+
 // NavItem is a link of the top bar. Only pages that exist are listed.
 type NavItem struct {
 	Label   string
@@ -37,6 +45,20 @@ type Page struct {
 	// Login shows a link to log in when no account is logged in: a forge
 	// is configured.
 	Login bool
+	// Workspaces are the workspaces of the account logged in, for the
+	// switcher; none without an account.
+	Workspaces []WorkspaceItem
+}
+
+// switcherLabel is the label of the switcher: the current workspace, if
+// any.
+func (p Page) switcherLabel() string {
+	for _, w := range p.Workspaces {
+		if w.Current {
+			return w.Name
+		}
+	}
+	return "Workspaces"
 }
 
 // csrfHeaders is the JSON of the hx-headers attribute that sends the CSRF
@@ -120,6 +142,34 @@ templ topbar(p Page) {
 					>{ n.Label }</a>
 				}
 			</nav>
+		}
+		if len(p.Workspaces) > 0 {
+			@DropdownTrigger(DropdownTriggerProps{For: "workspace-switcher", Button: ButtonProps{Variant: ButtonOutline, Size: ButtonSmall, Class: "font-mono"}}) {
+				{ p.switcherLabel() }
+			}
+			@DropdownContent(DropdownContentProps{ID: "workspace-switcher", Label: "Workspaces"}) {
+				for _, w := range p.Workspaces {
+					if w.Current {
+						@DropdownItem(DropdownItemProps{Href: w.Href, Attributes: templ.Attributes{"aria-current": "page"}}) {
+							<span class="font-mono">{ w.Name }</span>
+							if w.Personal {
+								<span class="text-muted-foreground">personal</span>
+							}
+						}
+					} else {
+						@DropdownItem(DropdownItemProps{Href: w.Href}) {
+							<span class="font-mono">{ w.Name }</span>
+							if w.Personal {
+								<span class="text-muted-foreground">personal</span>
+							}
+						}
+					}
+				}
+				@DropdownSeparator()
+				@DropdownItem(DropdownItemProps{Href: "/workspaces"}) {
+					All workspaces
+				}
+			}
 		}
 		<span class="flex-1"></span>
 		if p.Account != "" {

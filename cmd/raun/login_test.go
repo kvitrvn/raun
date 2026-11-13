@@ -212,3 +212,36 @@ func TestSignupOrgsNeedMemberships(t *testing.T) {
 		t.Errorf("start with RAUN_SIGNUP_ORGS on a forge without memberships:\n%s", out)
 	}
 }
+
+// TestWorkspacesThroughTheServer: Alice's sign-up gives her a personal
+// workspace in the switcher; she creates a shared one, which outlives a
+// restart.
+func TestWorkspacesThroughTheServer(t *testing.T) {
+	dir := t.TempDir()
+	keyFile, _ := writeAppKey(t, dir)
+	fake, _ := forgetest.Scenario("github", false)
+	env := append(app(keyFile), "RAUN_SIGNUP_USERS=github:1001")
+	deps := serverDeps{forge: fake}
+
+	s := start(t, dir, env, deps)
+	alice := newVisitor(t, s)
+	alice.logIn(fake, "1001")
+	alice.submit("/login/signup", "/login/signup", url.Values{"name": {"alice"}})
+	if _, _, home := alice.send(http.MethodGet, "/", nil); !strings.Contains(home, `id="workspace-switcher"`) || !strings.Contains(home, `href="/alice"`) {
+		t.Fatalf("the switcher does not show the personal workspace: %s", home)
+	}
+	if status, next, body := alice.submit("/workspaces", "/workspaces", url.Values{"name": {"acme"}}); status != http.StatusSeeOther || next != "/acme" {
+		t.Fatalf("creating acme = %d %s %s", status, next, body)
+	}
+	s.stop(t)
+
+	s = start(t, dir, env, deps)
+	again := newVisitor(t, s)
+	again.logIn(fake, "1001")
+	if status, _, page := again.send(http.MethodGet, "/acme", nil); status != http.StatusOK || !strings.Contains(page, "You are owner.") {
+		t.Errorf("/acme after a restart = %d %s", status, page)
+	}
+	if _, _, list := again.send(http.MethodGet, "/workspaces", nil); !strings.Contains(list, `href="/acme"`) || !strings.Contains(list, `href="/alice"`) {
+		t.Errorf("the workspaces after a restart: %s", list)
+	}
+}

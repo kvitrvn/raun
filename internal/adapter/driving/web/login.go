@@ -23,11 +23,11 @@ const returnParam = "return"
 // for the sign-up and the logout, which the CSRF check guards like any
 // other state change.
 func (s *Server) loginRoutes() {
-	handle(s.app, "GET /login", http.HandlerFunc(s.loginStart))
-	handle(s.app, "GET /login/callback", http.HandlerFunc(s.loginCallback))
-	handle(s.app, "GET /login/signup", http.HandlerFunc(s.signupPage))
-	handle(s.app, "POST /login/signup", http.HandlerFunc(s.signupFinish))
-	handle(s.app, "POST /logout", http.HandlerFunc(s.logout))
+	s.route(s.app, "GET /login", http.HandlerFunc(s.loginStart))
+	s.route(s.app, "GET /login/callback", http.HandlerFunc(s.loginCallback))
+	s.route(s.app, "GET /login/signup", http.HandlerFunc(s.signupPage))
+	s.route(s.app, "POST /login/signup", http.HandlerFunc(s.signupFinish))
+	s.route(s.app, "POST /logout", http.HandlerFunc(s.logout))
 }
 
 // redirect answers 303 to location.

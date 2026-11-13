@@ -112,7 +112,7 @@ func TestMigrateTheEmbeddedSchema(t *testing.T) {
 	if err := s.Migrate(ctx, true); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(tables(t, s), " "); got != "accounts identities knowledge_history knowledge_items login_states schema_migrations sessions signups tokens" {
+	if got := strings.Join(tables(t, s), " "); got != "accounts identities knowledge_history knowledge_items login_states schema_migrations sessions signups tokens workspace_members workspaces" {
 		t.Errorf("tables = %s", got)
 	}
 	if err := s.Migrate(ctx, false); err != nil {

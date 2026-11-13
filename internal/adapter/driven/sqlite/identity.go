@@ -223,8 +223,10 @@ func (a Accounts) CompleteSignup(ctx context.Context, session string, account id
 		// The write transaction holds the write lock: what is checked free
 		// here stays free until the inserts, which the unique constraints
 		// back.
+		// The workspaces hold every name of the namespace, the personal
+		// workspace of each account included.
 		var taken int
-		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM accounts WHERE name = ?`, account.Name).Scan(&taken); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM workspaces WHERE name = ?`, account.Name).Scan(&taken); err != nil {
 			return fmt.Errorf("complete sign-up: %w", err)
 		}
 		if taken > 0 {
@@ -249,6 +251,8 @@ func (a Accounts) CompleteSignup(ctx context.Context, session string, account id
 			{`INSERT INTO identities (forge, forge_id, account, login, name) VALUES (?, ?, ?, ?, ?)`,
 				[]any{sg.Identity.Forge, sg.Identity.ID, account.ID, sg.Identity.Login, sg.Identity.Name}},
 			{`INSERT INTO tokens (forge, forge_id, sealed) VALUES (?, ?, ?)`, []any{sg.Identity.Forge, sg.Identity.ID, sealed}},
+			{`INSERT INTO workspaces (id, name, personal, created_at) VALUES (?, ?, 1, ?)`, []any{account.ID, account.Name, formatTime(account.CreatedAt)}},
+			{`INSERT INTO workspace_members (workspace, account, role) VALUES (?, ?, 'owner')`, []any{account.ID, account.ID}},
 			{`DELETE FROM signups WHERE session = ?`, []any{session}},
 		} {
 			if _, err := tx.ExecContext(ctx, stmt.query, stmt.args...); err != nil {

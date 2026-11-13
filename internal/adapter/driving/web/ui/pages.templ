@@ -12,6 +12,13 @@ templ HomePage(p Page) {
 	}
 }
 
+// ErrorPage explains a refused request.
+templ ErrorPage(p Page, e ErrorProps) {
+	@Layout(p) {
+		@ErrorState(e)
+	}
+}
+
 // NotFoundPage answers a path the server does not know.
 templ NotFoundPage(p Page) {
 	@Layout(p) {

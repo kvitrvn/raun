@@ -39,6 +39,21 @@ func (s *Server) page(r *http.Request, title, current string) ui.Page {
 				page.Account = a.Name
 			}
 		}
+		if sess.Account != "" && s.workspaces != nil {
+			// Only the workspaces of the account: a failed read leaves
+			// the switcher empty, and the page still renders.
+			if list, err := s.workspaces.List(r.Context(), sess.Account); err == nil {
+				current := r.PathValue("name")
+				for _, m := range list {
+					page.Workspaces = append(page.Workspaces, ui.WorkspaceItem{
+						Name:     m.Workspace.Name,
+						Href:     "/" + m.Workspace.Name,
+						Personal: m.Workspace.Personal,
+						Current:  m.Workspace.Name == current,
+					})
+				}
+			}
+		}
 	}
 	return page
 }

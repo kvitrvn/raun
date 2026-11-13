@@ -6,6 +6,7 @@ import (
 
 	"github.com/kvitrvn/raun/internal/adapter/driven/github"
 	"github.com/kvitrvn/raun/internal/adapter/driven/sqlite"
+	"github.com/kvitrvn/raun/internal/adapter/driving/web"
 	"github.com/kvitrvn/raun/internal/core/identity"
 )
 
@@ -63,4 +64,13 @@ func keyring(cfg config) (*sqlite.Keyring, error) {
 		return nil, nil
 	}
 	return sqlite.NewKeyring(cfg.secretKey, cfg.previousKey)
+}
+
+// workspaceService is w as the web handler takes it: nil without a forge,
+// and not an interface holding a nil pointer.
+func workspaceService(w *identity.Workspaces) web.WorkspaceService {
+	if w == nil {
+		return nil
+	}
+	return w
 }

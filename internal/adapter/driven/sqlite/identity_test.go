@@ -35,8 +35,10 @@ func startSession(t *testing.T, s *Store, account string) func() bool {
 func TestAccountsContract(t *testing.T) {
 	identitytest.Suite(t, func(t *testing.T) identitytest.Fixture {
 		s, _ := openMigrated(t)
+		a := s.Accounts(testKeyring(t, 1, 0))
 		return identitytest.Fixture{
-			Store:        s.Accounts(testKeyring(t, 1, 0)),
+			Store:        a,
+			Workspaces:   a,
 			StartSession: func(t *testing.T, account string) func() bool { return startSession(t, s, account) },
 		}
 	})

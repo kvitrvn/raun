@@ -6,6 +6,8 @@ package identitytest
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,7 +25,10 @@ type Memory struct {
 	accounts   map[string]identity.Account
 	identities map[string]memIdentity // key -> identity
 	tokens     map[string]identity.Tokens
-	sessions   map[string]string // session -> account
+	sessions   map[string]string                   // session -> account
+	workspaces map[string]identity.Workspace       // identifier -> workspace
+	names      map[string]string                   // name -> workspace identifier
+	members    map[string]map[string]identity.Role // workspace -> account -> role
 	seq        int
 }
 
@@ -32,7 +37,10 @@ type memIdentity struct {
 	account string
 }
 
-var _ identity.Store = (*Memory)(nil)
+var (
+	_ identity.Store          = (*Memory)(nil)
+	_ identity.WorkspaceStore = (*Memory)(nil)
+)
 
 func (m *Memory) init() {
 	if m.states == nil {
@@ -42,6 +50,9 @@ func (m *Memory) init() {
 		m.identities = map[string]memIdentity{}
 		m.tokens = map[string]identity.Tokens{}
 		m.sessions = map[string]string{}
+		m.workspaces = map[string]identity.Workspace{}
+		m.names = map[string]string{}
+		m.members = map[string]map[string]identity.Role{}
 	}
 }
 
@@ -106,10 +117,8 @@ func (m *Memory) CompleteSignup(_ context.Context, session string, a identity.Ac
 	if !ok || !now.Before(s.ExpiresAt) {
 		return identity.Signup{}, identity.ErrNotFound
 	}
-	for _, other := range m.accounts {
-		if other.Name == a.Name {
-			return identity.Signup{}, identity.ErrNameTaken
-		}
+	if _, taken := m.names[a.Name]; taken {
+		return identity.Signup{}, identity.ErrNameTaken
 	}
 	key := s.Identity.Key()
 	if _, ok := m.identities[key]; ok {
@@ -119,7 +128,105 @@ func (m *Memory) CompleteSignup(_ context.Context, session string, a identity.Ac
 	m.accounts[a.ID] = a
 	m.identities[key] = memIdentity{id: s.Identity, account: a.ID}
 	m.tokens[key] = s.Tokens
+	m.workspaces[a.ID] = identity.Workspace{ID: a.ID, Name: a.Name, Personal: true, CreatedAt: a.CreatedAt}
+	m.names[a.Name] = a.ID
+	m.members[a.ID] = map[string]identity.Role{a.ID: identity.RoleOwner}
 	return s, nil
+}
+
+func (m *Memory) CreateWorkspace(_ context.Context, w identity.Workspace, owner string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	if _, taken := m.names[w.Name]; taken {
+		return identity.ErrNameTaken
+	}
+	if _, ok := m.accounts[owner]; !ok {
+		return identity.ErrNotFound
+	}
+	w.Personal = false
+	m.workspaces[w.ID] = w
+	m.names[w.Name] = w.ID
+	m.members[w.ID] = map[string]identity.Role{owner: identity.RoleOwner}
+	return nil
+}
+
+func (m *Memory) WorkspacesOf(_ context.Context, account string) ([]identity.Membership, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	var out []identity.Membership
+	for id, roles := range m.members {
+		if role, ok := roles[account]; ok {
+			out = append(out, identity.Membership{Workspace: m.workspaces[id], Role: role})
+		}
+	}
+	slices.SortFunc(out, func(a, b identity.Membership) int { return strings.Compare(a.Workspace.Name, b.Workspace.Name) })
+	return out, nil
+}
+
+func (m *Memory) WorkspaceOf(_ context.Context, name, account string) (identity.Membership, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	id, ok := m.names[name]
+	if !ok {
+		return identity.Membership{}, identity.ErrNotFound
+	}
+	role, ok := m.members[id][account]
+	if !ok {
+		return identity.Membership{}, identity.ErrNotFound
+	}
+	return identity.Membership{Workspace: m.workspaces[id], Role: role}, nil
+}
+
+func (m *Memory) Members(_ context.Context, workspace string) ([]identity.Member, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	var out []identity.Member
+	for account, role := range m.members[workspace] {
+		out = append(out, identity.Member{Account: account, Name: m.accounts[account].Name, Role: role})
+	}
+	slices.SortFunc(out, func(a, b identity.Member) int { return strings.Compare(a.Name, b.Name) })
+	return out, nil
+}
+
+func (m *Memory) AddMember(_ context.Context, actor, workspace, name string, role identity.Role) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	if !role.Valid() {
+		return identity.ErrInvalidRole
+	}
+	roles, ok := m.members[workspace]
+	if !ok {
+		return identity.ErrNotFound
+	}
+	switch roles[actor] {
+	case identity.RoleOwner:
+	case identity.RoleMember:
+		return identity.ErrNotOwner
+	default:
+		return identity.ErrNotFound
+	}
+	if m.workspaces[workspace].Personal {
+		return identity.ErrPersonalWorkspace
+	}
+	var account string
+	for id, a := range m.accounts {
+		if a.Name == name {
+			account = id
+		}
+	}
+	if account == "" {
+		return identity.ErrNotFound
+	}
+	if _, ok := roles[account]; ok {
+		return identity.ErrAlreadyMember
+	}
+	roles[account] = role
+	return nil
 }
 
 func (m *Memory) DeleteExpiredSignups(_ context.Context, now time.Time) (int, error) {

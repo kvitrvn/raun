@@ -5,6 +5,6 @@ import "testing"
 func TestMemory(t *testing.T) {
 	Suite(t, func(*testing.T) Fixture {
 		m := &Memory{}
-		return Fixture{Store: m, StartSession: m.StartSession}
+		return Fixture{Store: m, Workspaces: m, StartSession: m.StartSession}
 	})
 }

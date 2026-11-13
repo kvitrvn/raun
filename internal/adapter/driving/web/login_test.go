@@ -44,6 +44,7 @@ func newLoginServer(t *testing.T) *loginServer {
 		Sessions:   l.sessions,
 		Login:      identity.NewLogin(fake, policy, l.accounts, rand.Reader, now),
 		Accounts:   l.accounts,
+		Workspaces: identity.NewWorkspaces(l.accounts, rand.Reader, now),
 		Now:        now,
 	})
 	if err != nil {

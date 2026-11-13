@@ -54,6 +54,9 @@ type Options struct {
 	// Accounts gives the account of a session, for the top bar; required
 	// with Login.
 	Accounts AccountReader
+	// Workspaces creates and lists workspaces and their members; required
+	// with Login.
+	Workspaces WorkspaceService
 	// Now gives the time of a request; nil means time.Now.
 	Now func() time.Time
 	// Random is the source of session identifiers and CSRF tokens; nil
@@ -71,13 +74,17 @@ type Server struct {
 	sessions   session.Store
 	login      *identity.Login
 	accounts   AccountReader
-	now        func() time.Time
-	random     io.Reader
-	bypass     *bypass
-	assets     *assets
-	stopping   atomic.Bool
-	app        *http.ServeMux
-	handler    http.Handler
+	workspaces WorkspaceService
+	// patterns are the routes of the server, as route registered them:
+	// their first segments are names of the namespace kept for Raun.
+	patterns []string
+	now      func() time.Time
+	random   io.Reader
+	bypass   *bypass
+	assets   *assets
+	stopping atomic.Bool
+	app      *http.ServeMux
+	handler  http.Handler
 }
 
 // New returns the handler of the server.
@@ -99,6 +106,9 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 	}
 	if opts.Login != nil && opts.Accounts == nil {
 		return nil, errors.New("web: Options.Accounts is nil with a Login")
+	}
+	if opts.Login != nil && opts.Workspaces == nil {
+		return nil, errors.New("web: Options.Workspaces is nil with a Login")
 	}
 	if opts.Now == nil {
 		opts.Now = time.Now
@@ -129,23 +139,27 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 		sessions:   opts.Sessions,
 		login:      opts.Login,
 		accounts:   opts.Accounts,
+		workspaces: opts.Workspaces,
 		now:        opts.Now,
 		random:     opts.Random,
 		bypass:     skip,
 		assets:     files,
 		app:        http.NewServeMux(),
 	}
-	handle(s.app, "GET /{$}", http.HandlerFunc(s.home))
-	handle(s.app, "GET /assets/{file...}", http.HandlerFunc(s.assets.serve))
+	s.route(s.app, "GET /{$}", http.HandlerFunc(s.home))
+	s.route(s.app, "GET /assets/{file...}", http.HandlerFunc(s.assets.serve))
 	s.loginRoutes()
+	if s.workspaces != nil {
+		s.workspaceRoutes()
+	}
 	// Any other path of the application is a page that does not exist; it
 	// has no route pattern in the access log. Only GET and HEAD reach it, so
 	// another method on a known path gets 405 with Allow from the mux.
 	s.app.Handle("GET /", http.HandlerFunc(s.notFound))
 
 	root := http.NewServeMux()
-	handle(root, "GET /healthz", http.HandlerFunc(s.healthz))
-	handle(root, "GET /readyz", http.HandlerFunc(s.readyz))
+	s.route(root, "GET /healthz", http.HandlerFunc(s.healthz))
+	s.route(root, "GET /readyz", http.HandlerFunc(s.readyz))
 	// Every other path is the application, behind the protections in the
 	// order of the record: the public address only, a bounded body, no
 	// cross-origin state change, the session, and its CSRF token on every
@@ -166,6 +180,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // server drains.
 func (s *Server) BeginShutdown() {
 	s.stopping.Store(true)
+}
+
+// route registers a route of the server: h on mux for pattern, recorded in
+// s.patterns, whose first segments the tests check are reserved names. Every
+// route of the server goes through it, but the two catch-alls of New.
+func (s *Server) route(mux *http.ServeMux, pattern string, h http.Handler) {
+	s.patterns = append(s.patterns, pattern)
+	handle(mux, pattern, h)
 }
 
 // handle registers h on mux for pattern, and records the pattern for the

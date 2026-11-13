@@ -131,6 +131,18 @@ Rules made explicit while implementing the login (#26):
 - **`RAUN_ADMINS` admits to sign-up.** It is read here for the sign-up rule only; the administrator role and its screen stay with #21.
 - **`GET /login` is the one GET that changes state**, as the epic 3 record allows; a `HEAD` of `/login` or `/login/callback` changes nothing.
 
+### Workspaces (#27)
+
+Rules made explicit while implementing the workspaces (#27):
+
+- **The workspaces table is the namespace.** Every account has its personal workspace, with the identifier and the name of the account, created in the transaction of its sign-up; a shared workspace has an identifier of its own. The unique name of `workspaces` therefore holds every name of the namespace once, and refuses a collision between an account and a workspace whichever comes first, without a second table to keep in step. Migration 4 gives the accounts that existed before it their personal workspace.
+- **Membership decides what a workspace shows.** A workspace, personal or shared, is visible to its members only: anyone else gets the page of an address that does not exist, so a stranger learns nothing of it. An owner adds an existing account by its name, as a member or as an owner; a personal workspace takes no other member. The checks run in the write transaction that adds the member.
+- **No removal yet.** Removing a member, leaving a workspace and changing a role are not part of #27, so a workspace keeps at least one owner by construction: its creator. The rule applies to whichever epic adds a removal.
+- **Routes.** `GET /workspaces` lists the workspaces of the account and creates one with `POST /workspaces`; a workspace lives at `/<name>`, and `POST /<name>/members` adds a member. No route of the form `GET /<name>/<x>` exists while `GET /assets/{file...}` does: neither would be more specific for `/assets/<x>`, and the standard mux refuses them both. A path that no name can be, such as `/favicon.ico`, is not found without a login.
+- **Every route is reserved.** The server records each route it registers, and a test fails when the first segment of one is a name an account or a workspace could take; another refuses a route registered around that record. The forge names stay a fixed list.
+- **The switcher** lists the workspaces of the account logged in only, read at each page; a failed read leaves it empty and the page still renders.
+- **The knowledge tables** keep their opaque workspace column: the reference to `workspaces` comes with the repositories of epic 5 (#31), which give their rows a workspace.
+
 ## Deferred
 
 | Topic | Where |
@@ -156,6 +168,6 @@ Rules made explicit while implementing the login (#26):
 ## Exit criteria
 
 - [x] This page records the choices.
-- [ ] A user logs in through the fake forge in a test and gets an account and a default workspace (#26, #27): the account is done by #26 (`cmd/raun/login_test.go`: `TestLoginThroughTheServer`), the workspace comes with #27.
+- [x] A user logs in through the fake forge in a test and gets an account and a default workspace (#26, #27): `cmd/raun/login_test.go`, `TestLoginThroughTheServer` and `TestWorkspacesThroughTheServer`.
 - [ ] A test proves that a permission removed on the forge is refused after the cache expires (#28).
 - [ ] `make verify` passes (checked at the end of the epic).

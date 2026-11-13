@@ -1,0 +1,132 @@
+package ui
+
+// WorkspaceRow is a workspace of the Workspaces screen.
+type WorkspaceRow struct {
+	Name     string
+	Href     string
+	Role     string
+	Personal bool
+}
+
+// WorkspacesProps configures the Workspaces screen: the workspaces of the
+// account, and the name and the problem of the creation form.
+type WorkspacesProps struct {
+	Rows  []WorkspaceRow
+	Name  string
+	Error string
+}
+
+// WorkspacesPage lists the workspaces of the account and offers to create a
+// shared one.
+templ WorkspacesPage(p Page, w WorkspacesProps) {
+	@Layout(p) {
+		<h1 class="text-2xl font-semibold tracking-tight">Workspaces</h1>
+		<section data-slot="workspaces" class="cn-card flex flex-col divide-y divide-border">
+			for _, row := range w.Rows {
+				<div class="flex flex-wrap items-center gap-3 px-6 py-4">
+					<a class="font-mono text-[14px] font-medium text-primary-ink hover:underline" href={ templ.URL(row.Href) }>{ row.Name }</a>
+					if row.Personal {
+						@Badge() {
+							personal
+						}
+					}
+					<span class="flex-1"></span>
+					<span class="text-[13px] text-muted-foreground">{ row.Role }</span>
+				</div>
+			}
+		</section>
+		<section data-slot="create-workspace" class="cn-card flex max-w-xl flex-col gap-4 px-7 py-6">
+			<h2 class="text-[17px] font-semibold">Create a shared workspace</h2>
+			<form method="post" action="/workspaces" class="flex flex-col items-start gap-4">
+				@CSRFField(p.CSRF)
+				@Field(FieldProps{For: "name", Label: "Name", Error: w.Error, Class: "w-full"}) {
+					@Input(InputProps{
+						ID:         "name",
+						Name:       "name",
+						Value:      w.Name,
+						Required:   true,
+						Invalid:    w.Error != "",
+						Attributes: templ.Attributes{"maxlength": "39", "autocapitalize": "none", "spellcheck": "false"},
+					})
+				}
+				<p class="text-[12.5px] text-muted-foreground">Accounts and workspaces share one namespace: the name appears in the address of the workspace and cannot be changed later.</p>
+				@Button(ButtonProps{Type: TypeSubmit}) {
+					Create the workspace
+				}
+			</form>
+		</section>
+	}
+}
+
+// MemberRow is a member of a workspace.
+type MemberRow struct {
+	Name string
+	Role string
+}
+
+// WorkspaceProps configures the page of a workspace: what it is, the role of
+// the visitor, its members, and for an owner the form that adds one.
+type WorkspaceProps struct {
+	Name       string
+	Personal   bool
+	Role       string
+	Members    []MemberRow
+	Owner      bool
+	Account    string
+	MemberRole string
+	Error      string
+}
+
+// WorkspacePage shows a workspace to one of its members.
+templ WorkspacePage(p Page, w WorkspaceProps) {
+	@Layout(p) {
+		<div class="flex flex-wrap items-center gap-3">
+			<h1 class="font-mono text-2xl font-semibold tracking-tight">{ w.Name }</h1>
+			if w.Personal {
+				@Badge() {
+					personal
+				}
+			}
+			<span class="text-[13px] text-muted-foreground">You are { w.Role }.</span>
+		</div>
+		@Empty(EmptyProps{Title: "No repository yet", Icon: IconFolder})
+		<section data-slot="members" class="cn-card flex flex-col divide-y divide-border">
+			<h2 class="px-6 py-4 text-[15px] font-semibold">Members</h2>
+			for _, m := range w.Members {
+				<div class="flex items-center gap-3 px-6 py-3">
+					<span class="font-mono text-[13.5px]">{ m.Name }</span>
+					<span class="flex-1"></span>
+					<span class="text-[13px] text-muted-foreground">{ m.Role }</span>
+				</div>
+			}
+		</section>
+		if w.Owner && !w.Personal {
+			<section data-slot="add-member" class="cn-card flex max-w-xl flex-col gap-4 px-7 py-6">
+				<h2 class="text-[17px] font-semibold">Add a member</h2>
+				<form method="post" action={ templ.URL("/" + w.Name + "/members") } class="flex flex-col items-start gap-4">
+					@CSRFField(p.CSRF)
+					@Field(FieldProps{For: "account", Label: "Account name", Error: w.Error, Class: "w-full"}) {
+						@Input(InputProps{
+							ID:         "account",
+							Name:       "account",
+							Value:      w.Account,
+							Required:   true,
+							Invalid:    w.Error != "",
+							Attributes: templ.Attributes{"maxlength": "39", "autocapitalize": "none", "spellcheck": "false"},
+						})
+					}
+					<div data-slot="field" class="cn-field">
+						<label class="cn-field-label" for="role">Role</label>
+						<select id="role" name="role" class="cn-input">
+							<option value="member" selected?={ w.MemberRole != "owner" }>member</option>
+							<option value="owner" selected?={ w.MemberRole == "owner" }>owner</option>
+						</select>
+					</div>
+					@Button(ButtonProps{Type: TypeSubmit}) {
+						Add the member
+					}
+				</form>
+			</section>
+		}
+	}
+}
