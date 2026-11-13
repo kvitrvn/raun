@@ -57,6 +57,9 @@ type Options struct {
 	// Workspaces creates and lists workspaces and their members; required
 	// with Login.
 	Workspaces WorkspaceService
+	// Permissions forgets the permissions of an account at its logout; nil
+	// without a forge.
+	Permissions PermissionCache
 	// Now gives the time of a request; nil means time.Now.
 	Now func() time.Time
 	// Random is the source of session identifiers and CSRF tokens; nil
@@ -67,14 +70,15 @@ type Options struct {
 // Server is the HTTP handler of the Raun server. It holds no global state:
 // every value it needs comes from Options.
 type Server struct {
-	logger     *slog.Logger
-	publicHost string
-	scheme     string
-	ready      func(context.Context) error
-	sessions   session.Store
-	login      *identity.Login
-	accounts   AccountReader
-	workspaces WorkspaceService
+	logger      *slog.Logger
+	publicHost  string
+	scheme      string
+	ready       func(context.Context) error
+	sessions    session.Store
+	login       *identity.Login
+	accounts    AccountReader
+	workspaces  WorkspaceService
+	permissions PermissionCache
 	// patterns are the routes of the server, as route registered them:
 	// their first segments are names of the namespace kept for Raun.
 	patterns []string
@@ -132,19 +136,20 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 		return nil, fmt.Errorf("web: %w", err)
 	}
 	s := &Server{
-		logger:     opts.Logger,
-		publicHost: opts.PublicHost,
-		scheme:     opts.Scheme,
-		ready:      opts.Ready,
-		sessions:   opts.Sessions,
-		login:      opts.Login,
-		accounts:   opts.Accounts,
-		workspaces: opts.Workspaces,
-		now:        opts.Now,
-		random:     opts.Random,
-		bypass:     skip,
-		assets:     files,
-		app:        http.NewServeMux(),
+		logger:      opts.Logger,
+		publicHost:  opts.PublicHost,
+		scheme:      opts.Scheme,
+		ready:       opts.Ready,
+		sessions:    opts.Sessions,
+		login:       opts.Login,
+		accounts:    opts.Accounts,
+		workspaces:  opts.Workspaces,
+		permissions: opts.Permissions,
+		now:         opts.Now,
+		random:      opts.Random,
+		bypass:      skip,
+		assets:      files,
+		app:         http.NewServeMux(),
 	}
 	s.route(s.app, "GET /{$}", http.HandlerFunc(s.home))
 	s.route(s.app, "GET /assets/{file...}", http.HandlerFunc(s.assets.serve))

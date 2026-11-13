@@ -9,7 +9,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,24 +30,44 @@ type loginServer struct {
 	sessions *sessiontest.Memory
 	accounts *identitytest.Memory
 	logs     *bytes.Buffer
+	forgot   *forgotten
+}
+
+// forgotten records the accounts whose permissions logout forgets.
+type forgotten struct {
+	mu       sync.Mutex
+	accounts []string
+}
+
+func (f *forgotten) Forget(account string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.accounts = append(f.accounts, account)
+}
+
+func (f *forgotten) list() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.accounts)
 }
 
 func newLoginServer(t *testing.T) *loginServer {
 	t.Helper()
 	fake, _ := forgetest.Scenario("github", false)
-	l := &loginServer{forge: fake, sessions: &sessiontest.Memory{}, accounts: &identitytest.Memory{}, logs: &bytes.Buffer{}}
+	l := &loginServer{forge: fake, sessions: &sessiontest.Memory{}, accounts: &identitytest.Memory{}, logs: &bytes.Buffer{}, forgot: &forgotten{}}
 	now := func() time.Time { return time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC) }
 	policy := identity.Policy{Users: []identity.Entry{{Forge: "github", ID: "1001"}}}
 	s, err := New(Options{
-		Logger:     slog.New(slog.NewJSONHandler(l.logs, nil)),
-		PublicHost: testHost,
-		Scheme:     "https",
-		Ready:      func(context.Context) error { return nil },
-		Sessions:   l.sessions,
-		Login:      identity.NewLogin(fake, policy, l.accounts, rand.Reader, now),
-		Accounts:   l.accounts,
-		Workspaces: identity.NewWorkspaces(l.accounts, rand.Reader, now),
-		Now:        now,
+		Logger:      slog.New(slog.NewJSONHandler(l.logs, nil)),
+		PublicHost:  testHost,
+		Scheme:      "https",
+		Ready:       func(context.Context) error { return nil },
+		Sessions:    l.sessions,
+		Login:       identity.NewLogin(fake, policy, l.accounts, rand.Reader, now),
+		Accounts:    l.accounts,
+		Workspaces:  identity.NewWorkspaces(l.accounts, rand.Reader, now),
+		Permissions: l.forgot,
+		Now:         now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -364,6 +386,16 @@ func TestLogoutEndsOneSession(t *testing.T) {
 	location(t, first.post(l, "/logout", nil), http.StatusSeeOther)
 	if got, err := l.sessions.Get(context.Background(), kept.Hash); err != nil || got.Account == "" {
 		t.Errorf("logout ended another session of the account: %v", err)
+	}
+	if got := l.forgot.list(); len(got) != 1 || got[0] != kept.Account {
+		t.Errorf("logout forgot the permissions of %v, want the account %s once", got, kept.Account)
+	}
+	// A browser without an account forgets nothing.
+	anonymous := l.browser(t)
+	anonymous.do(http.MethodGet, "/login", nil)
+	anonymous.post(l, "/logout", nil)
+	if got := l.forgot.list(); len(got) != 1 {
+		t.Errorf("an anonymous logout forgot %v", got)
 	}
 	if resp := first.do(http.MethodPost, "/logout", url.Values{}); resp.StatusCode != http.StatusForbidden {
 		t.Errorf("logout without a session = %d", resp.StatusCode)

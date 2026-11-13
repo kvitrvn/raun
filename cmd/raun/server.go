@@ -163,20 +163,25 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 	}
 	var login *identity.Login
 	var workspaces *identity.Workspaces
+	var permissions *identity.PermissionService
 	if forge != nil {
 		login = identity.NewLogin(forge, cfg.signup, accounts, rand.Reader, time.Now)
 		workspaces = identity.NewWorkspaces(accounts, rand.Reader, time.Now)
+		// The one service that decides access to repository data, on the
+		// tokens of the login: they share its lock.
+		permissions = identity.NewPermissionService(forge, login.Tokens(), accounts, time.Now)
 	}
 
 	handler, err := web.New(web.Options{
-		Logger:     logger,
-		PublicHost: cfg.publicHost,
-		Scheme:     cfg.publicURL.Scheme,
-		Ready:      store.CheckReady,
-		Sessions:   sessions,
-		Login:      login,
-		Accounts:   accounts,
-		Workspaces: workspaceService(workspaces),
+		Logger:      logger,
+		PublicHost:  cfg.publicHost,
+		Scheme:      cfg.publicURL.Scheme,
+		Ready:       store.CheckReady,
+		Sessions:    sessions,
+		Login:       login,
+		Accounts:    accounts,
+		Workspaces:  workspaceService(workspaces),
+		Permissions: permissionCache(permissions),
 	})
 	if err != nil {
 		logger.Error("build the handler", slog.String("error", err.Error()))
