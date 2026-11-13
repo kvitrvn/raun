@@ -265,6 +265,25 @@ func (m *Memory) Account(_ context.Context, id string) (identity.Account, error)
 	return a, nil
 }
 
+func (m *Memory) IdentitiesOf(_ context.Context, account string) ([]identity.Identity, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	var out []identity.Identity
+	for _, id := range m.identities {
+		if id.account == account {
+			out = append(out, id.id)
+		}
+	}
+	slices.SortFunc(out, func(a, b identity.Identity) int {
+		if c := strings.Compare(a.Forge, b.Forge); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return out, nil
+}
+
 func (m *Memory) UpdateIdentity(_ context.Context, id identity.Identity) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

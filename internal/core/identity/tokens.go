@@ -24,6 +24,8 @@ type TokenService struct {
 
 	mu    sync.Mutex
 	locks map[string]*keyLock
+	// revoked are told the key of an identity whose tokens were revoked.
+	revoked []func(key string)
 }
 
 // keyLock is the lock of one identity, kept while a caller holds or waits
@@ -63,6 +65,25 @@ func (s *TokenService) unlock(key string, l *keyLock) {
 	if l.users == 0 {
 		delete(s.locks, key)
 	}
+}
+
+// OnRevoke registers f, told the key of every identity whose tokens the
+// service revokes, once they are gone. f runs while the lock of that identity
+// is held: it takes no lock but its own and never calls back into s.
+func (s *TokenService) OnRevoke(f func(key string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.revoked = append(s.revoked, f)
+}
+
+// Put stores the tokens of the identity with this key, under the lock of the
+// identity: a refresh in flight finishes first, and then reads these tokens,
+// so it never overwrites nor revokes the tokens of a login that just
+// completed.
+func (s *TokenService) Put(ctx context.Context, key string, t Tokens) error {
+	l := s.lock(key)
+	defer s.unlock(key, l)
+	return s.store.PutTokens(ctx, key, t)
 }
 
 // held is the number of identities whose lock is kept, for the tests.
@@ -131,6 +152,12 @@ func (s *TokenService) current(ctx context.Context, key string, refused Secret) 
 func (s *TokenService) revoke(ctx context.Context, key string, cause error) error {
 	if err := s.store.RevokeTokens(ctx, key); err != nil {
 		return fmt.Errorf("revoke the tokens: %w (after %w)", err, cause)
+	}
+	s.mu.Lock()
+	observers := append([]func(string){}, s.revoked...)
+	s.mu.Unlock()
+	for _, f := range observers {
+		f(key)
 	}
 	return cause
 }

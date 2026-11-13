@@ -95,18 +95,24 @@ type Login struct {
 	forge  Forge
 	policy Policy
 	store  Store
+	tokens *TokenService
 	random io.Reader
 	now    func() time.Time
 }
 
 // NewLogin returns the login of forge, under policy, on store, drawing
-// states and identifiers from random at the time now gives.
+// states and identifiers from random at the time now gives. It has the token
+// service of forge on store, which the other users of the tokens share.
 func NewLogin(forge Forge, policy Policy, store Store, random io.Reader, now func() time.Time) *Login {
-	return &Login{forge: forge, policy: policy, store: store, random: random, now: now}
+	return &Login{forge: forge, policy: policy, store: store, tokens: NewTokenService(forge, store, now), random: random, now: now}
 }
 
 // Forge returns the forge of l.
 func (l *Login) Forge() Forge { return l.forge }
+
+// Tokens returns the token service of l: the tokens a login stores go
+// through its lock, so every user of the tokens shares it.
+func (l *Login) Tokens() *TokenService { return l.tokens }
 
 // Begin starts a login of the session with the hash session, which goes back
 // to returnPath once done, and returns the authorization URL of the forge.
@@ -161,7 +167,7 @@ func (l *Login) Complete(ctx context.Context, session, state, code string) (Outc
 		if err := l.store.UpdateIdentity(ctx, id); err != nil {
 			return Outcome{}, fmt.Errorf("update the identity: %w", err)
 		}
-		if err := l.store.PutTokens(ctx, id.Key(), tokens); err != nil {
+		if err := l.tokens.Put(ctx, id.Key(), tokens); err != nil {
 			return Outcome{}, fmt.Errorf("store the tokens: %w", err)
 		}
 		return Outcome{Account: account, ReturnPath: row.ReturnPath}, nil
