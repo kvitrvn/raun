@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 
 	"github.com/kvitrvn/raun/internal/core/session"
 )
@@ -96,6 +97,19 @@ func (s *Server) loadSession(next http.Handler) http.Handler {
 			sess.LastSeenAt = now.UTC()
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), sessionKey{}, sess)))
+	})
+}
+
+// requireAccount sends a request whose session has no account to the login,
+// which brings it back to the same path. Routes of later epics that need an
+// account wrap their handler with it.
+func (s *Server) requireAccount(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if sess, ok := sessionFrom(r.Context()); !ok || sess.Account == "" {
+			redirect(w, "/login?"+url.Values{returnParam: {r.URL.RequestURI()}}.Encode())
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -192,9 +206,9 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) (session.S
 }
 
 // renewSession replaces the session of the request with a new identifier
-// and a new CSRF token, keeping its absolute lifetime, and sets the new
-// cookie: at login and at any change of privilege (epic 4).
-func (s *Server) renewSession(w http.ResponseWriter, r *http.Request) (session.Session, error) {
+// and a new CSRF token, keeping its absolute lifetime, logged in to account,
+// and sets the new cookie: at login and at any change of privilege.
+func (s *Server) renewSession(w http.ResponseWriter, r *http.Request, account string) (session.Session, error) {
 	old, ok := sessionFrom(r.Context())
 	if !ok {
 		return session.Session{}, errors.New("renew session: the request has none")
@@ -204,6 +218,7 @@ func (s *Server) renewSession(w http.ResponseWriter, r *http.Request) (session.S
 		if err != nil {
 			return session.Session{}, err
 		}
+		next.Account = account
 		err = s.sessions.Replace(r.Context(), old.Hash, next)
 		if errors.Is(err, session.ErrExists) {
 			continue

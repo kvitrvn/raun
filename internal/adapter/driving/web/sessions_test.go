@@ -34,7 +34,7 @@ func sessionRoutes(t *testing.T, p *protected) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	handle(p.app, "POST /renew", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, err := p.renewSession(w, r); err != nil {
+		if _, err := p.renewSession(w, r, r.URL.Query().Get("account")); err != nil {
 			t.Errorf("renewSession: %v", err)
 		}
 		w.WriteHeader(http.StatusNoContent)

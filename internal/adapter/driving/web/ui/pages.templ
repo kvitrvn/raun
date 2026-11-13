@@ -18,3 +18,71 @@ templ NotFoundPage(p Page) {
 		@ErrorState(ErrorProps{Status: 404, Title: "Page not found", Message: "Nothing lives at this address.", BackHref: "/", BackLabel: "Back to repositories"})
 	}
 }
+
+// LoginProps says why the login page shows: a login that did not complete,
+// or no forge to log in with.
+type LoginProps struct {
+	Title   string
+	Message string
+	// Retry offers to log in again.
+	Retry bool
+}
+
+// LoginPage explains a login that could not complete, and offers to try
+// again. The login itself is a redirect to the forge.
+templ LoginPage(p Page, l LoginProps) {
+	@Layout(p) {
+		<section data-slot="login" class="cn-card flex max-w-xl flex-col items-start gap-3 px-7 py-6">
+			<h1 class="text-[17px] font-semibold">{ l.Title }</h1>
+			if l.Message != "" {
+				<p class="text-[13.5px] text-muted-foreground">{ l.Message }</p>
+			}
+			if l.Retry {
+				@Button(ButtonProps{Href: "/login"}) {
+					Log in again
+				}
+			}
+		</section>
+	}
+}
+
+// SignupProps configures the sign-up page: the forge account that signs up,
+// the name to show in the field, and why the last one was refused.
+type SignupProps struct {
+	Forge string
+	Login string
+	Name  string
+	Error string
+}
+
+// SignupPage asks a person the forge identified for the name of their new
+// account.
+templ SignupPage(p Page, s SignupProps) {
+	@Layout(p) {
+		<section data-slot="signup" class="cn-card flex max-w-xl flex-col gap-4 px-7 py-6">
+			<h1 class="text-[17px] font-semibold">Choose your name</h1>
+			<p class="text-[13.5px] text-muted-foreground">
+				You are signing up with the { s.Forge } account <span class="font-mono text-foreground">{ s.Login }</span>.
+				Your name appears in the addresses of Raun and cannot be changed later.
+			</p>
+			<form method="post" action="/login/signup" class="flex flex-col items-start gap-4">
+				@CSRFField(p.CSRF)
+				@Field(FieldProps{For: "name", Label: "Name", Error: s.Error, Class: "w-full"}) {
+					@Input(InputProps{
+						ID:           "name",
+						Name:         "name",
+						Value:        s.Name,
+						Autocomplete: "username",
+						Required:     true,
+						Invalid:      s.Error != "",
+						Attributes:   templ.Attributes{"maxlength": "39", "autocapitalize": "none", "spellcheck": "false"},
+					})
+				}
+				<p class="text-[12.5px] text-muted-foreground">1 to 39 lowercase letters, digits and hyphens, with no hyphen at either end and none twice in a row.</p>
+				@Button(ButtonProps{Type: TypeSubmit}) {
+					Create my account
+				}
+			</form>
+		</section>
+	}
+}

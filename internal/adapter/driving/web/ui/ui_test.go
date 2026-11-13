@@ -114,6 +114,11 @@ func TestPages(t *testing.T) {
 	hostileTitle.Title = hostile
 	withSession := testPage()
 	withSession.CSRF = `tok"en<`
+	loggedIn := withSession
+	loggedIn.Account = hostile
+	loggedIn.Login = true
+	canLogin := testPage()
+	canLogin.Login = true
 	tests := []struct {
 		name string
 		c    templ.Component
@@ -122,6 +127,11 @@ func TestPages(t *testing.T) {
 		{"home-flash", HomePage(flash)},
 		{"not-found", NotFoundPage(hostileTitle)},
 		{"home-session", HomePage(withSession)},
+		{"home-account", HomePage(loggedIn)},
+		{"home-login", HomePage(canLogin)},
+		{"login", LoginPage(canLogin, LoginProps{Title: "You cannot sign up here", Message: hostile, Retry: true})},
+		{"login-unavailable", LoginPage(testPage(), LoginProps{Title: "Login is not available", Message: "No forge is configured."})},
+		{"signup", SignupPage(withSession, SignupProps{Forge: "github", Login: hostile, Name: hostile, Error: hostile})},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -33,6 +33,14 @@ func TestCheckWebURL(t *testing.T) {
 	}
 }
 
+func TestCheckIdentifier(t *testing.T) {
+	for id, ok := range map[string]bool{"583231": true, "1": true, "0": false, "-1": false, "0583231": false, "alice": false, "": false, "1e3": false} {
+		if err := CheckIdentifier(id); (err == nil) != ok {
+			t.Errorf("CheckIdentifier(%q) = %v, want ok %v", id, err, ok)
+		}
+	}
+}
+
 func TestAPIOf(t *testing.T) {
 	for web, want := range map[string]string{
 		"https://github.com":          "https://api.github.com",

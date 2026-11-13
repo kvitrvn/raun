@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -90,6 +91,17 @@ func CheckWebURL(raw string) error {
 	}
 	if strings.EqualFold(u.Hostname(), "github.com") && u.Port() != "" && u.Port() != "443" {
 		return fmt.Errorf("%q: github.com is served on port 443 only", raw)
+	}
+	return nil
+}
+
+// CheckIdentifier checks that id is a stable identifier of GitHub, of a user
+// or an organization: a positive number, never a login, which can be renamed
+// and taken by someone else.
+func CheckIdentifier(id string) error {
+	n, err := strconv.ParseInt(id, 10, 64)
+	if err != nil || n <= 0 || strconv.FormatInt(n, 10) != id {
+		return fmt.Errorf("%q is not the stable identifier of a GitHub user or organization, a number such as 583231", id)
 	}
 	return nil
 }
