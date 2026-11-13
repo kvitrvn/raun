@@ -45,8 +45,10 @@ func (i Identity) Key() string {
 }
 
 // Secret is a value that must never be printed: a token. Every format, log
-// value and text encoding of it gives [redacted]; Reveal gives the value, for
-// the adapter that sends it and the store that encrypts it.
+// value and text encoding of it gives [redacted], without an error; Reveal
+// gives the value, for the adapter that sends it and the store that encrypts
+// it. A store encrypts Reveal, never an encoding of Tokens, which would keep
+// [redacted] instead of the token.
 type Secret string
 
 const redacted = "[redacted]"
@@ -120,7 +122,8 @@ type Forge interface {
 	// Raun, sorted by full name. ErrUnauthorized if the forge refuses the
 	// access token.
 	Repositories(ctx context.Context, t Tokens) ([]Repository, error)
-	// Permission is what the person of t may do on repo, mapped by the
+	// Permission is what the person of t may do on repo, a repository of
+	// this forge: the caller routes by repo.Forge. It is mapped by the
 	// table of docs/forge.md; a repository the person cannot reach through
 	// Raun is PermissionNone, not an error. ErrUnauthorized if the forge
 	// refuses the access token.
