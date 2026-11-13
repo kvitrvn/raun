@@ -79,9 +79,9 @@ func newLogger(level slog.Level, format string, w io.Writer) *slog.Logger {
 }
 
 // runServer runs raun server until ctx is done, and returns its exit code.
-// The order is the one of the epic 3 record: configuration, logger,
-// database, migrations, listener; a failure stops it before the listener
-// opens. Standard output stays empty.
+// The order is the one of the epic 3 record, with the forge of epic 4:
+// configuration, logger, forge, database, migrations, listener; a failure
+// stops it before the listener opens. Standard output stays empty.
 func runServer(ctx context.Context, environ []string, stderr io.Writer, deps serverDeps) int {
 	cfg, err := loadConfig(environ)
 	if err != nil {
@@ -90,6 +90,16 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 	}
 	logger := newLogger(cfg.logLevel, cfg.logFormat, stderr)
 	logger.LogAttrs(ctx, slog.LevelInfo, "configuration", cfg.logAttrs()...)
+
+	// The forge is built before anything else: #26 hands it to the login.
+	forge, err := newForge(cfg)
+	if err != nil {
+		logger.Error("build the forge (RAUN_GITHUB_*)", slog.String("error", err.Error()))
+		return exitFailure
+	}
+	if forge != nil {
+		logger.Info("forge", slog.String("name", forge.Name()), slog.String("url", cfg.github.webURL))
+	}
 
 	store, err := sqlite.Open(ctx, cfg.databasePath, sqlite.Options{})
 	if err != nil {

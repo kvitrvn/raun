@@ -1,18 +1,23 @@
 package main
 
 import (
+	"crypto/rsa"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/url"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/kvitrvn/raun/internal/adapter/driven/github"
 	"github.com/kvitrvn/raun/internal/adapter/driven/sqlite"
 	"github.com/kvitrvn/raun/internal/adapter/driving/web"
+	"github.com/kvitrvn/raun/internal/core/identity"
 )
 
 // redacted replaces the value of a secret wherever a setting is shown.
@@ -38,10 +43,21 @@ type config struct {
 	logLevel        slog.Level
 	logFormat       string
 	shutdownTimeout time.Duration
+	github          githubConfig
 
 	// settings are the effective values, in the order of the variables,
 	// for the startup log.
 	settings []setting
+}
+
+// githubConfig is the GitHub App of the server. A zero appID means no App:
+// the server has no forge.
+type githubConfig struct {
+	webURL       string
+	appID        int64
+	clientID     string
+	clientSecret identity.Secret
+	privateKey   *rsa.PrivateKey
 }
 
 // setting is the effective value of one variable.
@@ -52,7 +68,8 @@ type setting struct {
 }
 
 // variable is one RAUN_* variable of the server: its default and the rule
-// that reads it into a config.
+// that reads it into a config. A secret can also be given as a file, named by
+// the variable with fileSuffix.
 type variable struct {
 	name   string
 	def    string
@@ -62,6 +79,14 @@ type variable struct {
 
 // runnerPrefix starts the variables of the runner, which the server ignores.
 const runnerPrefix = "RAUN_RUNNER_"
+
+// fileSuffix names the variable that gives a secret as a file:
+// RAUN_GITHUB_PRIVATE_KEY_FILE for RAUN_GITHUB_PRIVATE_KEY.
+const fileSuffix = "_FILE"
+
+// maxSecretFile bounds the file of a secret: a private key of 4096 bits
+// takes about 3 KiB.
+const maxSecretFile = 64 << 10
 
 // variables is the catalogue of the server. A RAUN_* variable outside it,
 // and outside the runner's prefix, stops the server.
@@ -75,6 +100,11 @@ var variables = []variable{
 	{name: "RAUN_LOG_LEVEL", def: "info", parse: parseLogLevel},
 	{name: "RAUN_LOG_FORMAT", def: "json", parse: parseLogFormat},
 	{name: "RAUN_SHUTDOWN_TIMEOUT", def: "10s", parse: parseShutdownTimeout},
+	{name: "RAUN_GITHUB_URL", def: github.DefaultWebURL, parse: parseGitHubURL},
+	{name: "RAUN_GITHUB_APP_ID", def: "", parse: parseGitHubAppID},
+	{name: "RAUN_GITHUB_CLIENT_ID", def: "", parse: parseGitHubClientID},
+	{name: "RAUN_GITHUB_CLIENT_SECRET", def: "", secret: true, parse: parseGitHubClientSecret},
+	{name: "RAUN_GITHUB_PRIVATE_KEY", def: "", secret: true, parse: parseGitHubPrivateKey},
 }
 
 // loadConfig reads the configuration from environ, in the form of
@@ -101,6 +131,9 @@ func load(environ []string, vars []variable) (config, error) {
 	known := map[string]bool{}
 	for _, v := range vars {
 		known[v.name] = true
+		if v.secret {
+			known[v.name+fileSuffix] = true
+		}
 	}
 	for name := range env {
 		if strings.HasPrefix(name, "RAUN_") && !strings.HasPrefix(name, runnerPrefix) && !known[name] {
@@ -110,17 +143,32 @@ func load(environ []string, vars []variable) (config, error) {
 	}
 
 	var c config
+	set := map[string]bool{}
 	for _, v := range vars {
-		value, ok := env[v.name]
+		value, ok, err := lookup(env, v)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		set[v.name] = ok
 		if !ok {
 			value = v.def
 		}
-		c.settings = append(c.settings, setting{name: v.name, value: value, secret: v.secret})
+		shown := value
+		if v.secret {
+			shown = redacted
+		}
+		c.settings = append(c.settings, setting{name: v.name, value: shown, secret: v.secret})
+		if err != nil {
+			continue
+		}
 		if err := v.parse(&c, value); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", v.name, err))
 		}
 	}
 	if err := c.loadCertificates(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.checkGitHub(set); err != nil {
 		errs = append(errs, err)
 	}
 
@@ -129,6 +177,51 @@ func load(environ []string, vars []variable) (config, error) {
 		return config{}, errors.Join(errs...)
 	}
 	return c, nil
+}
+
+// lookup returns the value of v in env, and whether it is set. A secret is
+// set by its variable or by the file its _FILE variable names, never both;
+// one trailing newline of the file is dropped. An error names the variable
+// and never holds the value.
+func lookup(env map[string]string, v variable) (string, bool, error) {
+	value, ok := env[v.name]
+	if !v.secret {
+		return value, ok, nil
+	}
+	path, fromFile := env[v.name+fileSuffix]
+	switch {
+	case ok && fromFile:
+		return "", true, fmt.Errorf("%s and %s%s: set one or neither", v.name, v.name, fileSuffix)
+	case !fromFile:
+		return value, ok, nil
+	}
+	data, err := readSecretFile(path)
+	if err != nil {
+		return "", true, fmt.Errorf("%s%s: %w", v.name, fileSuffix, err)
+	}
+	return data, true, nil
+}
+
+// readSecretFile reads the secret in the file at path, up to maxSecretFile
+// bytes, without its trailing newline.
+func readSecretFile(path string) (string, error) {
+	if path == "" {
+		return "", errors.New("empty path")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxSecretFile+1))
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	if len(data) > maxSecretFile {
+		return "", fmt.Errorf("%s is larger than %d bytes", path, maxSecretFile)
+	}
+	s := strings.TrimSuffix(string(data), "\n")
+	return strings.TrimSuffix(s, "\r"), nil
 }
 
 // logAttrs returns the effective configuration, each secret replaced by
@@ -143,6 +236,38 @@ func (c config) logAttrs() []slog.Attr {
 		attrs = append(attrs, slog.String(s.name, value))
 	}
 	return attrs
+}
+
+// checkGitHub checks that the GitHub App is set whole or not at all:
+// RAUN_GITHUB_APP_ID decides, and the other variables of the App follow it.
+func (c *config) checkGitHub(set map[string]bool) error {
+	others := []string{"RAUN_GITHUB_URL", "RAUN_GITHUB_CLIENT_ID", "RAUN_GITHUB_CLIENT_SECRET", "RAUN_GITHUB_PRIVATE_KEY"}
+	if c.github.appID == 0 {
+		var given []string
+		for _, name := range others {
+			if set[name] {
+				given = append(given, name)
+			}
+		}
+		if len(given) > 0 {
+			return fmt.Errorf("RAUN_GITHUB_APP_ID: unset, but %s set: configure the whole GitHub App or none of it", strings.Join(given, ", "))
+		}
+		return nil
+	}
+	var missing []string
+	if c.github.clientID == "" {
+		missing = append(missing, "RAUN_GITHUB_CLIENT_ID")
+	}
+	if c.github.clientSecret == "" {
+		missing = append(missing, "RAUN_GITHUB_CLIENT_SECRET")
+	}
+	if c.github.privateKey == nil {
+		missing = append(missing, "RAUN_GITHUB_PRIVATE_KEY")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("RAUN_GITHUB_APP_ID: set, so %s must be set too", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 // loadCertificates checks that both TLS files are set or neither, and loads
@@ -260,5 +385,56 @@ func parseShutdownTimeout(c *config, value string) error {
 		return fmt.Errorf("%s is not from %s to %s", d, minShutdownTimeout, maxShutdownTimeout)
 	}
 	c.shutdownTimeout = d
+	return nil
+}
+
+func parseGitHubURL(c *config, value string) error {
+	if err := github.CheckWebURL(value); err != nil {
+		return err
+	}
+	c.github.webURL = strings.TrimSuffix(value, "/")
+	return nil
+}
+
+func parseGitHubAppID(c *config, value string) error {
+	if value == "" {
+		return nil
+	}
+	id, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || id <= 0 || strconv.FormatInt(id, 10) != value {
+		return fmt.Errorf("%q is not the number of a GitHub App", value)
+	}
+	c.github.appID = id
+	return nil
+}
+
+func parseGitHubClientID(c *config, value string) error {
+	if len(value) > 100 || strings.ContainsFunc(value, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-')
+	}) {
+		return fmt.Errorf("%q is not a client ID: letters, digits, dots, underscores and hyphens, 100 at most", value)
+	}
+	c.github.clientID = value
+	return nil
+}
+
+func parseGitHubClientSecret(c *config, value string) error {
+	// The value is never shown, even when it is refused.
+	if len(value) > 256 || strings.ContainsFunc(value, func(r rune) bool { return r <= ' ' || r > '~' }) {
+		return errors.New("not a client secret: printable characters without spaces, 256 at most")
+	}
+	c.github.clientSecret = identity.Secret(value)
+	return nil
+}
+
+func parseGitHubPrivateKey(c *config, value string) error {
+	if value == "" {
+		return nil
+	}
+	key, err := github.ParsePrivateKey([]byte(value))
+	if err != nil {
+		return fmt.Errorf("not the private key of a GitHub App: %w", err)
+	}
+	c.github.privateKey = key
 	return nil
 }

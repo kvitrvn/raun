@@ -61,7 +61,7 @@ Never weaken these. A change that needs to is a product decision for the owner.
 
 - Standard library first. A dependency needs a reason, recorded in the implementation record of its epic and listed below.
 - Wrap errors with context: `fmt.Errorf("read config: %w", err)`. A validation error names the field or the variable.
-- Decode external input strictly: reject unknown fields, bound sizes.
+- Decode external input strictly: reject unknown fields, bound sizes. Responses of a forge API are the exception: bounded, checked and required fields read, unknown fields ignored (epic 4 record).
 - Propagate `context.Context`; define narrow interfaces at the consumer.
 - No package-level mutable state. Constants, read-only tables, compiled regular expressions and embedded files are fine.
 - Deterministic output: stable ordering and stable serialization.

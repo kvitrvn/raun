@@ -65,7 +65,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if c.httpAddr != ":8080" || c.publicURL.String() != "http://localhost:8080" || c.publicHost != "localhost:8080" ||
 		c.tlsCertFile != "" || c.tlsKeyFile != "" || c.certificates != nil ||
 		c.databasePath != "raun.db" || c.databaseMigrate || c.logLevel != slog.LevelInfo || c.logFormat != "json" ||
-		c.shutdownTimeout != 10*time.Second {
+		c.shutdownTimeout != 10*time.Second || c.github.appID != 0 || c.github.webURL != "https://github.com" {
 		t.Errorf("defaults = %+v", c)
 	}
 	var names []string
@@ -73,7 +73,9 @@ func TestLoadConfigDefaults(t *testing.T) {
 		names = append(names, s.name+"="+s.value)
 	}
 	want := "RAUN_HTTP_ADDR=:8080 RAUN_PUBLIC_URL=http://localhost:8080 RAUN_TLS_CERT_FILE= RAUN_TLS_KEY_FILE= " +
-		"RAUN_DATABASE_PATH=raun.db RAUN_DATABASE_MIGRATE=false RAUN_LOG_LEVEL=info RAUN_LOG_FORMAT=json RAUN_SHUTDOWN_TIMEOUT=10s"
+		"RAUN_DATABASE_PATH=raun.db RAUN_DATABASE_MIGRATE=false RAUN_LOG_LEVEL=info RAUN_LOG_FORMAT=json RAUN_SHUTDOWN_TIMEOUT=10s " +
+		"RAUN_GITHUB_URL=https://github.com RAUN_GITHUB_APP_ID= RAUN_GITHUB_CLIENT_ID= " +
+		"RAUN_GITHUB_CLIENT_SECRET=[redacted] RAUN_GITHUB_PRIVATE_KEY=[redacted]"
 	if got := strings.Join(names, " "); got != want {
 		t.Errorf("settings = %s\nwant       %s", got, want)
 	}
