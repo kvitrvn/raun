@@ -71,7 +71,7 @@ In `ui`, adapted from shadcn-templ at the pinned commit. They keep the upstream 
 | Dialog | `Dialog`, `DialogTrigger`, `DialogClose`, `DialogFooter` | The native `<dialog>`, opened by the platform's invoker commands (`commandfor`, `command`), and by `app.js` where a browser lacks them |
 | Dropdown menu | `DropdownTrigger`, `DropdownContent`, `DropdownItem`, `DropdownSeparator`, `DropdownLabel`, `DropdownShortcut` | A native popover: it opens and closes without script, centred in the viewport; `app.js` places it under or above its trigger and moves focus with the arrow keys |
 
-Raun's own: `Icon` (the icon set, drawn as markup), `Toast`, `Layout` (document, skip link, top bar, flash messages, main region), `Empty`, `ErrorState`, and the pages `HomePage` and `NotFoundPage`.
+Raun's own: `Icon` (the icon set, drawn as markup), `Toast`, `Layout` (document, skip link, top bar with the workspace switcher and the account, flash messages, main region), `Empty`, `ErrorState`, and the pages `HomePage`, `NotFoundPage`, `ErrorPage`, `LoginPage`, `SignupPage`, `WorkspacesPage` and `WorkspacePage`. The workspace switcher is a dropdown of the workspaces of the account logged in, the current one marked, with a link to all of them; it follows links without JavaScript.
 
 ## Content Security Policy
 
