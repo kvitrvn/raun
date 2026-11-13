@@ -205,6 +205,29 @@ func TestServerServes(t *testing.T) {
 	}
 }
 
+// TestServerBuildsTheForge: with a GitHub App, the server builds the
+// adapter at start without reaching GitHub, and logs its name, never a
+// secret.
+func TestServerBuildsTheForge(t *testing.T) {
+	dir := t.TempDir()
+	keyFile, keyPEM := writeAppKey(t, dir)
+	s := start(t, dir, app(keyFile), serverDeps{})
+	if code, _ := s.get(t, "/readyz", "", nil); code != http.StatusOK {
+		t.Errorf("/readyz = %d", code)
+	}
+	if code := s.stop(t); code != exitOK {
+		t.Fatalf("exit code = %d:\n%s", code, s.stderr)
+	}
+	msgs := strings.Join(s.stderr.messages(t), ",")
+	if !strings.HasPrefix(msgs, "configuration,forge,serving,") {
+		t.Errorf("log messages = %s", msgs)
+	}
+	logs := s.stderr.String()
+	if !strings.Contains(logs, `"name":"github"`) || strings.Contains(logs, "client-secret-sentinel") || strings.Contains(logs, strings.Split(keyPEM, "\n")[1]) {
+		t.Errorf("logs = %s", logs)
+	}
+}
+
 func TestServerRestartsOnAMigratedDatabase(t *testing.T) {
 	dir := t.TempDir()
 	if code := start(t, dir, nil, serverDeps{}).stop(t); code != exitOK {
@@ -228,6 +251,12 @@ func TestServerStopsBeforeListening(t *testing.T) {
 			name:     "invalid configuration",
 			env:      func(dir string) []string { return []string{"RAUN_LOG_LEVEL=verbose", "RAUN_FOO=1"} },
 			want:     "RAUN_FOO: unknown variable\nRAUN_LOG_LEVEL:",
+			database: false,
+		},
+		{
+			name:     "a partial GitHub App",
+			env:      func(dir string) []string { return []string{"RAUN_GITHUB_APP_ID=42"} },
+			want:     "RAUN_GITHUB_APP_ID: set, so RAUN_GITHUB_CLIENT_ID, RAUN_GITHUB_CLIENT_SECRET, RAUN_GITHUB_PRIVATE_KEY must be set too",
 			database: false,
 		},
 		{
