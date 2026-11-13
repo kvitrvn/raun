@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rsa"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -44,6 +45,11 @@ type config struct {
 	logFormat       string
 	shutdownTimeout time.Duration
 	github          githubConfig
+	signup          identity.Policy
+	// secretKey and previousKey seal the secrets the server stores, 32
+	// bytes each; nil when unset.
+	secretKey   []byte
+	previousKey []byte
 
 	// settings are the effective values, in the order of the variables,
 	// for the startup log.
@@ -105,6 +111,11 @@ var variables = []variable{
 	{name: "RAUN_GITHUB_CLIENT_ID", def: "", parse: parseGitHubClientID},
 	{name: "RAUN_GITHUB_CLIENT_SECRET", def: "", secret: true, parse: parseGitHubClientSecret},
 	{name: "RAUN_GITHUB_PRIVATE_KEY", def: "", secret: true, parse: parseGitHubPrivateKey},
+	{name: "RAUN_SECRET_KEY", def: "", secret: true, parse: func(c *config, v string) error { return parseSecretKey(&c.secretKey, v) }},
+	{name: "RAUN_SECRET_KEY_PREVIOUS", def: "", secret: true, parse: func(c *config, v string) error { return parseSecretKey(&c.previousKey, v) }},
+	{name: "RAUN_SIGNUP_USERS", def: "", parse: func(c *config, v string) error { return parseEntries(&c.signup.Users, v) }},
+	{name: "RAUN_SIGNUP_ORGS", def: "", parse: func(c *config, v string) error { return parseEntries(&c.signup.Orgs, v) }},
+	{name: "RAUN_ADMINS", def: "", parse: func(c *config, v string) error { return parseEntries(&c.signup.Admins, v) }},
 }
 
 // loadConfig reads the configuration from environ, in the form of
@@ -171,6 +182,7 @@ func load(environ []string, vars []variable) (config, error) {
 	if err := c.checkGitHub(set); err != nil {
 		errs = append(errs, err)
 	}
+	errs = append(errs, c.checkIdentities()...)
 
 	if len(errs) > 0 {
 		slices.SortFunc(errs, func(a, b error) int { return strings.Compare(a.Error(), b.Error()) })
@@ -268,6 +280,43 @@ func (c *config) checkGitHub(set map[string]bool) error {
 		return fmt.Errorf("RAUN_GITHUB_APP_ID: set, so %s must be set too", strings.Join(missing, ", "))
 	}
 	return nil
+}
+
+// forges are the names of the forges cfg configures.
+func (c *config) forges() []string {
+	if c.github.appID != 0 {
+		return []string{github.Name}
+	}
+	return nil
+}
+
+// checkIdentities checks the rules between the identities and the keys: an
+// entry names a configured forge, a forge needs RAUN_SECRET_KEY to store the
+// tokens it gives, and the previous key goes with a current one and differs
+// from it.
+func (c *config) checkIdentities() []error {
+	var errs []error
+	forges := c.forges()
+	for _, list := range []struct {
+		name    string
+		entries []identity.Entry
+	}{{"RAUN_ADMINS", c.signup.Admins}, {"RAUN_SIGNUP_ORGS", c.signup.Orgs}, {"RAUN_SIGNUP_USERS", c.signup.Users}} {
+		for _, e := range list.entries {
+			if !slices.Contains(forges, e.Forge) {
+				errs = append(errs, fmt.Errorf("%s: %s names the forge %q, which is not configured", list.name, e, e.Forge))
+			}
+		}
+	}
+	if len(forges) > 0 && c.secretKey == nil {
+		errs = append(errs, errors.New("RAUN_SECRET_KEY: required with a forge, to store the tokens it gives encrypted"))
+	}
+	if c.previousKey != nil && c.secretKey == nil {
+		errs = append(errs, errors.New("RAUN_SECRET_KEY_PREVIOUS: set without RAUN_SECRET_KEY"))
+	}
+	if c.previousKey != nil && c.secretKey != nil && string(c.previousKey) == string(c.secretKey) {
+		errs = append(errs, errors.New("RAUN_SECRET_KEY_PREVIOUS: the same key as RAUN_SECRET_KEY"))
+	}
+	return errs
 }
 
 // loadCertificates checks that both TLS files are set or neither, and loads
@@ -436,5 +485,27 @@ func parseGitHubPrivateKey(c *config, value string) error {
 		return fmt.Errorf("not the private key of a GitHub App: %w", err)
 	}
 	c.github.privateKey = key
+	return nil
+}
+
+func parseSecretKey(dst *[]byte, value string) error {
+	if value == "" {
+		return nil
+	}
+	// The value is never shown, even when it is refused.
+	key, err := base64.StdEncoding.Strict().DecodeString(value)
+	if err != nil || len(key) != sqlite.KeySize {
+		return fmt.Errorf("not %d bytes in base64: generate one with openssl rand -base64 %d", sqlite.KeySize, sqlite.KeySize)
+	}
+	*dst = key
+	return nil
+}
+
+func parseEntries(dst *[]identity.Entry, value string) error {
+	entries, err := identity.ParseEntries(value)
+	if err != nil {
+		return err
+	}
+	*dst = entries
 	return nil
 }

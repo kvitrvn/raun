@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -40,13 +41,20 @@ func writeFile(t *testing.T, dir, name, content string) string {
 	return file
 }
 
-// app is a complete GitHub App, the private key by file.
+// secretKey is a RAUN_SECRET_KEY of the tests, 32 bytes of n in base64.
+func secretKey(n byte) string {
+	return base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{n}, 32))
+}
+
+// app is a complete GitHub App, the private key by file, with the secret key
+// that seals the tokens it gives.
 func app(keyFile string) []string {
 	return []string{
 		"RAUN_GITHUB_APP_ID=42",
 		"RAUN_GITHUB_CLIENT_ID=Iv23liClientID",
 		"RAUN_GITHUB_CLIENT_SECRET=client-secret-sentinel",
 		"RAUN_GITHUB_PRIVATE_KEY_FILE=" + keyFile,
+		"RAUN_SECRET_KEY=" + secretKey(1),
 	}
 }
 
@@ -69,6 +77,7 @@ func TestLoadConfigGitHub(t *testing.T) {
 	c, err = loadConfig([]string{
 		"RAUN_GITHUB_URL=https://ghe.example.com/", "RAUN_GITHUB_APP_ID=42", "RAUN_GITHUB_CLIENT_ID=Iv1.abc",
 		"RAUN_GITHUB_CLIENT_SECRET_FILE=" + secretFile, "RAUN_GITHUB_PRIVATE_KEY=" + keyPEM,
+		"RAUN_SECRET_KEY=" + secretKey(1),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +87,7 @@ func TestLoadConfigGitHub(t *testing.T) {
 	}
 	// A file written on Windows loses its CRLF.
 	crlf := writeFile(t, dir, "crlf", "secret-crlf\r\n")
-	c, err = loadConfig(append(app(keyFile)[:2], "RAUN_GITHUB_CLIENT_SECRET_FILE="+crlf, "RAUN_GITHUB_PRIVATE_KEY_FILE="+keyFile))
+	c, err = loadConfig(append(app(keyFile)[:2], "RAUN_GITHUB_CLIENT_SECRET_FILE="+crlf, "RAUN_GITHUB_PRIVATE_KEY_FILE="+keyFile, "RAUN_SECRET_KEY="+secretKey(1)))
 	if err != nil || c.github.clientSecret.Reveal() != "secret-crlf" {
 		t.Errorf("secret from a CRLF file = %q, %v", c.github.clientSecret.Reveal(), err)
 	}

@@ -75,7 +75,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 	want := "RAUN_HTTP_ADDR=:8080 RAUN_PUBLIC_URL=http://localhost:8080 RAUN_TLS_CERT_FILE= RAUN_TLS_KEY_FILE= " +
 		"RAUN_DATABASE_PATH=raun.db RAUN_DATABASE_MIGRATE=false RAUN_LOG_LEVEL=info RAUN_LOG_FORMAT=json RAUN_SHUTDOWN_TIMEOUT=10s " +
 		"RAUN_GITHUB_URL=https://github.com RAUN_GITHUB_APP_ID= RAUN_GITHUB_CLIENT_ID= " +
-		"RAUN_GITHUB_CLIENT_SECRET=[redacted] RAUN_GITHUB_PRIVATE_KEY=[redacted]"
+		"RAUN_GITHUB_CLIENT_SECRET=[redacted] RAUN_GITHUB_PRIVATE_KEY=[redacted] " +
+		"RAUN_SECRET_KEY=[redacted] RAUN_SECRET_KEY_PREVIOUS=[redacted] RAUN_SIGNUP_USERS= RAUN_SIGNUP_ORGS= RAUN_ADMINS="
 	if got := strings.Join(names, " "); got != want {
 		t.Errorf("settings = %s\nwant       %s", got, want)
 	}
@@ -186,7 +187,7 @@ func TestLoadConfigRefuses(t *testing.T) {
 		want string
 	}{
 		{"unknown variable", "RAUN_FOO=bar", "RAUN_FOO: unknown variable"},
-		{"variable of a later epic", "RAUN_ADMINS=github:octocat", "RAUN_ADMINS: unknown variable"},
+		{"variable of a later epic", "RAUN_WEBHOOK_SECRET=x", "RAUN_WEBHOOK_SECRET: unknown variable"},
 		{"_FILE form of a variable that is not secret", "RAUN_LOG_LEVEL_FILE=/x", "RAUN_LOG_LEVEL_FILE: unknown variable"},
 		{"address without a port", "RAUN_HTTP_ADDR=localhost", "RAUN_HTTP_ADDR:"},
 		{"port 0", "RAUN_HTTP_ADDR=:0", "RAUN_HTTP_ADDR: port \"0\""},

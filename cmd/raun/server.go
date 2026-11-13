@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/kvitrvn/raun/internal/adapter/driven/sqlite"
 	"github.com/kvitrvn/raun/internal/adapter/driving/web"
+	"github.com/kvitrvn/raun/internal/core/identity"
 	"github.com/kvitrvn/raun/internal/core/session"
 )
 
@@ -29,33 +31,52 @@ type serverDeps struct {
 	wrap func(http.Handler) http.Handler
 	// started, when set, is called once the server accepts connections.
 	started func(addr net.Addr)
-	// purge, when set, receives the times of the hourly session purge
-	// instead of a ticker.
+	// purge, when set, receives the times of the hourly purge instead of a
+	// ticker.
 	purge <-chan time.Time
+	// forge, when set, is the forge instead of the GitHub App of the
+	// configuration: the fake forge of the tests.
+	forge identity.Forge
 }
 
-// sessionPurgeInterval is how often expired sessions are deleted, after the
-// purge at start.
-const sessionPurgeInterval = time.Hour
+// purgeInterval is how often what has expired is deleted, after the purge
+// at start.
+const purgeInterval = time.Hour
 
-// purgeSessions deletes the sessions that have ended at now. At start, an
-// error stops the server: the database does not answer.
-func purgeSessions(ctx context.Context, logger *slog.Logger, sessions session.Store, now time.Time) error {
-	n, err := sessions.DeleteExpired(ctx, now)
-	if err != nil {
-		logger.Error("delete expired sessions", slog.String("error", err.Error()))
-		return err
-	}
-	if n > 0 {
-		logger.Info("expired sessions deleted", slog.Int("count", n))
+// expiring are the stores the purge cleans: sessions, login states and
+// sign-ups.
+type expiring struct {
+	sessions session.Store
+	accounts identity.Store
+}
+
+// purge deletes the sessions, login states and sign-ups that have ended at
+// now. At start, an error stops the server: the database does not answer.
+func purge(ctx context.Context, logger *slog.Logger, e expiring, now time.Time) error {
+	for _, p := range []struct {
+		what   string
+		delete func(context.Context, time.Time) (int, error)
+	}{
+		{"sessions", e.sessions.DeleteExpired},
+		{"login states", e.accounts.DeleteExpiredLoginStates},
+		{"sign-ups", e.accounts.DeleteExpiredSignups},
+	} {
+		n, err := p.delete(ctx, now)
+		if err != nil {
+			logger.Error("delete expired "+p.what, slog.String("error", err.Error()))
+			return err
+		}
+		if n > 0 {
+			logger.Info("expired "+p.what+" deleted", slog.Int("count", n))
+		}
 	}
 	return nil
 }
 
-// purgeSessionsEvery deletes expired sessions on each tick until done. A
-// failure is logged and the next tick tries again; the stop of the server
-// cancels ctx, and with it a purge in progress.
-func purgeSessionsEvery(ctx context.Context, logger *slog.Logger, sessions session.Store, ticks <-chan time.Time, done <-chan struct{}) {
+// purgeEvery purges on each tick until done. A failure is logged and the
+// next tick tries again; the stop of the server cancels ctx, and with it a
+// purge in progress.
+func purgeEvery(ctx context.Context, logger *slog.Logger, e expiring, ticks <-chan time.Time, done <-chan struct{}) {
 	for {
 		select {
 		case <-done:
@@ -63,7 +84,7 @@ func purgeSessionsEvery(ctx context.Context, logger *slog.Logger, sessions sessi
 		case <-ctx.Done():
 			return
 		case now := <-ticks:
-			_ = purgeSessions(ctx, logger, sessions, now)
+			_ = purge(ctx, logger, e, now)
 		}
 	}
 }
@@ -91,14 +112,17 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 	logger := newLogger(cfg.logLevel, cfg.logFormat, stderr)
 	logger.LogAttrs(ctx, slog.LevelInfo, "configuration", cfg.logAttrs()...)
 
-	// The forge is built before anything else: #26 hands it to the login.
-	forge, err := newForge(cfg)
+	forge, err := buildForge(cfg, deps)
 	if err != nil {
 		logger.Error("build the forge (RAUN_GITHUB_*)", slog.String("error", err.Error()))
 		return exitFailure
 	}
 	if forge != nil {
-		logger.Info("forge", slog.String("name", forge.Name()), slog.String("url", cfg.github.webURL))
+		attrs := []any{slog.String("name", forge.Name())}
+		if deps.forge == nil {
+			attrs = append(attrs, slog.String("url", cfg.github.webURL))
+		}
+		logger.Info("forge", attrs...)
 	}
 
 	store, err := sqlite.Open(ctx, cfg.databasePath, sqlite.Options{})
@@ -116,8 +140,29 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		return exitFailure
 	}
 	sessions := store.Sessions()
-	if err := purgeSessions(ctx, logger, sessions, time.Now()); err != nil {
+	keys, err := keyring(cfg)
+	if err != nil {
+		logger.Error("read the secret keys", slog.String("error", err.Error()))
 		return exitFailure
+	}
+	accounts := store.Accounts(keys)
+	// Before anything reads a secret: a secret under an unknown key stops
+	// the server, and the previous key can go once this has run.
+	rotated, err := accounts.RotateSecrets(ctx)
+	if err != nil {
+		logger.Error("rotate the stored secrets (RAUN_SECRET_KEY, RAUN_SECRET_KEY_PREVIOUS)", slog.String("error", err.Error()))
+		return exitFailure
+	}
+	if rotated > 0 {
+		logger.Info("stored secrets sealed under the new key", slog.Int("count", rotated))
+	}
+	stale := expiring{sessions: sessions, accounts: accounts}
+	if err := purge(ctx, logger, stale, time.Now()); err != nil {
+		return exitFailure
+	}
+	var login *identity.Login
+	if forge != nil {
+		login = identity.NewLogin(forge, cfg.signup, accounts, rand.Reader, time.Now)
 	}
 
 	handler, err := web.New(web.Options{
@@ -126,6 +171,8 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		Scheme:     cfg.publicURL.Scheme,
 		Ready:      store.CheckReady,
 		Sessions:   sessions,
+		Login:      login,
+		Accounts:   accounts,
 	})
 	if err != nil {
 		logger.Error("build the handler", slog.String("error", err.Error()))
@@ -170,11 +217,11 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 	go reloadCertificates(logger, cfg.certificates, reload, done)
 	ticks := deps.purge
 	if ticks == nil {
-		ticker := time.NewTicker(sessionPurgeInterval)
+		ticker := time.NewTicker(purgeInterval)
 		defer ticker.Stop()
 		ticks = ticker.C
 	}
-	go purgeSessionsEvery(ctx, logger, sessions, ticks, done)
+	go purgeEvery(ctx, logger, stale, ticks, done)
 
 	served := make(chan error, 1)
 	go func() {
