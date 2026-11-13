@@ -29,8 +29,16 @@ func (s *Server) page(r *http.Request, title, current string) ui.Page {
 		},
 		Nav: nav,
 	}
+	page.Login = s.login != nil
 	if sess, ok := sessionFrom(r.Context()); ok {
 		page.CSRF = sess.CSRF
+		if sess.Account != "" && s.accounts != nil {
+			// An account that cannot be read shows as a session without
+			// one: the page still renders.
+			if a, err := s.accounts.Account(r.Context(), sess.Account); err == nil {
+				page.Account = a.Name
+			}
+		}
 	}
 	return page
 }

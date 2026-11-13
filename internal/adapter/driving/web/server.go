@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/kvitrvn/raun/internal/core/identity"
 	"github.com/kvitrvn/raun/internal/core/session"
 )
 
@@ -47,6 +48,12 @@ type Options struct {
 	Ready func(context.Context) error
 	// Sessions keeps the browser sessions.
 	Sessions session.Store
+	// Login logs people in through the forge; nil when no forge is
+	// configured, and the login page says so.
+	Login *identity.Login
+	// Accounts gives the account of a session, for the top bar; required
+	// with Login.
+	Accounts AccountReader
 	// Now gives the time of a request; nil means time.Now.
 	Now func() time.Time
 	// Random is the source of session identifiers and CSRF tokens; nil
@@ -62,6 +69,8 @@ type Server struct {
 	scheme     string
 	ready      func(context.Context) error
 	sessions   session.Store
+	login      *identity.Login
+	accounts   AccountReader
 	now        func() time.Time
 	random     io.Reader
 	bypass     *bypass
@@ -87,6 +96,9 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 	}
 	if opts.Sessions == nil {
 		return nil, errors.New("web: Options.Sessions is nil")
+	}
+	if opts.Login != nil && opts.Accounts == nil {
+		return nil, errors.New("web: Options.Accounts is nil with a Login")
 	}
 	if opts.Now == nil {
 		opts.Now = time.Now
@@ -115,6 +127,8 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 		scheme:     opts.Scheme,
 		ready:      opts.Ready,
 		sessions:   opts.Sessions,
+		login:      opts.Login,
+		accounts:   opts.Accounts,
 		now:        opts.Now,
 		random:     opts.Random,
 		bypass:     skip,
@@ -123,6 +137,7 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 	}
 	handle(s.app, "GET /{$}", http.HandlerFunc(s.home))
 	handle(s.app, "GET /assets/{file...}", http.HandlerFunc(s.assets.serve))
+	s.loginRoutes()
 	// Any other path of the application is a page that does not exist; it
 	// has no route pattern in the access log. Only GET and HEAD reach it, so
 	// another method on a known path gets 405 with Allow from the mux.

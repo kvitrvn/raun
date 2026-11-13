@@ -31,6 +31,12 @@ type Page struct {
 	// CSRF is the token of the session of the request, empty without one.
 	// HTMX sends it on every request; forms carry it with CSRFField.
 	CSRF string
+	// Account is the name of the account logged in, empty without one: the
+	// top bar shows it with a logout button.
+	Account string
+	// Login shows a link to log in when no account is logged in: a forge
+	// is configured.
+	Login bool
 }
 
 // csrfHeaders is the JSON of the hx-headers attribute that sends the CSRF
@@ -116,6 +122,19 @@ templ topbar(p Page) {
 			</nav>
 		}
 		<span class="flex-1"></span>
+		if p.Account != "" {
+			<span data-slot="account" class="font-mono text-[13px]">{ p.Account }</span>
+			<form method="post" action="/logout">
+				@CSRFField(p.CSRF)
+				@Button(ButtonProps{Type: TypeSubmit, Variant: ButtonOutline, Size: ButtonSmall}) {
+					Log out
+				}
+			</form>
+		} else if p.Login {
+			@Button(ButtonProps{Href: "/login", Variant: ButtonOutline, Size: ButtonSmall}) {
+				Log in
+			}
+		}
 		<button type="button" class={ ButtonClasses(ButtonProps{Variant: ButtonGhost, Size: ButtonIcon, Class: "cn-theme-toggle"}) } data-theme-toggle aria-label="Switch theme">
 			@Icon(IconMoon, IconProps{Class: "cn-when-light"})
 			@Icon(IconSun, IconProps{Class: "cn-when-dark"})
