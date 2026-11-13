@@ -53,8 +53,8 @@ Decided by the [epic 5 review](implementation/05-repositories-and-events.md#webh
 
 - **Endpoint**: `POST /hooks/<forge>`, `/hooks/github` for GitHub, outside the session and CSRF protections, authenticated by its signature alone.
 - **Signature first.** A body past 5 MiB is refused with `413`. Within it, `X-Hub-Signature-256`, an HMAC-SHA256 of the body under the webhook secret, is checked in constant time before anything parses it; a refused signature is the same whatever the reason and logs no payload.
-- **Duplicates and replays.** The delivery identifier, and the signed content (the ref and commits of a push, the number, action and head commit of a pull request), are both keys: a delivery that repeats either one within the 30 days of the event log has no further effect.
-- **Answers.** `202` once recorded; `200` for a duplicate or a replay; `401` for a refused signature; `413` past 5 MiB; `202` with nothing logged for a repository that is not active or a delivery of no repository; `500` when recording fails. GitHub never delivers a refused delivery again on its own; it can be delivered again by hand.
+- **Duplicates and replays.** The delivery identifier and the SHA-256 of the raw body are both kept, 30 days, for every signed delivery: a delivery that repeats either one has no further effect. A replayed body is the same byte for byte; two genuine deliveries differ.
+- **Answers.** `202` once recorded; `200` for a duplicate or a replay; `401` for a refused signature; `413` past 5 MiB; `202` for an installation delivery, which makes Raun check the installation with the forge, and for a repository that is not active, dropped; `500` when recording fails. GitHub never delivers a refused delivery again on its own; it can be delivered again by hand.
 - **Kept events.** `push` of a branch or a tag; `pull_request` `opened`, `reopened`, `synchronize`, `ready_for_review` and `closed`. `installation` and `installation_repositories` keep track of the repositories the App reaches. Any other signed delivery is recorded as ignored.
 
 The normalized events:
