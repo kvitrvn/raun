@@ -219,6 +219,16 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		}
 	}
 
+	// expiries checks the expiries of tokens given by call. The suite does
+	// not know the clock of the forge: it checks the expiries against each
+	// other, and against time passing on Refresh.
+	expiries := func(t *testing.T, call string, tokens identity.Tokens) {
+		t.Helper()
+		if tokens.AccessExpiry.IsZero() || !tokens.AccessExpiry.Before(tokens.RefreshExpiry) {
+			t.Errorf("%s gave expiries %v and %v, want an access expiry before the refresh expiry", call, tokens.AccessExpiry, tokens.RefreshExpiry)
+		}
+	}
+
 	t.Run("login", func(t *testing.T) {
 		fx := newFixture(t)
 		id, tokens := login(t, fx)
@@ -228,11 +238,7 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		if tokens.Access.Reveal() == "" || tokens.Refresh.Reveal() == "" {
 			t.Error("Exchange gave an empty token")
 		}
-		// The suite does not know the clock of the forge: it checks the
-		// expiries against each other, and against time passing on Refresh.
-		if tokens.AccessExpiry.IsZero() || !tokens.AccessExpiry.Before(tokens.RefreshExpiry) {
-			t.Errorf("tokens have expiries %v and %v, want an access expiry before the refresh expiry", tokens.AccessExpiry, tokens.RefreshExpiry)
-		}
+		expiries(t, "Exchange", tokens)
 	})
 
 	t.Run("a code serves once and needs its verifier", func(t *testing.T) {
@@ -325,6 +331,7 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		if err != nil {
 			t.Fatalf("Refresh: %v", err)
 		}
+		expiries(t, "Refresh", fresh)
 		if fresh.Access.Reveal() == "" || fresh.Access.Reveal() == tokens.Access.Reveal() {
 			t.Error("Refresh gave no new access token")
 		}
@@ -348,6 +355,7 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		if err != nil {
 			t.Fatalf("Refresh: %v", err)
 		}
+		expiries(t, "Refresh", fresh)
 		if fresh.Refresh.Reveal() == "" || fresh.Refresh.Reveal() == tokens.Refresh.Reveal() {
 			t.Error("Refresh gave no new refresh token")
 		}
@@ -415,6 +423,7 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		if err != nil {
 			t.Fatalf("Refresh once back: %v", err)
 		}
+		expiries(t, "Refresh", fresh)
 		if _, err := fx.Forge.Repositories(ctx, fresh); err != nil {
 			t.Errorf("Repositories after the Refresh once back: %v", err)
 		}
