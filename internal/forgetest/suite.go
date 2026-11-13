@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"net/url"
 	"slices"
 	"strings"
 	"testing"
@@ -44,9 +45,8 @@ type Fixture struct {
 // Scenario returns the fake forge called name set up with the scenario of
 // the suite, and its fixture. bare drops the optional capabilities.
 func Scenario(name string, bare bool) (*Fake, Fixture) {
-	clock := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
-	now := func() time.Time { return clock }
-	f := New(name, now)
+	start := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
+	f := New(name, func() time.Time { return start })
 	f.AddPerson(Person{ID: "1001", Login: "alice", Name: "Alice Martin"})
 	f.AddPerson(Person{ID: "1002", Login: "bob", Name: "Bob Durand"})
 	repos := []struct {
@@ -93,7 +93,7 @@ func Scenario(name string, bare bool) (*Fake, Fixture) {
 			}
 			return code, state
 		},
-		ExpireAccess: func(*testing.T) { clock = clock.Add(AccessLifetime + time.Second) },
+		ExpireAccess: func(*testing.T) { f.Advance(AccessLifetime + time.Second) },
 		Revoke:       func(*testing.T) { f.Revoke("1001") },
 		SetDown:      func(_ *testing.T, down bool) { f.SetDown(down) },
 		RenameAlice: func(t *testing.T, login string) {
@@ -105,18 +105,28 @@ func Scenario(name string, bare bool) (*Fake, Fixture) {
 	}
 }
 
-// noToken fails the test if err holds the value of a token: an error is
-// logged, a token never is.
-func noToken(t *testing.T, err error, tokens identity.Tokens) {
+// noSecret fails the test if err holds one of the secret values: an error is
+// logged, a token, a code or a verifier never is.
+func noSecret(t *testing.T, err error, values ...string) {
 	t.Helper()
 	if err == nil {
 		return
 	}
-	for _, v := range []string{tokens.Access.Reveal(), tokens.Refresh.Reveal()} {
+	for _, v := range values {
 		if v != "" && strings.Contains(err.Error(), v) {
-			t.Errorf("error %q holds a token", err)
+			t.Errorf("error %q holds a secret", err)
 		}
 	}
+}
+
+// noToken fails the test if err holds the value of one of the tokens.
+func noToken(t *testing.T, err error, tokens ...identity.Tokens) {
+	t.Helper()
+	var values []string
+	for _, tk := range tokens {
+		values = append(values, tk.Access.Reveal(), tk.Refresh.Reveal())
+	}
+	noSecret(t, err, values...)
 }
 
 // Suite runs the contract of the forge port on the fixtures newFixture
@@ -124,14 +134,32 @@ func noToken(t *testing.T, err error, tokens identity.Tokens) {
 func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 	ctx := context.Background()
 
-	login := func(t *testing.T, fx Fixture) (identity.Identity, identity.Tokens) {
+	// authorize returns a verifier and the authorization URL for state,
+	// after checking that the URL carries the state and the S256 challenge
+	// of the verifier.
+	authorize := func(t *testing.T, fx Fixture, state string) (string, string) {
 		t.Helper()
 		verifier, err := identity.NewVerifier(rand.Reader)
 		if err != nil {
 			t.Fatal(err)
 		}
+		raw := fx.Forge.AuthorizeURL(state, identity.Challenge(verifier))
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("AuthorizeURL gave %q: %v", raw, err)
+		}
+		q := u.Query()
+		if q.Get("state") != state || q.Get("code_challenge") != identity.Challenge(verifier) || q.Get("code_challenge_method") != "S256" {
+			t.Fatalf("AuthorizeURL gave %q, want the state and the S256 challenge of the verifier", raw)
+		}
+		return verifier, raw
+	}
+
+	login := func(t *testing.T, fx Fixture) (identity.Identity, identity.Tokens) {
+		t.Helper()
 		state := "state-of-the-suite"
-		code, back := fx.Approve(t, fx.Forge.AuthorizeURL(state, identity.Challenge(verifier)))
+		verifier, raw := authorize(t, fx, state)
+		code, back := fx.Approve(t, raw)
 		if back != state {
 			t.Fatalf("the forge sent back state %q, want %q", back, state)
 		}
@@ -140,6 +168,46 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 			t.Fatalf("Exchange: %v", err)
 		}
 		return id, tokens
+	}
+
+	// decided is the repository of the fixture where Alice decides, as the
+	// forge lists it.
+	decided := func(t *testing.T, fx Fixture, tokens identity.Tokens) identity.Repository {
+		t.Helper()
+		repos, err := fx.Forge.Repositories(ctx, tokens)
+		if err != nil {
+			t.Fatalf("Repositories: %v", err)
+		}
+		for _, r := range repos {
+			if r.FullName == "acme/api" {
+				return r
+			}
+		}
+		t.Fatalf("Repositories = %v, want acme/api among them", repos)
+		return identity.Repository{}
+	}
+
+	// refused checks that every call that uses the access token of tokens
+	// fails with want, and that no error holds a token.
+	refused := func(t *testing.T, fx Fixture, tokens identity.Tokens, repo identity.Repository, want error) {
+		t.Helper()
+		_, err := fx.Forge.Repositories(ctx, tokens)
+		if !errors.Is(err, want) {
+			t.Errorf("Repositories = %v, want %v", err, want)
+		}
+		noToken(t, err, tokens)
+		p, err := fx.Forge.Permission(ctx, tokens, repo)
+		if !errors.Is(err, want) {
+			t.Errorf("Permission(%s) = %s, %v; want %v", repo.FullName, p, err, want)
+		}
+		noToken(t, err, tokens)
+		if m, ok := identity.MembershipsOf(fx.Forge); ok {
+			in, err := m.IsMember(ctx, tokens, fx.Org)
+			if !errors.Is(err, want) {
+				t.Errorf("IsMember(Org) = %v, %v; want %v", in, err, want)
+			}
+			noToken(t, err, tokens)
+		}
 	}
 
 	t.Run("login", func(t *testing.T) {
@@ -155,23 +223,28 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 
 	t.Run("a code serves once and needs its verifier", func(t *testing.T) {
 		fx := newFixture(t)
-		verifier, _ := identity.NewVerifier(rand.Reader)
+		verifier, raw := authorize(t, fx, "s")
 		other, _ := identity.NewVerifier(rand.Reader)
-		url := fx.Forge.AuthorizeURL("s", identity.Challenge(verifier))
-		code, _ := fx.Approve(t, url)
-		if _, _, err := fx.Forge.Exchange(ctx, code, other); !errors.Is(err, identity.ErrInvalidCode) {
+		code, _ := fx.Approve(t, raw)
+		_, _, err := fx.Forge.Exchange(ctx, code, other)
+		if !errors.Is(err, identity.ErrInvalidCode) {
 			t.Errorf("Exchange with another verifier = %v, want ErrInvalidCode", err)
 		}
-		code, _ = fx.Approve(t, url)
+		noSecret(t, err, code, other, verifier)
+		code, _ = fx.Approve(t, raw)
 		if _, _, err := fx.Forge.Exchange(ctx, code, verifier); err != nil {
 			t.Fatalf("Exchange: %v", err)
 		}
-		if _, _, err := fx.Forge.Exchange(ctx, code, verifier); !errors.Is(err, identity.ErrInvalidCode) {
+		_, _, err = fx.Forge.Exchange(ctx, code, verifier)
+		if !errors.Is(err, identity.ErrInvalidCode) {
 			t.Errorf("second Exchange of a code = %v, want ErrInvalidCode", err)
 		}
-		if _, _, err := fx.Forge.Exchange(ctx, "not-a-code", verifier); !errors.Is(err, identity.ErrInvalidCode) {
+		noSecret(t, err, code, verifier)
+		_, _, err = fx.Forge.Exchange(ctx, "not-a-code", verifier)
+		if !errors.Is(err, identity.ErrInvalidCode) {
 			t.Errorf("Exchange of an unknown code = %v, want ErrInvalidCode", err)
 		}
+		noSecret(t, err, verifier)
 	})
 
 	t.Run("repositories", func(t *testing.T) {
@@ -219,54 +292,84 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 	t.Run("an expired access token is refused, then refreshed", func(t *testing.T) {
 		fx := newFixture(t)
 		_, tokens := login(t, fx)
+		repo := decided(t, fx, tokens)
 		fx.ExpireAccess(t)
-		_, err := fx.Forge.Repositories(ctx, tokens)
-		if !errors.Is(err, identity.ErrUnauthorized) {
-			t.Fatalf("Repositories with an expired token = %v, want ErrUnauthorized", err)
-		}
-		noToken(t, err, tokens)
+		refused(t, fx, tokens, repo, identity.ErrUnauthorized)
 		fresh, err := fx.Forge.Refresh(ctx, tokens)
 		if err != nil {
 			t.Fatalf("Refresh: %v", err)
 		}
-		if fresh.Access.Reveal() == tokens.Access.Reveal() {
-			t.Error("Refresh gave the same access token")
+		if fresh.Access.Reveal() == "" || fresh.Access.Reveal() == tokens.Access.Reveal() {
+			t.Error("Refresh gave no new access token")
 		}
 		if _, err := fx.Forge.Repositories(ctx, fresh); err != nil {
 			t.Errorf("Repositories after Refresh: %v", err)
 		}
+		if p, err := fx.Forge.Permission(ctx, fresh, repo); err != nil || p != identity.PermissionDecide {
+			t.Errorf("Permission(%s) after Refresh = %s, %v; want decide", repo.FullName, p, err)
+		}
+	})
+
+	// GitHub and GitLab refuse a refresh token once used, Gitea only when
+	// told to: the old one may still work, and the caller never relies on it.
+	t.Run("a refresh rotates the refresh token", func(t *testing.T) {
+		fx := newFixture(t)
+		_, tokens := login(t, fx)
+		fresh, err := fx.Forge.Refresh(ctx, tokens)
+		if err != nil {
+			t.Fatalf("Refresh: %v", err)
+		}
+		if fresh.Refresh.Reveal() == "" || fresh.Refresh.Reveal() == tokens.Refresh.Reveal() {
+			t.Error("Refresh gave no new refresh token")
+		}
+		if _, err := fx.Forge.Refresh(ctx, fresh); err != nil {
+			t.Errorf("Refresh of the new refresh token: %v", err)
+		}
+		_, err = fx.Forge.Refresh(ctx, tokens)
+		if err != nil && !errors.Is(err, identity.ErrRevoked) {
+			t.Errorf("Refresh of a used refresh token = %v, want ErrRevoked if the forge refuses it", err)
+		}
+		noToken(t, err, tokens, fresh)
 	})
 
 	t.Run("a revoked authorization is refused for good", func(t *testing.T) {
 		fx := newFixture(t)
 		_, tokens := login(t, fx)
+		repo := decided(t, fx, tokens)
 		fx.Revoke(t)
 		_, err := fx.Forge.Refresh(ctx, tokens)
 		if !errors.Is(err, identity.ErrRevoked) {
 			t.Errorf("Refresh after revocation = %v, want ErrRevoked", err)
 		}
 		noToken(t, err, tokens)
-		if _, err := fx.Forge.Repositories(ctx, tokens); !errors.Is(err, identity.ErrUnauthorized) {
-			t.Errorf("Repositories after revocation = %v, want ErrUnauthorized", err)
-		}
+		refused(t, fx, tokens, repo, identity.ErrUnauthorized)
 	})
 
 	t.Run("an unavailable forge is a transient error", func(t *testing.T) {
 		fx := newFixture(t)
 		_, tokens := login(t, fx)
+		repo := decided(t, fx, tokens)
+		verifier, raw := authorize(t, fx, "s")
+		code, _ := fx.Approve(t, raw)
 		fx.SetDown(t, true)
-		_, err := fx.Forge.Repositories(ctx, tokens)
+		_, _, err := fx.Forge.Exchange(ctx, code, verifier)
 		if !errors.Is(err, identity.ErrUnavailable) {
-			t.Errorf("Repositories while down = %v, want ErrUnavailable", err)
+			t.Errorf("Exchange while down = %v, want ErrUnavailable", err)
 		}
-		noToken(t, err, tokens)
-		if _, err := fx.Forge.Refresh(ctx, tokens); !errors.Is(err, identity.ErrUnavailable) {
+		noSecret(t, err, code, verifier)
+		refused(t, fx, tokens, repo, identity.ErrUnavailable)
+		_, err = fx.Forge.Refresh(ctx, tokens)
+		if !errors.Is(err, identity.ErrUnavailable) {
 			t.Errorf("Refresh while down = %v, want ErrUnavailable", err)
 		}
+		noToken(t, err, tokens)
 		fx.SetDown(t, false)
 		// A transient failure takes nothing away: the tokens still work.
 		if _, err := fx.Forge.Repositories(ctx, tokens); err != nil {
 			t.Errorf("Repositories once back: %v", err)
+		}
+		if p, err := fx.Forge.Permission(ctx, tokens, repo); err != nil || p != identity.PermissionDecide {
+			t.Errorf("Permission(%s) once back = %s, %v; want decide", repo.FullName, p, err)
 		}
 	})
 
