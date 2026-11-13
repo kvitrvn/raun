@@ -35,8 +35,12 @@ type Fixture struct {
 	// as time passes, while the tokens it gave stay valid.
 	ExpireCodes func(t *testing.T)
 	// ExpireAccess makes the forge refuse the access tokens it gave, as
-	// time passes, while their refresh tokens stay valid.
+	// time passes, while their refresh tokens stay valid. Time passes for
+	// the adapter too: the expiries it computes afterwards are later.
 	ExpireAccess func(t *testing.T)
+	// ExpireRefresh makes the forge refuse the refresh tokens it gave, as
+	// time passes.
+	ExpireRefresh func(t *testing.T)
 	// Revoke makes the forge refuse Alice's authorization for good.
 	Revoke func(t *testing.T)
 	// SetDown makes the forge unavailable, or available again.
@@ -96,10 +100,11 @@ func Scenario(name string, bare bool) (*Fake, Fixture) {
 			}
 			return code, state
 		},
-		ExpireCodes:  func(*testing.T) { f.Advance(CodeLifetime) },
-		ExpireAccess: func(*testing.T) { f.Advance(AccessLifetime + time.Second) },
-		Revoke:       func(*testing.T) { f.Revoke("1001") },
-		SetDown:      func(_ *testing.T, down bool) { f.SetDown(down) },
+		ExpireCodes:   func(*testing.T) { f.Advance(CodeLifetime) },
+		ExpireAccess:  func(*testing.T) { f.Advance(AccessLifetime + time.Second) },
+		ExpireRefresh: func(*testing.T) { f.Advance(RefreshLifetime + time.Second) },
+		Revoke:        func(*testing.T) { f.Revoke("1001") },
+		SetDown:       func(_ *testing.T, down bool) { f.SetDown(down) },
 		RenameAlice: func(t *testing.T, login string) {
 			t.Helper()
 			if !f.Rename("1001", login) {
@@ -354,6 +359,17 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 			t.Errorf("Refresh of a used refresh token = %v, want ErrRevoked if the forge refuses it", err)
 		}
 		noToken(t, err, tokens, fresh)
+	})
+
+	t.Run("an expired refresh token is refused for good", func(t *testing.T) {
+		fx := newFixture(t)
+		_, tokens := login(t, fx)
+		fx.ExpireRefresh(t)
+		_, err := fx.Forge.Refresh(ctx, tokens)
+		if !errors.Is(err, identity.ErrRevoked) {
+			t.Errorf("Refresh of an expired refresh token = %v, want ErrRevoked", err)
+		}
+		noToken(t, err, tokens)
 	})
 
 	t.Run("a revoked authorization is refused for good", func(t *testing.T) {
