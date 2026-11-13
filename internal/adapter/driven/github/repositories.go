@@ -58,26 +58,29 @@ func (r repository) permission() identity.Permission {
 func (a *App) walk(ctx context.Context, t identity.Tokens, visit func(repository) bool) error {
 	auth := bearer(t.Access)
 	var installations []int64
-	err := a.pages(ctx, "/user/installations", nil, auth, func(req request, r *response) (int, error) {
+	err := a.pages(ctx, "/user/installations", nil, auth, func(req request, r *response, probe bool) (int, error) {
 		if r.status != http.StatusOK {
 			return 0, status(req, r)
 		}
 		var out struct {
-			Installations []installation `json:"installations"`
+			Installations *[]installation `json:"installations"`
 		}
 		if err := decode(req, r, &out); err != nil {
 			return 0, err
 		}
-		for _, in := range out.Installations {
+		if out.Installations == nil {
+			return 0, fail(req, identity.ErrUnavailable, "malformed response")
+		}
+		for _, in := range *out.Installations {
 			if in.ID <= 0 {
 				return 0, fail(req, identity.ErrUnavailable, "malformed response")
 			}
 			// A suspended installation reaches nothing.
-			if in.SuspendedAt == nil {
+			if in.SuspendedAt == nil && !probe {
 				installations = append(installations, in.ID)
 			}
 		}
-		return len(out.Installations), nil
+		return len(*out.Installations), nil
 	})
 	if err != nil {
 		return err
@@ -85,7 +88,7 @@ func (a *App) walk(ctx context.Context, t identity.Tokens, visit func(repository
 	for _, id := range installations {
 		done := false
 		path := "/user/installations/" + strconv.FormatInt(id, 10) + "/repositories"
-		err := a.pages(ctx, path, nil, auth, func(req request, r *response) (int, error) {
+		err := a.pages(ctx, path, nil, auth, func(req request, r *response, probe bool) (int, error) {
 			if done {
 				return 0, nil
 			}
@@ -98,21 +101,29 @@ func (a *App) walk(ctx context.Context, t identity.Tokens, visit func(repository
 				return 0, status(req, r)
 			}
 			var out struct {
-				Repositories []repository `json:"repositories"`
+				Repositories *[]repository `json:"repositories"`
 			}
 			if err := decode(req, r, &out); err != nil {
 				return 0, err
 			}
-			for _, repo := range out.Repositories {
+			if out.Repositories == nil {
+				return 0, fail(req, identity.ErrUnavailable, "malformed response")
+			}
+			for _, repo := range *out.Repositories {
 				if repo.ID <= 0 || repo.FullName == "" {
 					return 0, fail(req, identity.ErrUnavailable, "malformed response")
 				}
+			}
+			if probe {
+				return len(*out.Repositories), nil
+			}
+			for _, repo := range *out.Repositories {
 				if !visit(repo) {
 					done = true
 					return 0, nil
 				}
 			}
-			return len(out.Repositories), nil
+			return len(*out.Repositories), nil
 		})
 		if err != nil {
 			return err

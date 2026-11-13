@@ -372,7 +372,7 @@ func (g *gitHub) userInstallations(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	slices.Sort(ids)
-	var out []map[string]any
+	out := []map[string]any{}
 	for _, id := range page(r, ids) {
 		out = append(out, map[string]any{"id": id, "app_id": g.appID, "suspended_at": nil})
 	}
@@ -403,7 +403,7 @@ func (g *gitHub) installationRepositories(w http.ResponseWriter, r *http.Request
 		return
 	}
 	repos := g.reachable(person, id)
-	var out []map[string]any
+	out := []map[string]any{}
 	for _, repo := range page(r, repos) {
 		out = append(out, map[string]any{
 			"id": repo.id, "full_name": repo.fullName, "default_branch": repo.branch, "private": repo.private,

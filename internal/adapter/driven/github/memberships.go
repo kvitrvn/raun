@@ -21,7 +21,7 @@ func (a *App) IsMember(ctx context.Context, t identity.Tokens, org string) (bool
 		return false, nil
 	}
 	member := false
-	err = a.pages(ctx, "/user/memberships/orgs", url.Values{"state": {"active"}}, bearer(t.Access), func(req request, r *response) (int, error) {
+	err = a.pages(ctx, "/user/memberships/orgs", url.Values{"state": {"active"}}, bearer(t.Access), func(req request, r *response, probe bool) (int, error) {
 		if member {
 			return 0, nil
 		}
@@ -36,6 +36,13 @@ func (a *App) IsMember(ctx context.Context, t identity.Tokens, org string) (bool
 		}
 		if err := decode(req, r, &out); err != nil {
 			return 0, err
+		}
+		// An empty array decodes to an empty slice; only null leaves nil.
+		if out == nil {
+			return 0, fail(req, identity.ErrUnavailable, "malformed response")
+		}
+		if probe {
+			return len(out), nil
 		}
 		for _, m := range out {
 			if m.Organization.ID == id && m.State == "active" {

@@ -250,11 +250,12 @@ func (a *App) apiGet(path string, query url.Values, auth string) request {
 }
 
 // pages walks the pages of the listing at path: each page is given to page,
-// which returns the number of items it held, until a page that is not full.
-// After maxPages full pages, one more is asked for: empty, the listing held
-// exactly maxPages pages; else it is longer, which is an error, never a list
-// cut short.
-func (a *App) pages(ctx context.Context, path string, query url.Values, auth string, page func(req request, r *response) (int, error)) error {
+// which checks its status and its document and returns the number of items
+// it held, until a page that is not full. After maxPages full pages, one more
+// is given to page as a probe, whose items page counts but never takes:
+// empty, the listing held exactly maxPages pages; else it is longer, which is
+// an error, never a list cut short.
+func (a *App) pages(ctx context.Context, path string, query url.Values, auth string, page func(req request, r *response, probe bool) (int, error)) error {
 	for n := 1; n <= maxPages+1; n++ {
 		q := url.Values{}
 		for k, v := range query {
@@ -267,43 +268,22 @@ func (a *App) pages(ctx context.Context, path string, query url.Values, auth str
 		if err != nil {
 			return err
 		}
-		if n == maxPages+1 {
-			// The page past the bound is only looked at: its items are
-			// never given to page.
-			if r.status == http.StatusOK && emptyListing(r.body) {
+		probe := n == maxPages+1
+		count, err := page(req, r, probe)
+		if err != nil {
+			return err
+		}
+		if probe {
+			if count == 0 {
 				return nil
 			}
 			break
-		}
-		count, err := page(req, r)
-		if err != nil {
-			return err
 		}
 		if count < perPage {
 			return nil
 		}
 	}
 	return fail(request{method: http.MethodGet, path: path}, identity.ErrUnavailable, fmt.Sprintf("more than %d pages", maxPages))
-}
-
-// emptyListing reports whether body is a listing without items: an empty
-// array, or an object whose arrays are all empty, as GitHub wraps some
-// listings ({"total_count": 0, "repositories": []}).
-func emptyListing(body []byte) bool {
-	var items []json.RawMessage
-	if json.Unmarshal(body, &items) == nil {
-		return len(items) == 0
-	}
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(body, &fields) != nil {
-		return false
-	}
-	for _, v := range fields {
-		if json.Unmarshal(v, &items) == nil && len(items) > 0 {
-			return false
-		}
-	}
-	return true
 }
 
 // bearer is the Authorization header of a token.

@@ -354,6 +354,62 @@ func TestAnEmptyRepository(t *testing.T) {
 	}
 }
 
+// TestThePagePastTheBound: after 100 full pages, the next one goes through
+// the same rules as any page: a refused token is ErrUnauthorized, an
+// installation removed meanwhile is skipped, and a malformed page is an
+// error, never the end of the list.
+func TestThePagePastTheBound(t *testing.T) {
+	key := testKey(t)
+	full := func(n int) string {
+		var items []string
+		for i := range perPage {
+			id := 100000 + n*perPage + i
+			items = append(items, fmt.Sprintf(`{"id": %d, "full_name": "bulk/r%d", "default_branch": "main", "permissions": {"pull": true}}`, id, id))
+		}
+		return `{"total_count": 10000, "repositories": [` + strings.Join(items, ",") + `]}`
+	}
+	for _, tc := range []struct {
+		name  string
+		past  func(w http.ResponseWriter)
+		want  error
+		count int
+	}{
+		{"empty: the listing is whole", func(w http.ResponseWriter) { _, _ = w.Write([]byte(`{"total_count": 10000, "repositories": []}`)) }, nil, 10002},
+		{"a refused token", func(w http.ResponseWriter) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Bad credentials"})
+		}, identity.ErrUnauthorized, 0},
+		{"an installation removed meanwhile", func(w http.ResponseWriter) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+		}, nil, 10002},
+		{"no array", func(w http.ResponseWriter) { _, _ = w.Write([]byte(`{"total_count": 10000}`)) }, identity.ErrUnavailable, 0},
+		{"null", func(w http.ResponseWriter) { _, _ = w.Write([]byte(`null`)) }, identity.ErrUnavailable, 0},
+		{"a truncated page", func(w http.ResponseWriter) { _, _ = w.Write([]byte(`{"repositories": [`)) }, identity.ErrUnavailable, 0},
+		{"one more page of repositories", func(w http.ResponseWriter) { _, _ = w.Write([]byte(full(100))) }, identity.ErrUnavailable, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newGitHub(t, key)
+			a := g.app(t, key, nil)
+			tokens := login(t, g, a, 1001)
+			g.on("/api/v3/user/installations/501/repositories", func(w http.ResponseWriter, r *http.Request) bool {
+				n, _ := strconv.Atoi(r.URL.Query().Get("page"))
+				if n > maxPages {
+					tc.past(w)
+				} else {
+					_, _ = w.Write([]byte(full(n - 1)))
+				}
+				return true
+			})
+			repos, err := a.Repositories(context.Background(), tokens)
+			if tc.want == nil && (err != nil || len(repos) != tc.count-2) {
+				t.Errorf("Repositories = %d repositories, %v; want %d", len(repos), err, tc.count-2)
+			}
+			if tc.want != nil && (!errors.Is(err, tc.want) || repos != nil) {
+				t.Errorf("Repositories = %d repositories, %v; want %v", len(repos), err, tc.want)
+			}
+		})
+	}
+}
+
 func TestIsMember(t *testing.T) {
 	key := testKey(t)
 	g := newGitHub(t, key)
