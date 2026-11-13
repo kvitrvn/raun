@@ -8,7 +8,7 @@ Raun is self-hosted and connected to your forge, in the spirit of Drone CI: a se
 
 ## Status
 
-Early development: `raun server` starts, opens its database, serves health endpoints and a first page built with the web shell (no repository can be activated yet); `raun runner` is a stub. The knowledge model (`internal/core/knowledge`) exists with source classification, a reader of a commit on the `git` binary, deterministic evidence verification and its storage on SQLite. People sign up and log in with their GitHub account through a GitHub App (`internal/core/identity`, `internal/adapter/driven/github`), and get a personal workspace; they create shared workspaces and add members. Permissions on repositories come next. The plan is in the [issues](https://github.com/kvitrvn/raun/issues) and the [implementation records](docs/implementation/README.md).
+Early development: `raun server` starts, opens its database, serves health endpoints and a first page built with the web shell (no repository can be activated yet); `raun runner` is a stub. The knowledge model (`internal/core/knowledge`) exists with source classification, a reader of a commit on the `git` binary, deterministic evidence verification and its storage on SQLite. People sign up and log in with their GitHub account through a GitHub App (`internal/core/identity`, `internal/adapter/driven/github`), and get a personal workspace; they create shared workspaces and add members. What a person may view or decide on a repository comes from the forge, through one permission service with a 5-minute cache; repositories arrive with epic 5. The plan is in the [issues](https://github.com/kvitrvn/raun/issues) and the [implementation records](docs/implementation/README.md).
 
 ## Usage
 

@@ -64,7 +64,7 @@ Each later epic adds its capabilities to the fake and to the suite.
 | `triage`, `read` | view |
 | none | nothing |
 
-A permission is cached 5 minutes per account and repository. A permission that cannot be established is a refusal.
+The permission service of `internal/core/identity` is the one place that decides: it asks the forge with the account's own tokens, keeps the answer 5 minutes per account and repository, and drops it at logout, on a refusal of the forge and when the account's tokens are lost. A permission that cannot be established is a refusal, and a kept answer that expires while the forge cannot be reached is too.
 
 ## GitHub
 
