@@ -41,8 +41,8 @@ func insertSession(ctx context.Context, tx *sql.Tx, sess session.Session) error 
 		return session.ErrExists
 	}
 	_, err := tx.ExecContext(ctx,
-		`INSERT INTO sessions (hash, csrf, created_at, last_seen_at) VALUES (?, ?, ?, ?)`,
-		sess.Hash, sess.CSRF, formatTime(sess.CreatedAt), formatTime(sess.LastSeenAt))
+		`INSERT INTO sessions (hash, csrf, created_at, last_seen_at, account) VALUES (?, ?, ?, ?, ?)`,
+		sess.Hash, sess.CSRF, formatTime(sess.CreatedAt), formatTime(sess.LastSeenAt), sess.Account)
 	if err != nil {
 		return fmt.Errorf("insert session: %w", err)
 	}
@@ -54,8 +54,8 @@ func (st Sessions) Get(ctx context.Context, hash string) (session.Session, error
 	err := st.s.read(ctx, func(tx *sql.Tx) error {
 		var created, seen string
 		err := tx.QueryRowContext(ctx,
-			`SELECT hash, csrf, created_at, last_seen_at FROM sessions WHERE hash = ?`, hash).
-			Scan(&sess.Hash, &sess.CSRF, &created, &seen)
+			`SELECT hash, csrf, created_at, last_seen_at, account FROM sessions WHERE hash = ?`, hash).
+			Scan(&sess.Hash, &sess.CSRF, &created, &seen, &sess.Account)
 		if errors.Is(err, sql.ErrNoRows) {
 			return session.ErrNotFound
 		}
