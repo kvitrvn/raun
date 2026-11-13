@@ -46,7 +46,7 @@ The choice, why it was made, and what it implies for later epics.
 | 2 | Knowledge core (#8) | v0.1 Foundation | [02-knowledge-core.md](02-knowledge-core.md) |
 | 3 | Server foundation (#16) | v0.2 Server and forge | [03-server-foundation.md](03-server-foundation.md) |
 | 4 | Forge port and identity (#22) | v0.2 Server and forge | [04-forge-port-and-identity.md](04-forge-port-and-identity.md) |
-| 5 | Repositories and events (#29) | v0.2 Server and forge | |
+| 5 | Repositories and events (#29) | v0.2 Server and forge | [05-repositories-and-events.md](05-repositories-and-events.md) |
 | 6 | Jobs and runner (#35) | v0.3 Deterministic checks | |
 | 7 | Evidence checks on push and pull request (#43) | v0.3 Deterministic checks | |
 | 8 | Configuration and agent contract (#50) | v0.4 LLM analysis | |
