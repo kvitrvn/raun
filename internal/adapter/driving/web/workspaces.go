@@ -153,6 +153,12 @@ func (s *Server) workspaceForm(w http.ResponseWriter, r *http.Request, status in
 // memberAdd adds an account to a workspace, on behalf of one of its owners.
 func (s *Server) memberAdd(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
+	// The rule of the page: only a name of the namespace, as it is written,
+	// is a workspace, so the redirect lands where a GET answers.
+	if identity.CheckName(name) != nil {
+		s.notFound(w, r)
+		return
+	}
 	form, ok := formValues(w, r, "account", "role")
 	if !ok {
 		return

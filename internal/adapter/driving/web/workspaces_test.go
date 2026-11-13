@@ -115,6 +115,13 @@ func TestOwnersAddMembers(t *testing.T) {
 			t.Errorf("adding %s = %d %s", tc.name, resp.StatusCode, body)
 		}
 	}
+	// A path a GET refuses is refused for a POST too, before anything
+	// changes.
+	for _, path := range []string{"/Acme/members", "/acme%20/members", "/assets/members"} {
+		if resp := alice.post(l, path, url.Values{"account": {"nobody"}, "role": {"member"}}); resp.StatusCode != http.StatusNotFound {
+			t.Errorf("POST %s = %d, want 404", path, resp.StatusCode)
+		}
+	}
 	resp := bob.do(http.MethodGet, "/acme", nil)
 	body := readBody(t, resp)
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "You are member.") || strings.Contains(body, `action="/acme/members"`) {
