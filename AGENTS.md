@@ -24,6 +24,7 @@ internal/adapter/driven/   implementations of the ports: database, forge, sandbo
 internal/adapter/driving/  entry points: HTTP server, webhooks, runner API
 internal/gittest/          test helper outside the core: fixture Git repositories
 internal/golden/           test helper outside the core: golden files, rewritten with -update
+internal/forgetest/        test helper outside the core: the fake forge and the contract suite of forge adapters
 scripts/                   repository checks called by the Makefile, and generate-web.sh (docs/web.md)
 docs/                      product, architecture, threat model, implementation records
 ```
@@ -31,6 +32,7 @@ docs/                      product, architecture, threat model, implementation r
 - Declare a port in the core context that consumes it; put its implementation under `internal/adapter`. `make architecture` enforces the dependency direction of the core.
 - Build adapters in `cmd/raun` only.
 - Create a package in the epic that first needs it; never add an empty one.
+- Name a test helper package `golden` or `<name>test`: `make architecture` refuses one linked into `cmd/raun`.
 
 ## Domain invariants
 

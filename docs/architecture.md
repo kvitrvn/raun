@@ -1,6 +1,6 @@
 # Architecture
 
-> Status: the shape below is decided ([epic 1](implementation/01-project-foundation.md)), and the storage engine by [epic 2](implementation/02-knowledge-core.md#sqlite). What exists so far: `cmd/raun`; the knowledge model, the source classification, the commit reader port, evidence verification and the store port in `internal/core/knowledge`, with its contract suite in `knowledgetest`; the store on SQLite in `internal/adapter/driven/sqlite`; the commit reader on the `git` binary in `internal/adapter/driven/git`; the test helpers `internal/gittest` (fixture repositories) and `internal/golden` (golden files); and `raun server` with its configuration, its lifecycle and the HTTP entry point in `internal/adapter/driving/web` (middleware, request protections, sessions, health endpoints, embedded assets and the first page), the session rules and store port in `internal/core/session` with their contract suite in `sessiontest`, with its templates in `internal/adapter/driving/web/ui` ([epic 3](implementation/03-server-foundation.md), [docs/web.md](web.md)). Each epic fills in its part and updates this page.
+> Status: the shape below is decided ([epic 1](implementation/01-project-foundation.md)), and the storage engine by [epic 2](implementation/02-knowledge-core.md#sqlite). What exists so far: `cmd/raun`; the knowledge model, the source classification, the commit reader port, evidence verification and the store port in `internal/core/knowledge`, with its contract suite in `knowledgetest`; the store on SQLite in `internal/adapter/driven/sqlite`; the commit reader on the `git` binary in `internal/adapter/driven/git`; the test helpers `internal/gittest` (fixture repositories) and `internal/golden` (golden files); and `raun server` with its configuration, its lifecycle and the HTTP entry point in `internal/adapter/driving/web` (middleware, request protections, sessions, health endpoints, embedded assets and the first page), the session rules and store port in `internal/core/session` with their contract suite in `sessiontest`, with its templates in `internal/adapter/driving/web/ui` ([epic 3](implementation/03-server-foundation.md), [docs/web.md](web.md)); and the forge port in `internal/core/identity`, with the fake forge and its contract suite in `internal/forgetest` ([epic 4](implementation/04-forge-port-and-identity.md)). Each epic fills in its part and updates this page.
 
 ## Components
 
@@ -46,6 +46,7 @@ internal/adapter/driving/  entry points: HTTP server, webhooks, runner API
 ```
 
 - A core context, its tests included, imports the standard library and its own context only. `make architecture` enforces it.
+- A test helper is a package named `golden` or ending in `test`; `cmd/raun` never links one. `make architecture` enforces it.
 - A port is an interface declared in the core context that consumes it. Its adapter lives under `internal/adapter`.
 - Only `cmd/raun` builds adapters and hands them to the core.
 - A package is created by the epic that first needs it.
