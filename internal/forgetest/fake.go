@@ -55,6 +55,7 @@ type Fake struct {
 	mu      sync.Mutex
 	name    string
 	now     func() time.Time
+	offset  time.Duration // how far Advance moved the clock
 	people  map[string]Person
 	repos   map[string]repository
 	grants  map[string]map[string]identity.Permission // person -> repository -> permission
@@ -71,7 +72,8 @@ var (
 	_ identity.Memberships = (*Fake)(nil)
 )
 
-// New returns an empty fake forge called name, whose clock is now.
+// New returns an empty fake forge called name, whose clock is now, moved
+// forward by Advance.
 func New(name string, now func() time.Time) *Fake {
 	return &Fake{
 		name:    name,
@@ -84,6 +86,19 @@ func New(name string, now func() time.Time) *Fake {
 		access:  map[string]token{},
 		refresh: map[string]token{},
 	}
+}
+
+// Advance moves the clock of the fake forward by d, as time passes: codes and
+// tokens expire on it.
+func (f *Fake) Advance(d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.offset += d
+}
+
+// clock is the time of the fake; the caller holds the lock.
+func (f *Fake) clock() time.Time {
+	return f.now().Add(f.offset)
 }
 
 // AddPerson adds p.
@@ -175,7 +190,7 @@ func (f *Fake) Approve(person, authorizeURL string) (code, state string, err err
 		return "", "", fmt.Errorf("unknown person %q", person)
 	}
 	code = f.next("code")
-	f.codes[code] = grant{person: person, challenge: q.Get("code_challenge"), expires: f.now().Add(CodeLifetime)}
+	f.codes[code] = grant{person: person, challenge: q.Get("code_challenge"), expires: f.clock().Add(CodeLifetime)}
 	return code, q.Get("state"), nil
 }
 
@@ -204,7 +219,7 @@ func (f *Fake) Exchange(_ context.Context, code, verifier string) (identity.Iden
 	}
 	g, ok := f.codes[code]
 	delete(f.codes, code)
-	if !ok || !f.now().Before(g.expires) || identity.Challenge(verifier) != g.challenge {
+	if !ok || !f.clock().Before(g.expires) || identity.Challenge(verifier) != g.challenge {
 		return identity.Identity{}, identity.Tokens{}, identity.ErrInvalidCode
 	}
 	p := f.people[g.person]
@@ -213,7 +228,7 @@ func (f *Fake) Exchange(_ context.Context, code, verifier string) (identity.Iden
 
 // issue gives person a new pair of tokens; the caller holds the lock.
 func (f *Fake) issue(person string) identity.Tokens {
-	now := f.now()
+	now := f.clock()
 	a, r := f.next("access"), f.next("refresh")
 	f.access[a] = token{person: person, expires: now.Add(AccessLifetime)}
 	f.refresh[r] = token{person: person, expires: now.Add(RefreshLifetime)}
@@ -232,12 +247,16 @@ func (f *Fake) Refresh(_ context.Context, t identity.Tokens) (identity.Tokens, e
 		return identity.Tokens{}, identity.ErrUnavailable
 	}
 	r, ok := f.refresh[t.Refresh.Reveal()]
-	if !ok || !f.now().Before(r.expires) {
+	if !ok || !f.clock().Before(r.expires) {
 		return identity.Tokens{}, identity.ErrRevoked
 	}
-	// A refresh token serves once: the forge rotates both.
+	// A refresh token serves once: the forge rotates both. The access token
+	// of t goes with it only if it is the same person's: a refresh never
+	// takes anything from someone else.
 	delete(f.refresh, t.Refresh.Reveal())
-	delete(f.access, t.Access.Reveal())
+	if a, ok := f.access[t.Access.Reveal()]; ok && a.person == r.person {
+		delete(f.access, t.Access.Reveal())
+	}
 	return f.issue(r.person), nil
 }
 
@@ -248,7 +267,7 @@ func (f *Fake) holder(t identity.Tokens) (string, error) {
 		return "", identity.ErrUnavailable
 	}
 	a, ok := f.access[t.Access.Reveal()]
-	if !ok || !f.now().Before(a.expires) {
+	if !ok || !f.clock().Before(a.expires) {
 		return "", identity.ErrUnauthorized
 	}
 	return a.person, nil
@@ -277,7 +296,7 @@ func (f *Fake) Permission(_ context.Context, t identity.Tokens, repo identity.Re
 	defer f.mu.Unlock()
 	person, err := f.holder(t)
 	if err != nil {
-		return "", err
+		return identity.PermissionNone, err
 	}
 	r, ok := f.repos[repo.ID]
 	if !ok || !r.installed {

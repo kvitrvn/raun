@@ -45,35 +45,81 @@ func TestApproveRefusesAnIncompleteURL(t *testing.T) {
 }
 
 func TestCodesExpire(t *testing.T) {
-	clock := time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)
-	f := New("fake", func() time.Time { return clock })
+	f := New("fake", func() time.Time { return time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC) })
 	f.AddPerson(Person{ID: "1", Login: "a"})
 	v := "verifier-verifier-verifier-verifier-verifier"
 	code, _, err := f.Approve("1", f.AuthorizeURL("s", identity.Challenge(v)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	clock = clock.Add(CodeLifetime)
+	f.Advance(CodeLifetime)
 	if _, _, err := f.Exchange(context.Background(), code, v); !errors.Is(err, identity.ErrInvalidCode) {
 		t.Errorf("Exchange of an expired code = %v, want ErrInvalidCode", err)
 	}
 }
 
-func TestRefreshRotatesTheRefreshToken(t *testing.T) {
-	_, fx := Scenario("fake", false)
+// TestARefreshTokenServesOnce: the fake refuses a used refresh token, as
+// GitHub does; the suite allows a forge that accepts it.
+func TestARefreshTokenServesOnce(t *testing.T) {
+	f, fx := Scenario("fake", false)
 	ctx := context.Background()
 	v, _ := identity.NewVerifier(stubReader{})
-	code, _ := fx.Approve(t, fx.Forge.AuthorizeURL("s", identity.Challenge(v)))
-	_, tokens, err := fx.Forge.Exchange(ctx, code, v)
+	code, _ := fx.Approve(t, f.AuthorizeURL("s", identity.Challenge(v)))
+	_, tokens, err := f.Exchange(ctx, code, v)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fx.Forge.Refresh(ctx, tokens); err != nil {
+	if _, err := f.Refresh(ctx, tokens); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fx.Forge.Refresh(ctx, tokens); !errors.Is(err, identity.ErrRevoked) {
+	if _, err := f.Refresh(ctx, tokens); !errors.Is(err, identity.ErrRevoked) {
 		t.Errorf("second use of a refresh token = %v, want ErrRevoked", err)
 	}
+}
+
+// TestRefreshKeepsSomeoneElsesAccess refreshes Alice's refresh token paired
+// with Bob's access token: Alice gets new tokens, and Bob keeps his access.
+func TestRefreshKeepsSomeoneElsesAccess(t *testing.T) {
+	f, _ := Scenario("fake", false)
+	ctx := context.Background()
+	loginAs := func(person string) identity.Tokens {
+		t.Helper()
+		v, _ := identity.NewVerifier(stubReader{})
+		code, _, err := f.Approve(person, f.AuthorizeURL("s", identity.Challenge(v)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, tokens, err := f.Exchange(ctx, code, v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tokens
+	}
+	alice, bob := loginAs("1001"), loginAs("1002")
+	if _, err := f.Refresh(ctx, identity.Tokens{Access: bob.Access, Refresh: alice.Refresh}); err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if _, err := f.Repositories(ctx, bob); err != nil {
+		t.Errorf("Bob's access after Alice's refresh: %v", err)
+	}
+}
+
+// TestAdvanceIsSafeForConcurrentUse moves the clock while the fake serves:
+// go test -race reports a clock written outside the lock.
+func TestAdvanceIsSafeForConcurrentUse(t *testing.T) {
+	f, fx := Scenario("fake", false)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 100 {
+			f.Advance(time.Second)
+		}
+	}()
+	for range 100 {
+		_ = fx.Forge.AuthorizeURL("s", "c")
+		_, _, _ = f.Exchange(context.Background(), "not-a-code", "v")
+	}
+	<-done
 }
 
 type stubReader struct{}
