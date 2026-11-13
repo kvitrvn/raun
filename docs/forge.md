@@ -30,20 +30,20 @@ In `internal/core/identity`:
 | `Name()` | The name the server gives the forge, the prefix of the identities of the configuration: `github` |
 | `AuthorizeURL(state, challenge)` | Where the person approves Raun, carrying the state and the S256 PKCE challenge |
 | `Exchange(ctx, code, verifier)` | The identity and the tokens of the person; `ErrInvalidCode` if the code is unknown, used, expired or does not match the verifier |
-| `Refresh(ctx, tokens)` | New tokens; `ErrRevoked` if the forge refuses for good, `ErrUnavailable` if it cannot answer now |
+| `Refresh(ctx, tokens)` | New tokens, the refresh token included, which the caller keeps: the old refresh token is spent, and a forge that refuses it gives `ErrRevoked`; `ErrRevoked` too if the forge refuses for good, `ErrUnavailable` if it cannot answer now |
 | `Repositories(ctx, tokens)` | The repositories the person reaches through Raun, sorted by full name |
 | `Permission(ctx, tokens, repo)` | `none`, `view` or `decide`, already mapped; a repository the person cannot reach through Raun is `none`, not an error |
 | `IsMember(ctx, tokens, org)` | Optional (`Memberships`, detected with `MembershipsOf`): whether the person belongs to the organization with this stable identifier |
 
-Every call that uses an access token gives `ErrUnauthorized` when the forge refuses it, after which the caller refreshes, and `ErrUnavailable` for a transient failure. An adapter wraps its causes in these errors, so a caller decides without knowing the forge. Tokens are of type `Secret`, which prints as `[redacted]` in every format, log value and text encoding. `NewVerifier` and `Challenge` make the PKCE pair (RFC 7636).
+Every call that uses an access token gives `ErrUnauthorized` when the forge refuses it, after which the caller refreshes, and `ErrUnavailable` for a transient failure; `Exchange` gives `ErrUnavailable` too. An adapter wraps its causes in these errors, so a caller decides without knowing the forge, and no error holds a token, a code or a verifier. Tokens are of type `Secret`, which prints as `[redacted]` in every format, log value and text encoding. `NewVerifier` and `Challenge` make the PKCE pair (RFC 7636).
 
 ## The fake forge
 
-`internal/forgetest` is test code, never linked into the binary (`make architecture` checks it).
+`internal/forgetest` is test code, never linked into the binary (`make architecture` refuses any package named `golden` or ending in `test` in the dependencies of `cmd/raun`).
 
-- `New` gives a forge in memory with scripted people, repositories (installed or not), permissions and organizations; `Approve` plays a person approving Raun; `Revoke` withdraws a person's tokens; `SetDown` makes every call unavailable. It runs PKCE, single-use codes of 10 minutes, access tokens of 8 hours, refresh tokens of 6 months that serve once, on the clock it is given.
+- `New` gives a forge in memory with scripted people, repositories (installed or not), permissions and organizations; `Approve` plays a person approving Raun; `Revoke` withdraws a person's tokens; `SetDown` makes every call unavailable; `Advance` moves its clock forward. It runs PKCE, single-use codes of 10 minutes, access tokens of 8 hours, refresh tokens of 6 months that serve once, on the clock it is given.
 - `Bare` gives the same forge without its optional capabilities.
-- `Scenario` builds the fixture of the contract suite; `Suite` is the contract every adapter passes: login, codes and verifiers, repositories, permissions, an expired access token refused then refreshed, a revocation refused for good, a transient failure that takes nothing away, a renamed login that keeps its identifier, no token in an error, and memberships when the forge has them. The fake passes it, with and without its optional capabilities.
+- `Scenario` builds the fixture of the contract suite; `Suite` is the contract every adapter passes: an authorization URL that carries the state and the S256 challenge, login, codes and verifiers, repositories, permissions, an expired access token refused by every call then refreshed, a refresh that rotates the refresh token, a revocation refused for good by every call, a transient failure of every call that takes nothing away, a renamed login that keeps its identifier, no token, code or verifier in an error, and memberships when the forge has them. The fake passes it, with and without its optional capabilities.
 
 Each later epic adds its capabilities to the fake and to the suite.
 
