@@ -410,6 +410,106 @@ func TestThePagePastTheBound(t *testing.T) {
 	}
 }
 
+// TestMalformedInstallationsAndMemberships: the listings of installations
+// and memberships refuse a missing or null array and a bad identifier.
+func TestMalformedInstallationsAndMemberships(t *testing.T) {
+	key := testKey(t)
+	for _, tc := range []struct{ path, body string }{
+		{"/api/v3/user/installations", `{"total_count": 1}`},
+		{"/api/v3/user/installations", `{"total_count": 1, "installations": null}`},
+		{"/api/v3/user/installations", `{"total_count": 1, "installations": [{"id": 0}]}`},
+		{"/api/v3/user/memberships/orgs", `null`},
+		{"/api/v3/user/memberships/orgs", `{"organizations": []}`},
+	} {
+		g := newGitHub(t, key)
+		a := g.app(t, key, nil)
+		tokens := login(t, g, a, 1001)
+		g.on(tc.path, func(w http.ResponseWriter, _ *http.Request) bool {
+			_, _ = w.Write([]byte(tc.body))
+			return true
+		})
+		var err error
+		if strings.HasSuffix(tc.path, "/orgs") {
+			_, err = a.IsMember(context.Background(), tokens, "3001")
+		} else {
+			_, err = a.Repositories(context.Background(), tokens)
+		}
+		if !errors.Is(err, identity.ErrUnavailable) {
+			t.Errorf("%s answering %s: %v, want ErrUnavailable", tc.path, tc.body, err)
+		}
+	}
+}
+
+// TestProbesOfInstallationsAndMemberships: the page past the bound of the
+// installations and of the memberships ends the listing when empty, and
+// fails the call otherwise: an installation there is never walked, and a
+// membership there never makes a member.
+func TestProbesOfInstallationsAndMemberships(t *testing.T) {
+	key := testKey(t)
+	installations := func(n int, suspended bool) string {
+		var items []string
+		for i := range n {
+			s := `null`
+			if suspended {
+				s = `"2026-11-12T09:00:00Z"`
+			}
+			items = append(items, fmt.Sprintf(`{"id": %d, "suspended_at": %s}`, 9000+i, s))
+		}
+		return `{"total_count": 10001, "installations": [` + strings.Join(items, ",") + `]}`
+	}
+	memberships := func(n, org int) string {
+		var items []string
+		for i := range n {
+			items = append(items, fmt.Sprintf(`{"state": "active", "organization": {"id": %d}}`, org+i))
+		}
+		return "[" + strings.Join(items, ",") + "]"
+	}
+	for _, tc := range []struct {
+		name, path, past string
+		want             error
+	}{
+		{"an installation past the bound", "/api/v3/user/installations", installations(1, false), identity.ErrUnavailable},
+		{"no installation past the bound", "/api/v3/user/installations", `{"total_count": 10000, "installations": []}`, nil},
+		{"a membership past the bound", "/api/v3/user/memberships/orgs", memberships(1, 3001), identity.ErrUnavailable},
+		{"no membership past the bound", "/api/v3/user/memberships/orgs", `[]`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newGitHub(t, key)
+			a := g.app(t, key, nil)
+			tokens := login(t, g, a, 1001)
+			g.on(tc.path, func(w http.ResponseWriter, r *http.Request) bool {
+				n, _ := strconv.Atoi(r.URL.Query().Get("page"))
+				switch {
+				case n > maxPages:
+					_, _ = w.Write([]byte(tc.past))
+				case strings.HasSuffix(tc.path, "/orgs"):
+					_, _ = w.Write([]byte(memberships(perPage, 100000+n*perPage)))
+				default:
+					// Suspended, so that the walk visits none of them.
+					_, _ = w.Write([]byte(installations(perPage, true)))
+				}
+				return true
+			})
+			var err error
+			if strings.HasSuffix(tc.path, "/orgs") {
+				var in bool
+				in, err = a.IsMember(context.Background(), tokens, "3001")
+				if in {
+					t.Error("a membership on the probe made a member")
+				}
+			} else {
+				_, err = a.Repositories(context.Background(), tokens)
+				if n := g.callsTo(http.MethodGet, "/api/v3/user/installations/9000/repositories"); n != 0 {
+					t.Errorf("the installation of the probe was walked %d times", n)
+				}
+			}
+			if (tc.want == nil && err != nil) || (tc.want != nil && !errors.Is(err, tc.want)) {
+				t.Errorf("err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestIsMember(t *testing.T) {
 	key := testKey(t)
 	g := newGitHub(t, key)
