@@ -161,6 +161,11 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 	if rotated > 0 {
 		logger.Info("stored secrets sealed under the new key", slog.Int("count", rotated))
 	}
+	// The role is worked out at each request from the account's identities,
+	// with or without a forge: without one, nobody logs in to have it.
+	// RAUN_ADMINS is one list on purpose: it names the administrators, and
+	// admits them to sign-up and login as cfg.signup.Admins.
+	administrators := identity.NewAdministrators(cfg.signup.Admins, accounts)
 	var login *identity.Login
 	var workspaces *identity.Workspaces
 	var permissions *identity.PermissionService
@@ -173,15 +178,17 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 	}
 
 	handler, err := web.New(web.Options{
-		Logger:      logger,
-		PublicHost:  cfg.publicHost,
-		Scheme:      cfg.publicURL.Scheme,
-		Ready:       store.CheckReady,
-		Sessions:    sessions,
-		Login:       login,
-		Accounts:    accounts,
-		Workspaces:  workspaceService(workspaces),
-		Permissions: permissionCache(permissions),
+		Logger:         logger,
+		PublicHost:     cfg.publicHost,
+		Scheme:         cfg.publicURL.Scheme,
+		Ready:          store.CheckReady,
+		Sessions:       sessions,
+		Login:          login,
+		Accounts:       accounts,
+		Workspaces:     workspaceService(workspaces),
+		Permissions:    permissionCache(permissions),
+		Administrators: administrators,
+		Settings:       cfg.shownSettings(),
 	})
 	if err != nil {
 		logger.Error("build the handler", slog.String("error", err.Error()))

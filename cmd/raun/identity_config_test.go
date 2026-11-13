@@ -88,3 +88,37 @@ func TestSecretKeysAreNeverShown(t *testing.T) {
 		}
 	}
 }
+
+// TestShownSettingsRedactEverySecret: the settings the Instance settings
+// screen shows follow the catalogue, and no secret leaves, even one a setting
+// would hold in clear.
+func TestShownSettingsRedactEverySecret(t *testing.T) {
+	keyFile, _ := writeAppKey(t, t.TempDir())
+	c, err := loadConfig(append(app(keyFile), "RAUN_ADMINS=github:42"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shown := c.shownSettings()
+	if len(shown) != len(variables) {
+		t.Fatalf("%d settings shown, want one per variable", len(shown))
+	}
+	for i, s := range shown {
+		if s.Name != variables[i].name {
+			t.Errorf("setting %d is %s, want %s", i, s.Name, variables[i].name)
+		}
+		if variables[i].secret && s.Value != redacted {
+			t.Errorf("%s shows %q", s.Name, s.Value)
+		}
+		if strings.Contains(s.Value, "client-secret-sentinel") || strings.Contains(s.Value, secretKey(1)) {
+			t.Errorf("%s shows a secret", s.Name)
+		}
+	}
+	if shown[0].Value != ":8080" {
+		t.Errorf("RAUN_HTTP_ADDR shows %q", shown[0].Value)
+	}
+	// Even a setting that held a secret in clear shows it redacted.
+	raw := config{settings: []setting{{name: "RAUN_TEST_TOKEN", value: "token-sentinel", secret: true}}}
+	if got := raw.shownSettings(); got[0].Value != redacted {
+		t.Errorf("a secret in clear shows as %q", got[0].Value)
+	}
+}

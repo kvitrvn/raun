@@ -43,7 +43,7 @@ raun help      # print the help
 | `RAUN_SECRET_KEY_PREVIOUS` | empty | Secret: the key before the last rotation; the start encrypts every stored secret again under `RAUN_SECRET_KEY`, after which it can go |
 | `RAUN_SIGNUP_USERS` | empty | Forge identities that may sign up and log in, comma-separated: `github:583231` |
 | `RAUN_SIGNUP_ORGS` | empty | Organizations whose active members may sign up and log in: `github:9919` |
-| `RAUN_ADMINS` | empty | Administrators of the instance, who may sign up and log in too: `github:583231` |
+| `RAUN_ADMINS` | empty | Administrators of the instance, who may sign up and log in too: `github:583231`; see [docs/administration.md](docs/administration.md) |
 
 The first start on an empty database needs `RAUN_DATABASE_MIGRATE=true`. A schema newer than the binary always stops it.
 
@@ -54,6 +54,7 @@ A secret can be given as a file instead, by the variable with `_FILE` added (`RA
 - **Signals.** `SIGINT` and `SIGTERM` stop the server: it stops accepting connections and waits for in-flight requests up to `RAUN_SHUTDOWN_TIMEOUT`, then exits with 1 if it had to drop some. `SIGHUP` reloads the TLS pair; a pair that fails to load is logged and the previous one is kept.
 - **Limits.** Headers 5 s to arrive and 32 KiB at most (`431`), a request 30 s to be read, a response 60 s to be written, an idle connection 120 s, a request body 64 KiB by default (`413`). They are constants.
 - **Login.** `GET /login` sends a person to the forge; at their first login they choose the name of their Raun account, which cannot change. Only the identities of `RAUN_SIGNUP_USERS` and `RAUN_ADMINS`, and the members of `RAUN_SIGNUP_ORGS`, get in, checked at every login: the lists are empty by default, so a fresh instance lets nobody in until they are set. [docs/forge.md](docs/forge.md#identities-in-the-configuration) shows how to find the identifiers. Their tokens are stored encrypted under `RAUN_SECRET_KEY`; a stored secret under a key that is neither `RAUN_SECRET_KEY` nor `RAUN_SECRET_KEY_PREVIOUS` stops the server at start.
+- **Administration.** The accounts named in `RAUN_ADMINS` see the effective configuration, secrets redacted, on `/instance`; the role is checked at each request and grants nothing on repositories ([docs/administration.md](docs/administration.md)).
 - **Workspaces.** Every account has a personal workspace named after it, at `/<name>`; `/workspaces` lists the workspaces of the account and creates shared ones, whose owners add members. Accounts and workspaces share one namespace of permanent names. A workspace never grants access to a repository: the forge does.
 - **Protections.** Every response carries a strict Content Security Policy and the other security headers. A state-changing request needs a session and its CSRF token (header `X-CSRF-Token` or form field `csrf`), and a browser request from another site is refused. Sessions live 7 days without use and 30 days at most; expired ones are deleted at start and every hour.
 - **Logs.** One record per line on standard error. Each request gets a random identifier, returned in `X-Request-Id`, and one access record: method, route pattern, status, size, duration and peer address. Headers, cookies, queries, bodies and raw paths are never logged. The effective configuration is logged once at startup, every secret as `[redacted]`.

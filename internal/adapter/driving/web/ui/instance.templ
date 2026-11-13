@@ -1,0 +1,49 @@
+package ui
+
+// InstanceSetting is a variable of the configuration, as the Instance
+// settings screen shows it.
+type InstanceSetting struct {
+	Name  string
+	Value string
+}
+
+// InstancePage shows administrators the effective configuration of the
+// instance, read-only, secrets redacted.
+templ InstancePage(p Page, settings []InstanceSetting) {
+	@Layout(p) {
+		<h1 class="text-2xl font-semibold tracking-tight">Instance settings</h1>
+		<p class="max-w-3xl text-[13.5px] text-muted-foreground">
+			The effective configuration of this instance, from its <span class="font-mono">RAUN_*</span> variables. It is read-only: changing a value means changing the variable and restarting the server. Every secret shows as <span class="font-mono">[redacted]</span>, whether it is set or not.
+		</p>
+		<section data-slot="settings" class="cn-card overflow-x-auto">
+			@Table(TableProps{Label: "Instance settings"}) {
+				@TableHeader() {
+					@TableRow() {
+						@TableHead() {
+							Variable
+						}
+						@TableHead() {
+							Value
+						}
+					}
+				}
+				@TableBody() {
+					for _, s := range settings {
+						@TableRow() {
+							@TableCell(TableCellProps{Class: "font-mono whitespace-nowrap"}) {
+								{ s.Name }
+							}
+							@TableCell(TableCellProps{Class: "font-mono break-all"}) {
+								if s.Value == "" {
+									<span class="text-muted-foreground">empty</span>
+								} else {
+									{ s.Value }
+								}
+							}
+						}
+					}
+				}
+			}
+		</section>
+	}
+}

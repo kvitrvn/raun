@@ -226,7 +226,7 @@ Rules made explicit while implementing the server (#18):
 | --- | --- |
 | Accounts, login, the account of a session, logout | Done by epic 4 (#26) |
 | The form of an entry of `RAUN_ADMINS` | Decided by the epic 4 review: `github:<stable identifier>` ([record](04-forge-port-and-identity.md#accounts-and-login)) |
-| The `RAUN_ADMINS` check and the Instance settings screen | Epic 4 (#21) |
+| The `RAUN_ADMINS` check and the Instance settings screen | Done by epic 4 (#21, [docs/administration.md](../administration.md)) |
 | The encryption of stored secrets | Done by epic 4 (#26, with the first stored tokens) |
 | The first stored instance setting | The epic whose feature needs one |
 | The `_FILE` form of a variable and the secret type of the configuration | Done by epic 4 (#25), with the first secret variables, those of the GitHub App ([record](04-forge-port-and-identity.md#github-adapter-25)) |

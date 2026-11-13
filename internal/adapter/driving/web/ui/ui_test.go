@@ -119,6 +119,8 @@ func TestPages(t *testing.T) {
 	loggedIn.Login = true
 	canLogin := testPage()
 	canLogin.Login = true
+	adminPage := loggedIn
+	adminPage.Nav = []NavItem{{Label: "Repositories", Href: "/"}, {Label: "Instance settings", Href: "/instance", Current: true}}
 	switcherPage := loggedIn
 	switcherPage.Account = "alice"
 	switcherPage.Workspaces = []WorkspaceItem{
@@ -152,6 +154,12 @@ func TestPages(t *testing.T) {
 		{"workspace-member", WorkspacePage(switcherPage, WorkspaceProps{Name: "acme", Role: "member", Members: []MemberRow{{Name: "alice", Role: "owner"}}})},
 		{"workspace-personal", WorkspacePage(switcherPage, WorkspaceProps{Name: "alice", Personal: true, Role: "owner", Owner: true, Members: []MemberRow{{Name: "alice", Role: "owner"}}})},
 		{"error", ErrorPage(withSession, ErrorProps{Status: 403, Title: hostile, Message: hostile, BackHref: "/acme", BackLabel: "Back"})},
+		{"instance", InstancePage(adminPage, []InstanceSetting{
+			{Name: "RAUN_HTTP_ADDR", Value: ":8080"},
+			{Name: "RAUN_TLS_CERT_FILE", Value: ""},
+			{Name: "RAUN_SECRET_KEY", Value: "[redacted]"},
+			{Name: "RAUN_ADMINS", Value: hostile},
+		})},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

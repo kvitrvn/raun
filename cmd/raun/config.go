@@ -191,6 +191,22 @@ func load(environ []string, vars []variable) (config, error) {
 	return c, nil
 }
 
+// shownSettings returns the effective configuration for the Instance
+// settings screen, in the order of the catalogue, every secret as
+// [redacted] whether set or not: nothing else of the configuration leaves
+// for the web handler.
+func (c config) shownSettings() []web.Setting {
+	out := make([]web.Setting, 0, len(c.settings))
+	for _, s := range c.settings {
+		value := s.value
+		if s.secret {
+			value = redacted
+		}
+		out = append(out, web.Setting{Name: s.name, Value: value})
+	}
+	return out
+}
+
 // lookup returns the value of v in env, and whether it is set. A secret is
 // set by its variable or by the file its _FILE variable names, never both;
 // one trailing newline of the file is dropped. An error names the variable

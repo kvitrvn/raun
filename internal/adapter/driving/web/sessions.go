@@ -96,7 +96,11 @@ func (s *Server) loadSession(next http.Handler) http.Handler {
 			}
 			sess.LastSeenAt = now.UTC()
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), sessionKey{}, sess)))
+		ctx := context.WithValue(r.Context(), sessionKey{}, sess)
+		// The administrator role is read once per request, at the first
+		// need, and forgotten with the request.
+		ctx = context.WithValue(ctx, roleKey{}, &roleOnce{})
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
