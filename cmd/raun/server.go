@@ -162,8 +162,10 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		logger.Info("stored secrets sealed under the new key", slog.Int("count", rotated))
 	}
 	var login *identity.Login
+	var workspaces *identity.Workspaces
 	if forge != nil {
 		login = identity.NewLogin(forge, cfg.signup, accounts, rand.Reader, time.Now)
+		workspaces = identity.NewWorkspaces(accounts, rand.Reader, time.Now)
 	}
 
 	handler, err := web.New(web.Options{
@@ -174,6 +176,7 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		Sessions:   sessions,
 		Login:      login,
 		Accounts:   accounts,
+		Workspaces: workspaceService(workspaces),
 	})
 	if err != nil {
 		logger.Error("build the handler", slog.String("error", err.Error()))

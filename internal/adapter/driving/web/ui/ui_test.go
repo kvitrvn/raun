@@ -119,6 +119,13 @@ func TestPages(t *testing.T) {
 	loggedIn.Login = true
 	canLogin := testPage()
 	canLogin.Login = true
+	switcherPage := loggedIn
+	switcherPage.Account = "alice"
+	switcherPage.Workspaces = []WorkspaceItem{
+		{Name: "acme", Href: "/acme", Current: true},
+		{Name: hostile, Href: "/" + hostile},
+		{Name: "alice", Href: "/alice", Personal: true},
+	}
 	tests := []struct {
 		name string
 		c    templ.Component
@@ -132,6 +139,19 @@ func TestPages(t *testing.T) {
 		{"login", LoginPage(canLogin, LoginProps{Title: "You cannot sign up here", Message: hostile, Retry: true})},
 		{"login-unavailable", LoginPage(testPage(), LoginProps{Title: "Login is not available", Message: "No forge is configured."})},
 		{"signup", SignupPage(withSession, SignupProps{Forge: "github", Login: hostile, Name: hostile, Error: hostile})},
+		{"home-switcher", HomePage(switcherPage)},
+		{"workspaces", WorkspacesPage(switcherPage, WorkspacesProps{
+			Rows:  []WorkspaceRow{{Name: "acme", Href: "/acme", Role: "owner"}, {Name: hostile, Href: "/" + hostile, Role: "member"}, {Name: "alice", Href: "/alice", Role: "owner", Personal: true}},
+			Name:  hostile,
+			Error: hostile,
+		})},
+		{"workspace-owner", WorkspacePage(switcherPage, WorkspaceProps{
+			Name: "acme", Role: "owner", Owner: true, Account: hostile, MemberRole: "owner", Error: hostile,
+			Members: []MemberRow{{Name: "alice", Role: "owner"}, {Name: hostile, Role: "member"}},
+		})},
+		{"workspace-member", WorkspacePage(switcherPage, WorkspaceProps{Name: "acme", Role: "member", Members: []MemberRow{{Name: "alice", Role: "owner"}}})},
+		{"workspace-personal", WorkspacePage(switcherPage, WorkspaceProps{Name: "alice", Personal: true, Role: "owner", Owner: true, Members: []MemberRow{{Name: "alice", Role: "owner"}}})},
+		{"error", ErrorPage(withSession, ErrorProps{Status: 403, Title: hostile, Message: hostile, BackHref: "/acme", BackLabel: "Back"})},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
