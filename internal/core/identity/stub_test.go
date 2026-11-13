@@ -27,6 +27,18 @@ type stubForge struct {
 	refreshWait chan struct{}
 	refreshes   int
 	seq         int
+	// rights maps a person and a repository to a permission; permErr is
+	// returned by Permission instead, which counts its calls and, when
+	// permissionWait is set, signals it and waits for it.
+	rights    map[string]map[string]identity.Permission
+	permErr   error
+	permCalls int
+	// refuseOnce makes the next Permission refuse the token once.
+	refuseOnce bool
+	// during, when set, runs inside each Permission, as time passes while
+	// the forge answers.
+	during         func()
+	permissionWait chan struct{}
 }
 
 type stubCode struct {
@@ -101,8 +113,67 @@ func (f *stubForge) Repositories(context.Context, identity.Tokens) ([]identity.R
 	return nil, nil
 }
 
-func (f *stubForge) Permission(context.Context, identity.Tokens, identity.Repository) (identity.Permission, error) {
+func (f *stubForge) Permission(ctx context.Context, t identity.Tokens, r identity.Repository) (identity.Permission, error) {
+	f.mu.Lock()
+	wait := f.permissionWait
+	f.mu.Unlock()
+	if wait != nil {
+		wait <- struct{}{}
+		<-wait
+		if err := ctx.Err(); err != nil {
+			return identity.PermissionNone, err
+		}
+	}
+	f.mu.Lock()
+	during := f.during
+	f.mu.Unlock()
+	if during != nil {
+		during()
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.permCalls++
+	if f.permErr != nil {
+		return identity.PermissionNone, f.permErr
+	}
+	if f.refuseOnce {
+		f.refuseOnce = false
+		return identity.PermissionNone, identity.ErrUnauthorized
+	}
+	holder, ok := f.holders[t.Access.Reveal()]
+	if !ok {
+		return identity.PermissionNone, identity.ErrUnauthorized
+	}
+	if p, ok := f.rights[holder][r.ID]; ok {
+		return p, nil
+	}
 	return identity.PermissionNone, nil
+}
+
+// grant gives person the permission p on the repository with this
+// identifier.
+func (f *stubForge) grant(person, repo string, p identity.Permission) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.rights == nil {
+		f.rights = map[string]map[string]identity.Permission{}
+	}
+	if f.rights[person] == nil {
+		f.rights[person] = map[string]identity.Permission{}
+	}
+	f.rights[person][repo] = p
+}
+
+func (f *stubForge) calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.permCalls
+}
+
+func (f *stubForge) setErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.permErr = err
 }
 
 func (f *stubForge) IsMember(_ context.Context, t identity.Tokens, org string) (bool, error) {

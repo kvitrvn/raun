@@ -248,6 +248,22 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		}
 	})
 
+	t.Run("the identities of an account", func(t *testing.T) {
+		s := newFixture(t).Store
+		signedUp(t, s, hash(1), alice(), account("a1", "alice"), tokens("1"))
+		bob := identity.Identity{Forge: "github", ID: "1002", Login: "bob", Name: "Bob"}
+		signedUp(t, s, hash(2), bob, account("a2", "bob"), tokens("2"))
+		if got, err := s.IdentitiesOf(ctx, accountID("a1")); err != nil || len(got) != 1 || got[0] != alice() {
+			t.Errorf("IdentitiesOf Alice = %+v, %v", got, err)
+		}
+		if got, err := s.IdentitiesOf(ctx, accountID("a2")); err != nil || len(got) != 1 || got[0] != bob {
+			t.Errorf("IdentitiesOf Bob = %+v, %v", got, err)
+		}
+		if got, err := s.IdentitiesOf(ctx, accountID("zz")); err != nil || len(got) != 0 {
+			t.Errorf("IdentitiesOf nobody = %+v, %v", got, err)
+		}
+	})
+
 	t.Run("an identity keeps its account across logins", func(t *testing.T) {
 		s := newFixture(t).Store
 		signedUp(t, s, hash(1), alice(), account("a1", "alice"), tokens("1"))

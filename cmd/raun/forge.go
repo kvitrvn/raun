@@ -74,3 +74,11 @@ func workspaceService(w *identity.Workspaces) web.WorkspaceService {
 	}
 	return w
 }
+
+// permissionCache is p as the web handler takes it: nil without a forge.
+func permissionCache(p *identity.PermissionService) web.PermissionCache {
+	if p == nil {
+		return nil
+	}
+	return p
+}

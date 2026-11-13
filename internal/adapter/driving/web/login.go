@@ -11,6 +11,11 @@ import (
 	"github.com/kvitrvn/raun/internal/core/identity"
 )
 
+// PermissionCache forgets the permissions kept for an account.
+type PermissionCache interface {
+	Forget(account string)
+}
+
 // AccountReader gives the account a session is logged in to.
 type AccountReader interface {
 	Account(ctx context.Context, id string) (identity.Account, error)
@@ -245,9 +250,13 @@ func (s *Server) signupFinish(w http.ResponseWriter, r *http.Request) {
 	redirect(w, identity.SafeReturnPath(back))
 }
 
-// logout ends the session of the request. The other sessions of the account
-// stay.
+// logout ends the session of the request and forgets the permissions kept
+// for its account, even when ending the session fails. The other sessions of
+// the account stay, and ask the forge again.
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if sess, ok := sessionFrom(r.Context()); ok && sess.Account != "" && s.permissions != nil {
+		s.permissions.Forget(sess.Account)
+	}
 	if err := s.endSession(w, r); err != nil {
 		s.fail(w, r, "log out", err)
 		return

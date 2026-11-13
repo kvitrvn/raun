@@ -69,6 +69,10 @@ type Store interface {
 	// Account returns the account with this identifier; ErrNotFound if
 	// none.
 	Account(ctx context.Context, id string) (Account, error)
+	// IdentitiesOf returns the forge identities of the account with this
+	// identifier, sorted by forge then identifier; none for an account
+	// without one.
+	IdentitiesOf(ctx context.Context, account string) ([]Identity, error)
 	// UpdateIdentity stores the login and the name the forge gave id at a
 	// login; ErrNotFound if the identity has no account.
 	UpdateIdentity(ctx context.Context, id Identity) error

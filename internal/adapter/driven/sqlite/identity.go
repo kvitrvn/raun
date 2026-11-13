@@ -309,6 +309,27 @@ func (a Accounts) Account(ctx context.Context, id string) (identity.Account, err
 	return acc, err
 }
 
+func (a Accounts) IdentitiesOf(ctx context.Context, account string) ([]identity.Identity, error) {
+	var out []identity.Identity
+	err := a.s.read(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx,
+			`SELECT forge, forge_id, login, name FROM identities WHERE account = ? ORDER BY forge, forge_id`, account)
+		if err != nil {
+			return fmt.Errorf("list identities: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var id identity.Identity
+			if err := rows.Scan(&id.Forge, &id.ID, &id.Login, &id.Name); err != nil {
+				return fmt.Errorf("list identities: %w", err)
+			}
+			out = append(out, id)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
 func (a Accounts) UpdateIdentity(ctx context.Context, id identity.Identity) error {
 	return a.s.write(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE identities SET login = ?, name = ? WHERE forge = ? AND forge_id = ?`,

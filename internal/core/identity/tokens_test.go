@@ -192,3 +192,62 @@ func TestTokensOfAnUnknownIdentity(t *testing.T) {
 		t.Errorf("With of an unknown identity = %v", err)
 	}
 }
+
+func TestARevocationIsObserved(t *testing.T) {
+	for name, setup := range map[string]func(s *tokensOf){
+		"refused by the forge":        func(s *tokensOf) { s.forge.refreshErr = identity.ErrRevoked },
+		"refresh token past its date": func(s *tokensOf) { s.now = s.tokens.RefreshExpiry },
+	} {
+		s := newTokensOf(t)
+		var seen []string
+		s.service.OnRevoke(func(key string) { seen = append(seen, key) })
+		s.now = s.now.Add(8 * time.Hour)
+		setup(s)
+		_, _ = s.used(t, ok)
+		if len(seen) != 1 || seen[0] != "stub:1001" {
+			t.Errorf("%s: observed %v, want stub:1001 once", name, seen)
+		}
+	}
+	s := newTokensOf(t)
+	called := false
+	s.service.OnRevoke(func(string) { called = true })
+	s.now = s.now.Add(8 * time.Hour)
+	s.forge.refreshErr = identity.ErrUnavailable
+	_, _ = s.used(t, ok)
+	if called {
+		t.Error("a transient failure was observed as a revocation")
+	}
+}
+
+// TestPutWaitsForARefresh: the tokens of a login, stored while a refresh is
+// in flight, are not overwritten by it.
+func TestPutWaitsForARefresh(t *testing.T) {
+	s := newTokensOf(t)
+	s.now = s.now.Add(8 * time.Hour)
+	s.forge.refreshWait = make(chan struct{})
+	refreshed := make(chan struct{})
+	go func() {
+		defer close(refreshed)
+		_ = s.service.With(context.Background(), "stub:1001", ok)
+	}()
+	// Wait until the refresh holds the lock of the identity.
+	for identity.Held(s.service) == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	login := identity.Tokens{Access: "login-access", Refresh: "login-refresh", AccessExpiry: s.now.Add(8 * time.Hour), RefreshExpiry: s.now.Add(4000 * time.Hour)}
+	stored := make(chan error)
+	go func() { stored <- s.service.Put(context.Background(), "stub:1001", login) }()
+	select {
+	case <-stored:
+		t.Fatal("Put did not wait for the refresh in flight")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(s.forge.refreshWait)
+	<-refreshed
+	if err := <-stored; err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.store.Tokens(context.Background(), "stub:1001"); got.Access != "login-access" {
+		t.Errorf("the tokens of the login were overwritten by the refresh: %s", got.Access.Reveal())
+	}
+}
