@@ -132,3 +132,9 @@ The App is configured whole or not at all: with `RAUN_GITHUB_APP_ID`, the client
 gh api users/<login> -q .id
 gh api orgs/<org> -q .id
 ```
+
+An entry of a forge the server does not configure stops it at start, and so does an entry of `RAUN_SIGNUP_ORGS` on a forge that cannot tell the members of an organization. The lists decide who may sign up and log in, checked at every login: someone who leaves a listed organization can no longer log in. GitHub shows a user token the organizations where the App is installed only, so an organization of `RAUN_SIGNUP_ORGS` lets its members in once the App is installed on it.
+
+## Login
+
+`GET /login?return=<path>` starts the authorization of the forge; the forge sends the browser back to `/login/callback`. At the first login, the person chooses the name of their account on `/login/signup`, proposed from their forge login; the name cannot change. `POST /logout` ends the session of the browser, and the other sessions of the account stay. The rules, from the state of a login to the return path, are those of the [epic 4 record](implementation/04-forge-port-and-identity.md#accounts-and-login).

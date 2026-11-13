@@ -114,6 +114,21 @@ Rules made explicit while implementing the adapter (#25), in `internal/adapter/d
 - **The App at start.** `cmd/raun` builds the adapter after the configuration, without reaching GitHub, and logs `forge`; it reaches no screen until #26. A secret variable takes a `_FILE` form, read up to 64 KiB without its trailing newline, and the values of the App are `identity.Secret`. The App is set whole or not at all: `RAUN_GITHUB_URL` alone is a partial set.
 - **The contract suite** runs on the adapter against a scripted GitHub over TLS, laid out as a GitHub Enterprise Server, sharing its clock with the adapter.
 
+### Accounts and login (#26)
+
+Rules made explicit while implementing the login (#26):
+
+- **A sign-up waits for its name.** The callback takes the state, exchanges the code and applies the sign-up rule; a new identity gets a pending sign-up of its session, with its tokens sealed, for 10 minutes, and the person chooses the name on `GET /login/signup`. `POST /login/signup`, guarded by the CSRF token like any state change, creates the account, its identity and its tokens and removes the sign-up in one transaction, then renews the session logged in to the account. The callback stays single-use, and the page can be reloaded.
+- **Reserved names from now on.** Names are permanent, so the sign-up refuses now the first segments of the routes (`assets`, `healthz`, `instance`, `login`, `logout`, `new`, `readyz`, `workspaces`), the kept names (`about`, `admin`, `api`, `help`, `raun`, `settings`) and the names of the forges. #27 extends the list with its routes and adds the test that keeps it in step with them.
+- **A refusal for the person.** A refused sign-up or login says which rule refused (not listed, not a member, the membership could not be checked) without naming the allowed organizations, with status 403.
+- **The account of a session** is a column of `sessions`, an identifier opaque to the session context; a renewal keeps it, and a login sets it in the same replacement. The identity context ends the sessions of an account by deleting the rows of that account, in the transaction that deletes its tokens.
+- **`RAUN_SECRET_KEY` is required with a forge**, which gives tokens to store; without a forge it is optional, but a database that holds sealed secrets stops a start without it. The key is 32 bytes in standard base64. `RAUN_SECRET_KEY_PREVIOUS` needs `RAUN_SECRET_KEY` and differs from it.
+- **The sealed columns** are `tokens.sealed` and `signups.sealed`. A sealed value is a version byte, the identifier of the key, a nonce of 12 bytes and the AES-256-GCM ciphertext, with the table, the column and the key of its row as additional data, so a value moved to another row does not open. Its plaintext is written from `Reveal()` of each token, never from an encoding of `Tokens`. The rotation at start goes through both columns in one transaction, before anything reads a secret.
+- **The PKCE verifier stays in clear** in `login_states`: it serves once, within 10 minutes, and only with a code the forge gives that browser; the state is stored hashed.
+- **Refreshes are serialized in memory.** The token service holds one lock per identity and reads the tokens again under it, so two requests that find a token expired refresh it once. One server process serves a database: SQLite on a local file already requires it. The service has no caller before the permission service of #28.
+- **`RAUN_ADMINS` admits to sign-up.** It is read here for the sign-up rule only; the administrator role and its screen stay with #21.
+- **`GET /login` is the one GET that changes state**, as the epic 3 record allows; a `HEAD` of `/login` or `/login/callback` changes nothing.
+
 ## Deferred
 
 | Topic | Where |
@@ -139,6 +154,6 @@ Rules made explicit while implementing the adapter (#25), in `internal/adapter/d
 ## Exit criteria
 
 - [x] This page records the choices.
-- [ ] A user logs in through the fake forge in a test and gets an account and a default workspace (#26, #27).
+- [ ] A user logs in through the fake forge in a test and gets an account and a default workspace (#26, #27): the account is done by #26 (`cmd/raun/login_test.go`: `TestLoginThroughTheServer`), the workspace comes with #27.
 - [ ] A test proves that a permission removed on the forge is refused after the cache expires (#28).
 - [ ] `make verify` passes (checked at the end of the epic).

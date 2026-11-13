@@ -8,7 +8,7 @@ Raun is self-hosted and connected to your forge, in the spirit of Drone CI: a se
 
 ## Status
 
-Early development: `raun server` starts, opens its database, serves health endpoints and a first page built with the web shell (no repository can be activated yet); `raun runner` is a stub. The knowledge model (`internal/core/knowledge`) exists with source classification, a reader of a commit on the `git` binary, deterministic evidence verification and its storage on SQLite. The forge port (`internal/core/identity`) has a GitHub App adapter, built at start when an App is configured; logging in with it comes next. The plan is in the [issues](https://github.com/kvitrvn/raun/issues) and the [implementation records](docs/implementation/README.md).
+Early development: `raun server` starts, opens its database, serves health endpoints and a first page built with the web shell (no repository can be activated yet); `raun runner` is a stub. The knowledge model (`internal/core/knowledge`) exists with source classification, a reader of a commit on the `git` binary, deterministic evidence verification and its storage on SQLite. People sign up and log in with their GitHub account through a GitHub App (`internal/core/identity`, `internal/adapter/driven/github`); workspaces and permissions come next. The plan is in the [issues](https://github.com/kvitrvn/raun/issues) and the [implementation records](docs/implementation/README.md).
 
 ## Usage
 
@@ -39,6 +39,11 @@ raun help      # print the help
 | `RAUN_GITHUB_CLIENT_ID` | empty | The client ID of the App |
 | `RAUN_GITHUB_CLIENT_SECRET` | empty | Secret: the client secret of the App |
 | `RAUN_GITHUB_PRIVATE_KEY` | empty | Secret: the PEM private key of the App, RSA |
+| `RAUN_SECRET_KEY` | empty | Secret: 32 bytes in base64 (`openssl rand -base64 32`) that encrypt the tokens the server stores; required with a forge |
+| `RAUN_SECRET_KEY_PREVIOUS` | empty | Secret: the key before the last rotation; the start encrypts every stored secret again under `RAUN_SECRET_KEY`, after which it can go |
+| `RAUN_SIGNUP_USERS` | empty | Forge identities that may sign up and log in, comma-separated: `github:583231` |
+| `RAUN_SIGNUP_ORGS` | empty | Organizations whose active members may sign up and log in: `github:9919` |
+| `RAUN_ADMINS` | empty | Administrators of the instance, who may sign up and log in too: `github:583231` |
 
 The first start on an empty database needs `RAUN_DATABASE_MIGRATE=true`. A schema newer than the binary always stops it.
 
@@ -48,6 +53,7 @@ A secret can be given as a file instead, by the variable with `_FILE` added (`RA
 - **Health.** `GET /healthz` answers `200 ok` while the process serves; `GET /readyz` answers `200 ok` when the database answers at the schema of the binary, `503 unavailable` otherwise and while stopping. Neither needs the public host.
 - **Signals.** `SIGINT` and `SIGTERM` stop the server: it stops accepting connections and waits for in-flight requests up to `RAUN_SHUTDOWN_TIMEOUT`, then exits with 1 if it had to drop some. `SIGHUP` reloads the TLS pair; a pair that fails to load is logged and the previous one is kept.
 - **Limits.** Headers 5 s to arrive and 32 KiB at most (`431`), a request 30 s to be read, a response 60 s to be written, an idle connection 120 s, a request body 64 KiB by default (`413`). They are constants.
+- **Login.** `GET /login` sends a person to the forge; at their first login they choose the name of their Raun account, which cannot change. Only the identities of `RAUN_SIGNUP_USERS` and `RAUN_ADMINS`, and the members of `RAUN_SIGNUP_ORGS`, get in, checked at every login: the lists are empty by default, so a fresh instance lets nobody in until they are set. [docs/forge.md](docs/forge.md#identities-in-the-configuration) shows how to find the identifiers. Their tokens are stored encrypted under `RAUN_SECRET_KEY`; a stored secret under a key that is neither `RAUN_SECRET_KEY` nor `RAUN_SECRET_KEY_PREVIOUS` stops the server at start.
 - **Protections.** Every response carries a strict Content Security Policy and the other security headers. A state-changing request needs a session and its CSRF token (header `X-CSRF-Token` or form field `csrf`), and a browser request from another site is refused. Sessions live 7 days without use and 30 days at most; expired ones are deleted at start and every hour.
 - **Logs.** One record per line on standard error. Each request gets a random identifier, returned in `X-Request-Id`, and one access record: method, route pattern, status, size, duration and peer address. Headers, cookies, queries, bodies and raw paths are never logged. The effective configuration is logged once at startup, every secret as `[redacted]`.
 
