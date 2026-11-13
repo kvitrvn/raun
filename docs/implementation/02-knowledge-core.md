@@ -72,7 +72,7 @@ An event records `actor` (`human` or `run`) and `by`. For a human, `by` identifi
 
 ### Scoping
 
-Every row carries a workspace identifier and a repository identifier, items and history events alike. The primary key of an item is `(workspace, repository, id)`; history events reference it with the same three columns. A repository is active in one workspace at a time, as the [epic 5 review](05-repositories-and-events.md#repository-identity) decides, so its identifier is unique on the instance; queries still filter on both.
+Every row carries a workspace identifier and a repository identifier, items and history events alike. The primary key of an item is `(workspace, repository, id)`; history events reference it with the same three columns. A repository belongs to one workspace once activated, active or deactivated, as the [epic 5 review](05-repositories-and-events.md#repository-identity) decides, so its identifier is unique on the instance; queries still filter on both.
 
 The scope is a value (`Scope{Workspace, Repository}`) passed to every port operation, not a property of a store instance. One store serves the whole server, and an operation without a scope does not exist. Every query filters on both identifiers, so a read cannot cross repositories. The contract tests prove it on each table.
 

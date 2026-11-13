@@ -52,9 +52,9 @@ Each later epic adds its capabilities to the fake and to the suite.
 Decided by the [epic 5 review](implementation/05-repositories-and-events.md#webhook-trust), not implemented yet (#32).
 
 - **Endpoint**: `POST /hooks/<forge>`, `/hooks/github` for GitHub, outside the session and CSRF protections, authenticated by its signature alone.
-- **Signature first.** The body is read up to 5 MiB, and `X-Hub-Signature-256`, an HMAC-SHA256 under the webhook secret, is checked in constant time before anything parses it. A refusal is the same whatever the reason and logs no payload.
-- **Duplicates.** The delivery identifier is the key: a delivery already recorded has no further effect.
-- **Answers.** `202` once recorded; `200` for a duplicate; `401` for a refused signature; `413` past 5 MiB; `202` with nothing recorded for a repository that is not active; `500` when recording fails. GitHub never delivers a refused delivery again on its own; it can be delivered again by hand.
+- **Signature first.** A body past 5 MiB is refused with `413`. Within it, `X-Hub-Signature-256`, an HMAC-SHA256 of the body under the webhook secret, is checked in constant time before anything parses it; a refused signature is the same whatever the reason and logs no payload.
+- **Duplicates and replays.** The delivery identifier, and the signed content (the ref and commits of a push, the number, action and head commit of a pull request), are both keys: a delivery that repeats either one within the 30 days of the event log has no further effect.
+- **Answers.** `202` once recorded; `200` for a duplicate or a replay; `401` for a refused signature; `413` past 5 MiB; `202` with nothing logged for a repository that is not active or a delivery of no repository; `500` when recording fails. GitHub never delivers a refused delivery again on its own; it can be delivered again by hand.
 - **Kept events.** `push` of a branch or a tag; `pull_request` `opened`, `reopened`, `synchronize`, `ready_for_review` and `closed`. `installation` and `installation_repositories` keep track of the repositories the App reaches. Any other signed delivery is recorded as ignored.
 
 The normalized events:
@@ -104,7 +104,7 @@ On github.com, in the settings of the organization or the account that owns the 
 - **Expire user authorization tokens**: on. Raun refuses an App whose user tokens do not expire, and says so at the first login.
 - **Request user authorization (OAuth) during installation**: off; people log in from Raun.
 - **Webhook**: inactive until #32. Then active, with the URL `<RAUN_PUBLIC_URL>/hooks/github` and a secret that `RAUN_GITHUB_WEBHOOK_SECRET` gives Raun too.
-- **Repository permissions**: Metadata read, Contents read (epic 5, to read files; epic 6, to clone), Commit statuses read and write (epic 7), Pull requests read and write (epic 7).
+- **Repository permissions**: Metadata read, Contents read (epic 5, to read files; epic 6, to clone), Commit statuses read and write and Pull requests read and write (built by epic 5, #34, used by epic 7).
 - **Organization permissions**: Members read, for `RAUN_SIGNUP_ORGS` (#26).
 - **Events**, subscribed once the webhook exists (#32): `push`, `pull_request`, `installation_repositories`; `installation` comes to every App.
 - **Where can this GitHub App be installed**: only on this account, unless people of other organizations log in to the same Raun.
