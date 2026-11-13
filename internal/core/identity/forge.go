@@ -120,13 +120,13 @@ type Forge interface {
 	Refresh(ctx context.Context, t Tokens) (Tokens, error)
 	// Repositories are the repositories the person of t can reach through
 	// Raun, sorted by full name. ErrUnauthorized if the forge refuses the
-	// access token.
+	// access token, ErrUnavailable if it cannot answer now.
 	Repositories(ctx context.Context, t Tokens) ([]Repository, error)
 	// Permission is what the person of t may do on repo, a repository of
 	// this forge: the caller routes by repo.Forge. It is mapped by the
 	// table of docs/forge.md; a repository the person cannot reach through
 	// Raun is PermissionNone, not an error. ErrUnauthorized if the forge
-	// refuses the access token.
+	// refuses the access token, ErrUnavailable if it cannot answer now.
 	Permission(ctx context.Context, t Tokens, repo Repository) (Permission, error)
 }
 
@@ -134,7 +134,8 @@ type Forge interface {
 // person belongs to an organization, for RAUN_SIGNUP_ORGS.
 type Memberships interface {
 	// IsMember reports whether the person of t belongs to the organization
-	// whose stable identifier is org.
+	// whose stable identifier is org. ErrUnauthorized if the forge refuses
+	// the access token, ErrUnavailable if it cannot answer now.
 	IsMember(ctx context.Context, t Tokens, org string) (bool, error)
 }
 

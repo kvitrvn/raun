@@ -61,11 +61,16 @@ type permissionEntry struct {
 }
 
 // permissionCall is a question to the forge in progress, which the callers
-// of the same entry wait on.
+// of the same entry wait on. The invalidation counts it was asked under are
+// set under the lock of the service; its answer is set before done closes.
 type permissionCall struct {
-	done       chan struct{}
-	permission Permission
-	err        error
+	done        chan struct{}
+	permission  Permission
+	err         error
+	accountGen  uint64
+	keyGen      uint64
+	identity    string
+	identityGen uint64
 }
 
 // NewPermissionService returns the permission service of forge, whose tokens
@@ -120,29 +125,34 @@ func (p *PermissionService) Permission(ctx context.Context, account string, repo
 			}
 			return c.permission, c.err
 		}
-		c := &permissionCall{done: make(chan struct{})}
+		c := &permissionCall{done: make(chan struct{}), accountGen: p.accountGen[account], keyGen: p.keyGen[key]}
 		p.inflight[key] = c
-		gens := [2]uint64{p.accountGen[account], p.keyGen[key]}
 		p.mu.Unlock()
 
-		c.permission, c.err = p.ask(ctx, key, repo, gens)
+		got, err := p.ask(ctx, key, repo, c)
 		p.mu.Lock()
+		// Keeping the answer and ending the question are one step: a caller
+		// that comes after an invalidation never joins an answer it dropped.
+		if err == nil {
+			got, err = p.keep(key, c, got)
+		}
 		delete(p.inflight, key)
+		p.prune(key, c.identity)
 		p.mu.Unlock()
+		c.permission, c.err = got, err
 		close(c.done)
-		return c.permission, c.err
+		return got, err
 	}
 }
 
-// ask asks the forge the permission of key and keeps it, unless the
-// account or the entry was invalidated since gens were read.
-func (p *PermissionService) ask(ctx context.Context, key permissionKey, repo Repository, gens [2]uint64) (Permission, error) {
+// ask asks the forge the permission of key, for the question c.
+func (p *PermissionService) ask(ctx context.Context, key permissionKey, repo Repository, c *permissionCall) (Permission, error) {
 	identity, err := p.identityOf(ctx, key.account, repo.Forge)
 	if err != nil {
 		return PermissionNone, err
 	}
 	p.mu.Lock()
-	identityGen := p.identityGen[identity]
+	c.identity, c.identityGen = identity, p.identityGen[identity]
 	p.mu.Unlock()
 
 	var got Permission
@@ -160,25 +170,57 @@ func (p *PermissionService) ask(ctx context.Context, key permissionKey, repo Rep
 		// The forge refuses even a refreshed token for this repository.
 		p.Refused(key.account, repo)
 		return PermissionNone, err
-	case err != nil:
+	case errors.Is(err, ErrUnavailable):
 		// A transient failure keeps what is kept: a permission still kept
 		// was given above; an expired one stays refused.
 		return PermissionNone, err
+	case err != nil:
+		// The store of the tokens failed, or the caller gave up: a refusal
+		// to try again.
+		return PermissionNone, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	if got != PermissionNone && got != PermissionView && got != PermissionDecide {
 		return PermissionNone, fmt.Errorf("%w: the forge gave the unknown permission %q", ErrUnavailable, got)
 	}
+	return got, nil
+}
 
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.accountGen[key.account] != gens[0] || p.keyGen[key] != gens[1] || p.identityGen[identity] != identityGen {
+// keep keeps got, the answer to c, unless the account, the identity or the
+// entry was invalidated while it was asked; the caller holds the lock.
+func (p *PermissionService) keep(key permissionKey, c *permissionCall, got Permission) (Permission, error) {
+	if p.accountGen[key.account] != c.accountGen || p.keyGen[key] != c.keyGen || p.identityGen[c.identity] != c.identityGen {
 		return PermissionNone, fmt.Errorf("%w: %w", ErrUnavailable, errChanged)
 	}
 	// The lifetime counts from the answer, however long the question took.
 	now := p.now()
 	p.sweep(now)
-	p.entries[key] = permissionEntry{permission: got, expires: now.Add(PermissionLifetime), identity: identity}
+	p.entries[key] = permissionEntry{permission: got, expires: now.Add(PermissionLifetime), identity: c.identity}
 	return got, nil
+}
+
+// asking reports whether a question is in flight that match reports; the
+// caller holds the lock.
+func (p *PermissionService) asking(match func(permissionKey, *permissionCall) bool) bool {
+	for k, c := range p.inflight {
+		if match(k, c) {
+			return true
+		}
+	}
+	return false
+}
+
+// prune drops the invalidation counts no question in flight can compare
+// with, once the question of key, through identity, ended: only questions in
+// flight keep counts, so they never grow with the life of the server. The
+// caller holds the lock.
+func (p *PermissionService) prune(key permissionKey, identity string) {
+	if !p.asking(func(k permissionKey, _ *permissionCall) bool { return k.account == key.account }) {
+		delete(p.accountGen, key.account)
+	}
+	delete(p.keyGen, key)
+	if identity != "" && !p.asking(func(_ permissionKey, c *permissionCall) bool { return c.identity == identity }) {
+		delete(p.identityGen, identity)
+	}
 }
 
 // identityOf returns the key of the one identity of account on forge.
@@ -222,7 +264,9 @@ func (p *PermissionService) Forget(account string) {
 			delete(p.entries, k)
 		}
 	}
-	p.accountGen[account]++
+	if p.asking(func(k permissionKey, _ *permissionCall) bool { return k.account == account }) {
+		p.accountGen[account]++
+	}
 }
 
 // Refused drops the permission of the account on repo, and only it: the
@@ -233,7 +277,9 @@ func (p *PermissionService) Refused(account string, repo Repository) {
 	defer p.mu.Unlock()
 	key := permissionKey{account: account, forge: repo.Forge, repository: repo.ID}
 	delete(p.entries, key)
-	p.keyGen[key]++
+	if _, ok := p.inflight[key]; ok {
+		p.keyGen[key]++
+	}
 }
 
 // revoked drops the permissions given through the identity with this key,
@@ -247,5 +293,7 @@ func (p *PermissionService) revoked(key string) {
 			delete(p.entries, k)
 		}
 	}
-	p.identityGen[key]++
+	if p.asking(func(_ permissionKey, c *permissionCall) bool { return c.identity == key }) {
+		p.identityGen[key]++
+	}
 }

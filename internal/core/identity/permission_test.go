@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kvitrvn/raun/internal/core/identity"
+	"github.com/kvitrvn/raun/internal/core/identity/identitytest"
 )
 
 // permissionsOf is a permission service on the stub forge where Alice (a1)
@@ -371,4 +372,128 @@ func TestFailuresOutsideTheForgeAreTransient(t *testing.T) {
 	}
 	s.forge.grant("1001", "2001", identity.Permission("admin"))
 	s.check(t, "a1", api(), identity.PermissionNone, identity.ErrUnavailable)
+}
+
+// failingRead is a store whose tokens cannot be read.
+type failingRead struct{ *identitytest.Memory }
+
+func (failingRead) Tokens(context.Context, string) (identity.Tokens, error) {
+	return identity.Tokens{}, errors.New("database locked")
+}
+
+func TestATokenStoreThatFails(t *testing.T) {
+	for name, store := range map[string]func(s *permissionsOf) identity.Store{
+		"reading the tokens":           func(s *permissionsOf) identity.Store { return failingRead{s.store} },
+		"storing the refreshed tokens": func(s *permissionsOf) identity.Store { return failingStore{s.store} },
+	} {
+		s := newPermissionsOf(t)
+		s.forge.grant("1001", "2001", identity.PermissionDecide)
+		s.now = s.now.Add(8 * time.Hour)
+		clock := func() time.Time { return s.now }
+		tokens := identity.NewTokenService(s.forge, store(s), clock)
+		p := identity.NewPermissionService(s.forge, tokens, s.store, clock)
+		if got, err := p.Permission(context.Background(), "a1", api()); got != identity.PermissionNone || !errors.Is(err, identity.ErrUnavailable) {
+			t.Errorf("%s: Permission = %s, %v; want a refusal to try again", name, got, err)
+		}
+	}
+}
+
+// block makes the next question to the stub forge wait, and returns the
+// channel that tells it is asked and releases it.
+func block(s *permissionsOf) chan struct{} {
+	wait := make(chan struct{})
+	s.forge.mu.Lock()
+	s.forge.permissionWait = wait
+	s.forge.mu.Unlock()
+	return wait
+}
+
+func unblock(s *permissionsOf, wait chan struct{}) {
+	s.forge.mu.Lock()
+	s.forge.permissionWait = nil
+	s.forge.mu.Unlock()
+	wait <- struct{}{}
+}
+
+// TestAWaiterThatGivesUp: a caller waiting on the question of another one
+// stops with its own context.
+func TestAWaiterThatGivesUp(t *testing.T) {
+	s := newPermissionsOf(t)
+	s.forge.grant("1001", "2001", identity.PermissionDecide)
+	wait := block(s)
+	leader := make(chan error)
+	go func() {
+		_, err := s.permissions.Permission(context.Background(), "a1", api())
+		leader <- err
+	}()
+	<-wait
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got, err := s.permissions.Permission(ctx, "a1", api()); got != identity.PermissionNone || !errors.Is(err, identity.ErrUnavailable) || !errors.Is(err, context.Canceled) {
+		t.Errorf("a waiter that gave up = %s, %v", got, err)
+	}
+	unblock(s, wait)
+	if err := <-leader; err != nil {
+		t.Errorf("the leader = %v", err)
+	}
+}
+
+// TestALeaderThatGivesUp: when the caller that asks gives up, the callers
+// waiting on it ask again.
+func TestALeaderThatGivesUp(t *testing.T) {
+	s := newPermissionsOf(t)
+	s.forge.grant("1001", "2001", identity.PermissionDecide)
+	wait := block(s)
+	ctx, cancel := context.WithCancel(context.Background())
+	leader := make(chan error)
+	go func() {
+		_, err := s.permissions.Permission(ctx, "a1", api())
+		leader <- err
+	}()
+	<-wait
+	waiter := make(chan identity.Permission)
+	go func() {
+		p, _ := s.permissions.Permission(context.Background(), "a1", api())
+		waiter <- p
+	}()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	unblock(s, wait)
+	if err := <-leader; !errors.Is(err, context.Canceled) {
+		t.Errorf("the leader that gave up = %v", err)
+	}
+	if p := <-waiter; p != identity.PermissionDecide {
+		t.Errorf("the waiter = %s, want decide asked again", p)
+	}
+	// The stub counts the answers it gives: the question given up gave
+	// none, so the decide the waiter got is its own question.
+	if n := s.forge.calls(); n != 1 {
+		t.Errorf("%d answers of the forge, want the waiter's own", n)
+	}
+}
+
+// TestCountsDoNotGrow: invalidations keep no count once no question is in
+// flight, whatever the life of the server.
+func TestCountsDoNotGrow(t *testing.T) {
+	s := newPermissionsOf(t)
+	s.forge.grant("1001", "2001", identity.PermissionDecide)
+	for range 50 {
+		s.check(t, "a1", api(), identity.PermissionDecide, nil)
+		s.permissions.Refused("a1", api())
+		s.permissions.Forget("a1")
+		s.permissions.Forget("a2")
+	}
+	wait := block(s)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = s.permissions.Permission(context.Background(), "a1", api())
+	}()
+	<-wait
+	s.permissions.Forget("a1")
+	unblock(s, wait)
+	<-done
+	if n := identity.Counts(s.permissions); n != 0 {
+		t.Errorf("the service keeps %d counts with no question in flight", n)
+	}
 }

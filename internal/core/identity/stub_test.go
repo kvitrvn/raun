@@ -113,13 +113,16 @@ func (f *stubForge) Repositories(context.Context, identity.Tokens) ([]identity.R
 	return nil, nil
 }
 
-func (f *stubForge) Permission(_ context.Context, t identity.Tokens, r identity.Repository) (identity.Permission, error) {
+func (f *stubForge) Permission(ctx context.Context, t identity.Tokens, r identity.Repository) (identity.Permission, error) {
 	f.mu.Lock()
 	wait := f.permissionWait
 	f.mu.Unlock()
 	if wait != nil {
 		wait <- struct{}{}
 		<-wait
+		if err := ctx.Err(); err != nil {
+			return identity.PermissionNone, err
+		}
 	}
 	f.mu.Lock()
 	during := f.during
