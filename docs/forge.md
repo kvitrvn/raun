@@ -133,7 +133,7 @@ gh api users/<login> -q .id
 gh api orgs/<org> -q .id
 ```
 
-An entry of a forge the server does not configure stops it at start, and so does an entry of `RAUN_SIGNUP_ORGS` on a forge that cannot tell the members of an organization. The lists decide who may sign up and log in, checked at every login: someone who leaves a listed organization can no longer log in. GitHub shows a user token the organizations where the App is installed only, so an organization of `RAUN_SIGNUP_ORGS` lets its members in once the App is installed on it.
+An entry of a forge the server does not configure stops it at start, and so does a GitHub entry that is not a number, and so does an entry of `RAUN_SIGNUP_ORGS` on a forge that cannot tell the members of an organization. The lists decide who may sign up and log in, checked at every login: someone who leaves a listed organization can no longer log in. GitHub shows a user token the organizations where the App is installed only, so an organization of `RAUN_SIGNUP_ORGS` lets its members in once the App is installed on it.
 
 ## Login
 

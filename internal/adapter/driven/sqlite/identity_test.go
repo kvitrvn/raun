@@ -160,6 +160,28 @@ func TestRotateSecretsStopsOnAnUnknownKey(t *testing.T) {
 	}
 }
 
+// TestOversizedTokensAreRefused: tokens too large to read back are never
+// stored, and the store is unchanged.
+func TestOversizedTokensAreRefused(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openMigrated(t)
+	a := s.Accounts(testKeyring(t, 1, 0))
+	tokens := signedUpAlice(t, a)
+	huge := identity.Tokens{Access: identity.Secret(strings.Repeat("x", maxSealed)), AccessExpiry: when(), RefreshExpiry: when()}
+	if err := a.PutTokens(ctx, "github:1001", huge); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("PutTokens of oversized tokens = %v", err)
+	}
+	if err := a.PutSignup(ctx, identity.Signup{Session: "s9", Identity: identity.Identity{Forge: "github", ID: "1009"}, Tokens: huge, ExpiresAt: when().Add(time.Hour)}); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("PutSignup of oversized tokens = %v", err)
+	}
+	if got, err := a.Tokens(ctx, "github:1001"); err != nil || got.Access != tokens.Access {
+		t.Errorf("the refused tokens changed the stored ones: %v", err)
+	}
+	if n, err := a.RotateSecrets(ctx); err != nil || n != 0 {
+		t.Errorf("RotateSecrets after a refused write = %d, %v", n, err)
+	}
+}
+
 func TestRotateSecretsOnAnEmptyDatabase(t *testing.T) {
 	s, _ := openMigrated(t)
 	if n, err := s.Accounts(nil).RotateSecrets(context.Background()); err != nil || n != 0 {

@@ -125,13 +125,15 @@ func (s *Server) loginCallback(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, identity.ErrInvalidCode):
 		retry(http.StatusBadRequest, "Login failed", "The forge refused the authorization code.")
 		return
+	case errors.Is(err, identity.ErrUnavailable):
+		// Before the refusal: a membership that could not be checked
+		// refuses the login, but the forge failed, not the person.
+		s.warn(r, "login failed", err.Error())
+		retry(http.StatusServiceUnavailable, "The forge cannot be reached", "Try again in a moment.")
+		return
 	case errors.As(err, &refusal):
 		s.warn(r, "login refused", "sign-up rule")
 		s.loginPage(w, r, http.StatusForbidden, ui.LoginProps{Title: "You cannot sign up here", Message: sentence(refusal.Reason)})
-		return
-	case errors.Is(err, identity.ErrUnavailable):
-		s.warn(r, "login failed", err.Error())
-		retry(http.StatusServiceUnavailable, "The forge cannot be reached", "Try again in a moment.")
 		return
 	case err != nil:
 		s.fail(w, r, "complete a login", err)

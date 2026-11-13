@@ -146,6 +146,11 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		return exitFailure
 	}
 	accounts := store.Accounts(keys)
+	stale := expiring{sessions: sessions, accounts: accounts}
+	// The purge first: an expired sign-up is deleted, not rotated.
+	if err := purge(ctx, logger, stale, time.Now()); err != nil {
+		return exitFailure
+	}
 	// Before anything reads a secret: a secret under an unknown key stops
 	// the server, and the previous key can go once this has run.
 	rotated, err := accounts.RotateSecrets(ctx)
@@ -155,10 +160,6 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 	}
 	if rotated > 0 {
 		logger.Info("stored secrets sealed under the new key", slog.Int("count", rotated))
-	}
-	stale := expiring{sessions: sessions, accounts: accounts}
-	if err := purge(ctx, logger, stale, time.Now()); err != nil {
-		return exitFailure
 	}
 	var login *identity.Login
 	if forge != nil {

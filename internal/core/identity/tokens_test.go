@@ -113,6 +113,9 @@ func TestConcurrentCallersRefreshOnce(t *testing.T) {
 	if s.forge.refreshes != 1 {
 		t.Errorf("%d refreshes, want 1", s.forge.refreshes)
 	}
+	if n := identity.Held(s.service); n != 0 {
+		t.Errorf("the service keeps %d locks once every caller is done", n)
+	}
 	for _, a := range got {
 		if a == "" || a != got[0] || a == s.tokens.Access.Reveal() {
 			t.Fatalf("access tokens used = %v, want one shared new token", got)

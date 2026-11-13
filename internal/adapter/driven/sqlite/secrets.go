@@ -24,6 +24,8 @@ const (
 	envelopeHeader  = 1 + keyIDSize + nonceSize
 	// maxSealed bounds a stored secret: tokens take a few hundred bytes.
 	maxSealed = 64 << 10
+	// maxPlaintext is the most seal encrypts: what open reads back.
+	maxPlaintext = maxSealed - envelopeHeader - tagSize
 )
 
 var (
@@ -33,6 +35,8 @@ var (
 	// ErrNoKey: the database holds secrets, or is asked to store one,
 	// without RAUN_SECRET_KEY.
 	ErrNoKey = errors.New("RAUN_SECRET_KEY is not set")
+	// ErrTooLarge: a secret is larger than a stored secret can be.
+	ErrTooLarge = errors.New("secret too large to store")
 	// errSealed: a stored secret is malformed or does not open.
 	errSealed = errors.New("stored secret does not open")
 )
@@ -103,10 +107,15 @@ func (p place) data() []byte {
 	return []byte("raun\x00" + p.table + "\x00" + p.column + "\x00" + p.row)
 }
 
-// seal encrypts plaintext for the place p under the current key.
+// seal encrypts plaintext for the place p under the current key. A
+// plaintext open could not read back is refused, so nothing unreadable is
+// ever stored.
 func (k *Keyring) seal(p place, plaintext []byte) ([]byte, error) {
 	if k == nil {
 		return nil, ErrNoKey
+	}
+	if len(plaintext) > maxPlaintext {
+		return nil, fmt.Errorf("%w: %s.%s of %s takes %d bytes, %d at most", ErrTooLarge, p.table, p.column, p.row, len(plaintext), maxPlaintext)
 	}
 	out := make([]byte, envelopeHeader, envelopeHeader+len(plaintext)+tagSize)
 	out[0] = envelopeVersion

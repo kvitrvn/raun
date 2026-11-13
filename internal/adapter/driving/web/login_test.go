@@ -296,6 +296,30 @@ func TestSomeoneOutsideTheRuleIsRefused(t *testing.T) {
 	}
 }
 
+// downMembers is a forge whose memberships cannot be checked.
+type downMembers struct{ *forgetest.Fake }
+
+func (downMembers) IsMember(context.Context, identity.Tokens, string) (bool, error) {
+	return false, identity.ErrUnavailable
+}
+
+// TestAMembershipThatCannotBeChecked: the login is refused, as a failure of
+// the forge to try again, not as a refusal of the person.
+func TestAMembershipThatCannotBeChecked(t *testing.T) {
+	l := newLoginServer(t)
+	policy := identity.Policy{Orgs: []identity.Entry{{Forge: "github", ID: "3001"}}}
+	l.Server.login = identity.NewLogin(downMembers{l.forge}, policy, l.accounts, rand.Reader, l.Server.now)
+	b := l.browser(t)
+	resp := b.do(http.MethodGet, l.authorize(t, b, "1001", ""), nil)
+	body := readBody(t, resp)
+	if resp.StatusCode != http.StatusServiceUnavailable || !strings.Contains(body, "The forge cannot be reached") || strings.Contains(body, "You cannot sign up here") {
+		t.Errorf("callback with memberships down = %d %s", resp.StatusCode, body)
+	}
+	if b.session(l.sessions).Account != "" {
+		t.Error("a login whose rule could not be checked got an account")
+	}
+}
+
 func TestATakenName(t *testing.T) {
 	l := newLoginServer(t)
 	// Alice takes the name bob, then the rule admits Bob, who wants it.

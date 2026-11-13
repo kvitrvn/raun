@@ -302,8 +302,15 @@ func (c *config) checkIdentities() []error {
 		entries []identity.Entry
 	}{{"RAUN_ADMINS", c.signup.Admins}, {"RAUN_SIGNUP_ORGS", c.signup.Orgs}, {"RAUN_SIGNUP_USERS", c.signup.Users}} {
 		for _, e := range list.entries {
-			if !slices.Contains(forges, e.Forge) {
+			switch {
+			case !slices.Contains(forges, e.Forge):
 				errs = append(errs, fmt.Errorf("%s: %s names the forge %q, which is not configured", list.name, e, e.Forge))
+			case e.Forge == github.Name:
+				// A login would pass the form and never match: the
+				// instance would refuse everyone without saying why.
+				if err := github.CheckIdentifier(e.ID); err != nil {
+					errs = append(errs, fmt.Errorf("%s: %s: %w; gh api users/<login> -q .id gives it", list.name, e, err))
+				}
 			}
 		}
 	}

@@ -77,3 +77,20 @@ func TestSealAndOpen(t *testing.T) {
 		t.Errorf("seal without a key = %v", err)
 	}
 }
+
+// TestSealRefusesWhatOpenCannotRead: the largest plaintext seals and opens
+// again; one byte more is refused before anything is stored.
+func TestSealRefusesWhatOpenCannotRead(t *testing.T) {
+	k := testKeyring(t, 1, 0)
+	p := place{"tokens", "sealed", "github:1001"}
+	sealed, err := k.seal(p, make([]byte, maxPlaintext))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain, _, err := k.open(p, sealed); err != nil || len(plain) != maxPlaintext {
+		t.Errorf("open of the largest secret = %d bytes, %v", len(plain), err)
+	}
+	if _, err := k.seal(p, make([]byte, maxPlaintext+1)); !errors.Is(err, ErrTooLarge) {
+		t.Errorf("seal of one byte more = %v, want ErrTooLarge", err)
+	}
+}

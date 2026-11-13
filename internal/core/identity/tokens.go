@@ -23,25 +23,53 @@ type TokenService struct {
 	now   func() time.Time
 
 	mu    sync.Mutex
-	locks map[string]*sync.Mutex
+	locks map[string]*keyLock
+}
+
+// keyLock is the lock of one identity, kept while a caller holds or waits
+// for it.
+type keyLock struct {
+	sync.Mutex
+	users int
 }
 
 // NewTokenService returns the token service of forge on store, at the time
 // now gives.
 func NewTokenService(forge Forge, store Store, now func() time.Time) *TokenService {
-	return &TokenService{forge: forge, store: store, now: now, locks: map[string]*sync.Mutex{}}
+	return &TokenService{forge: forge, store: store, now: now, locks: map[string]*keyLock{}}
 }
 
-// lock returns the lock of the identity with this key.
-func (s *TokenService) lock(key string) *sync.Mutex {
+// lock takes the lock of the identity with this key.
+func (s *TokenService) lock(key string) *keyLock {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	l, ok := s.locks[key]
 	if !ok {
-		l = &sync.Mutex{}
+		l = &keyLock{}
 		s.locks[key] = l
 	}
+	l.users++
+	s.mu.Unlock()
+	l.Lock()
 	return l
+}
+
+// unlock releases l, the lock of key, and forgets it once nobody holds or
+// waits for it, so the service keeps no lock per identity it ever saw.
+func (s *TokenService) unlock(key string, l *keyLock) {
+	l.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l.users--
+	if l.users == 0 {
+		delete(s.locks, key)
+	}
+}
+
+// held is the number of identities whose lock is kept, for the tests.
+func (s *TokenService) held() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.locks)
 }
 
 // With calls f with the tokens of the identity with this key, refreshed
@@ -70,8 +98,7 @@ func (s *TokenService) With(ctx context.Context, key string, f func(Tokens) erro
 // margin, or when refused is their access token: the forge refused it.
 func (s *TokenService) current(ctx context.Context, key string, refused Secret) (Tokens, error) {
 	l := s.lock(key)
-	l.Lock()
-	defer l.Unlock()
+	defer s.unlock(key, l)
 	// Read under the lock: a caller that waited finds the tokens another
 	// one refreshed, and does not spend the refresh token again.
 	t, err := s.store.Tokens(ctx, key)
