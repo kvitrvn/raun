@@ -245,3 +245,61 @@ func TestWorkspacesThroughTheServer(t *testing.T) {
 		t.Errorf("the workspaces after a restart: %s", list)
 	}
 }
+
+// rebind points v at the server s, keeping its cookies, as a browser that
+// stays open across a restart.
+func (v *visitor) rebind(s *server) { v.base = "http://" + s.addr }
+
+// TestAdministratorsThroughTheServer: a listed account is an administrator, a
+// removed one loses the role at its next request after the restart that
+// removes it, and an empty list makes nobody one; a sign-up user is not one.
+func TestAdministratorsThroughTheServer(t *testing.T) {
+	dir := t.TempDir()
+	keyFile, _ := writeAppKey(t, dir)
+	fake, _ := forgetest.Scenario("github", false)
+	deps := serverDeps{forge: fake}
+	base := append(app(keyFile), "RAUN_SIGNUP_USERS=github:1001,github:1002")
+	with := func(admins string) []string { return append([]string{"RAUN_ADMINS=" + admins}, base...) }
+
+	s := start(t, dir, with("github:1001"), deps)
+	alice, bob := newVisitor(t, s), newVisitor(t, s)
+	alice.logIn(fake, "1001")
+	alice.submit("/login/signup", "/login/signup", url.Values{"name": {"alice"}})
+	bob.logIn(fake, "1002")
+	bob.submit("/login/signup", "/login/signup", url.Values{"name": {"bob"}})
+	status, _, page := alice.send(http.MethodGet, "/instance", nil)
+	if status != http.StatusOK || !strings.Contains(page, "RAUN_ADMINS") || !strings.Contains(page, `href="/instance"`) {
+		t.Fatalf("/instance for Alice = %d %s", status, page)
+	}
+	for _, leak := range []string{"client-secret-sentinel", secretKey(1), "PRIVATE KEY"} {
+		if strings.Contains(page, leak) {
+			t.Errorf("the settings show %q", leak)
+		}
+	}
+	if status, _, _ := bob.send(http.MethodGet, "/instance", nil); status != http.StatusForbidden {
+		t.Errorf("/instance for Bob, a sign-up user = %d", status)
+	}
+	s.stop(t)
+
+	// Bob replaces Alice in the list: the same sessions, the next request.
+	s = start(t, dir, with("github:1002"), deps)
+	alice.rebind(s)
+	bob.rebind(s)
+	if status, _, _ := alice.send(http.MethodGet, "/instance", nil); status != http.StatusForbidden {
+		t.Errorf("/instance for Alice, removed = %d", status)
+	}
+	if status, _, _ := bob.send(http.MethodGet, "/instance", nil); status != http.StatusOK {
+		t.Errorf("/instance for Bob, added = %d", status)
+	}
+	s.stop(t)
+
+	// An empty list: nobody.
+	s = start(t, dir, base, deps)
+	alice.rebind(s)
+	bob.rebind(s)
+	for name, v := range map[string]*visitor{"Alice": alice, "Bob": bob} {
+		if status, _, _ := v.send(http.MethodGet, "/instance", nil); status != http.StatusForbidden {
+			t.Errorf("/instance for %s with no administrator = %d", name, status)
+		}
+	}
+}
