@@ -128,7 +128,7 @@ Rules made explicit while implementing the login (#26):
 - **The PKCE verifier stays in clear** in `login_states`: it serves once, within 10 minutes, and only with a code the forge gives that browser; the state is stored hashed. A take of the state removes it whatever its answer, a callback of another session included, which cancels that login: the person starts again.
 - **A login starts a session.** A browser without a cookie gets one at `GET /login`, as the login state is bound to it; the session lives by the rules of epic 3 and is purged once expired. Limiting how often a login starts is not done here.
 - **Refreshes are serialized in memory.** The token service holds one lock per identity while a caller holds or waits for it, and reads the tokens again under it, so two requests that find a token expired refresh it once. One server process serves a database: SQLite on a local file already requires it. The login owns the token service and stores the tokens of a known identity through its lock, and the permission service of #28 shares it, so a refresh in flight never overwrites nor revokes the tokens of a login that just completed.
-- **`RAUN_ADMINS` admits to sign-up.** It is read here for the sign-up rule only; the administrator role and its screen stay with #21.
+- **`RAUN_ADMINS` admits to sign-up.** It is read for the sign-up rule as for the administrator role of #21.
 - **`GET /login` is the one GET that changes state**, as the epic 3 record allows; a `HEAD` of `/login` or `/login/callback` changes nothing.
 
 ### Workspaces (#27)
@@ -154,6 +154,14 @@ Rules made explicit while implementing the permission service (#28), in `interna
 - **One identity per forge.** The account is looked up on the forge of the repository; a server has one forge until epic 12, and a repository of another forge is refused. Epic 12, which links a second identity to an account, forgets the permissions of the account at that link.
 - **The cost of a question.** On GitHub, `Permission` walks the installations and repositories the person reaches until it finds the repository, so a question costs up to the pages of that listing. A screen of epic 5 that shows many repositories takes their rights from one `Repositories` listing, or the service gains a listing per account, rather than asking once per repository.
 - **No role of the instance or of a workspace** enters the decision: an administrator gets what the forge gives the person, nothing more.
+
+### Administrators and instance settings (#21)
+
+Rules made explicit while implementing the administrator role and its screen (#21):
+
+- **One rule, worked out at each request.** `Administrators` in `internal/core/identity/administrator.go` reads the identities of the account at every call and matches them exactly against `RAUN_ADMINS`: the same identifier on another forge does not match, a sign-up user is not an administrator, and a role that cannot be read is refused. Nothing is stored or kept in a session: after a restart with another list, the sessions already open follow it at their next request.
+- **The screen.** `GET /instance` shows the variables of the catalogue and their effective values, names and values only, so the README stays the one place that describes them; `cmd/raun` gives the web handler a copy in which every secret is `[redacted]`, and nothing else of the configuration. Anyone logged in who is not an administrator gets 403, the screen being known to exist; the link of the top bar shows to administrators only, and the screen checks the role again.
+- **No stored setting**, as the epic 3 record decides: none has a consumer yet.
 
 ## Deferred
 
