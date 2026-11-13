@@ -39,6 +39,16 @@ func TestCheckName(t *testing.T) {
 	}
 }
 
+// TestEveryReservedNameIsRefused: each name kept for Raun is refused, and
+// passes the rule of names otherwise, so it could not be taken by mistake.
+func TestEveryReservedNameIsRefused(t *testing.T) {
+	for _, name := range reserved {
+		if err := CheckName(name); !errors.Is(err, ErrReservedName) {
+			t.Errorf("CheckName(%q) = %v, want ErrReservedName", name, err)
+		}
+	}
+}
+
 func TestProposeName(t *testing.T) {
 	for login, want := range map[string]string{
 		"Alice":       "alice",

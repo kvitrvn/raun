@@ -14,6 +14,8 @@ import (
 // session of the session store RevokeTokens ends sessions in.
 type Fixture struct {
 	Store identity.Store
+	// Workspaces is the workspace store of the same data as Store.
+	Workspaces identity.WorkspaceStore
 	// StartSession gives account a live session and returns a function
 	// that tells whether that session still lives.
 	StartSession func(t *testing.T, account string) func() bool
@@ -261,6 +263,8 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 			t.Errorf("UpdateIdentity of an unknown identity = %v", err)
 		}
 	})
+
+	workspaceSuite(t, newFixture)
 
 	t.Run("tokens are stored, replaced and revoked", func(t *testing.T) {
 		fx := newFixture(t)

@@ -10,7 +10,8 @@ import (
 var (
 	// ErrNotFound: no such login state, sign-up, account or tokens.
 	ErrNotFound = errors.New("not found")
-	// ErrNameTaken: an account already has the name.
+	// ErrNameTaken: an account or a workspace already has the name: they
+	// share one namespace.
 	ErrNameTaken = errors.New("name taken")
 	// ErrIdentityTaken: the forge identity already belongs to an account.
 	ErrIdentityTaken = errors.New("identity already has an account")
@@ -52,10 +53,12 @@ type Store interface {
 	// it has not expired at now; ErrNotFound otherwise.
 	Signup(ctx context.Context, session string, now time.Time) (Signup, error)
 	// CompleteSignup removes the sign-up of the session, if it has not
-	// expired at now, and creates account with its identity and tokens, in
-	// one operation. ErrNotFound without a sign-up, ErrNameTaken or
-	// ErrIdentityTaken when another account has the name or the identity;
-	// nothing changes then.
+	// expired at now, and creates account with its identity, its tokens and
+	// its personal workspace (the identifier and the name of the account,
+	// the account its owner), in one operation. ErrNotFound without a
+	// sign-up, ErrNameTaken when an account or a workspace has the name,
+	// ErrIdentityTaken when another account has the identity; nothing
+	// changes then.
 	CompleteSignup(ctx context.Context, session string, account Account, now time.Time) (Signup, error)
 	// DeleteExpiredSignups removes the sign-ups expired at now.
 	DeleteExpiredSignups(ctx context.Context, now time.Time) (int, error)

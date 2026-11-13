@@ -41,9 +41,10 @@ var (
 	ErrReservedName = errors.New("reserved name")
 )
 
-// reserved are the names no account takes: the first segment of every route
-// of the application, and the names kept by the epic 4 record. #27 extends
-// the list with its routes and adds the test that keeps it in step.
+// reserved are the names no account or workspace takes: the first segment of
+// every route of the application, and the names kept by the epic 4 record. A
+// test of the web adapter fails when a route is added without reserving its
+// first segment here.
 var reserved = []string{
 	// Routes.
 	"assets", "healthz", "instance", "login", "logout", "new", "readyz", "workspaces",

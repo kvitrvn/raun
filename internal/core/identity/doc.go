@@ -4,9 +4,10 @@
 // permission on one; accounts and the rule of their names, the sign-up rule,
 // the login with its states and sign-ups, and the token service that
 // refreshes tokens once and revokes them for good; and the port of the store
-// that keeps them, with its contract suite in identitytest. Workspaces and
-// the permission service join it in epic 4 (#27, #28); see
-// docs/implementation/04-forge-port-and-identity.md.
+// that keeps them, with its contract suite in identitytest; workspaces,
+// personal and shared, their owners and members, in the one namespace of
+// accounts and workspaces. The permission service joins it in epic 4 (#28);
+// see docs/implementation/04-forge-port-and-identity.md.
 //
 // The forge port is a small required interface, Forge, and optional
 // capabilities an adapter implements when its forge offers them, detected by
