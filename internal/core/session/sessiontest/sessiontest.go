@@ -112,15 +112,22 @@ func Suite(t *testing.T, newStore func(t *testing.T) session.Store) {
 	t.Run("create and get", func(t *testing.T) {
 		st := newStore(t)
 		want := sess(t, a, t0, t0.Add(time.Minute))
-		if err := st.Create(ctx, want); err != nil {
-			t.Fatal(err)
+		anonymous := sess(t, c, t0, t0)
+		want.Account = "account-1"
+		for _, s := range []session.Session{want, anonymous} {
+			if err := st.Create(ctx, s); err != nil {
+				t.Fatal(err)
+			}
 		}
 		got, err := st.Get(ctx, a)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Hash != want.Hash || got.CSRF != want.CSRF || !got.CreatedAt.Equal(want.CreatedAt) || !got.LastSeenAt.Equal(want.LastSeenAt) {
+		if got.Hash != want.Hash || got.CSRF != want.CSRF || !got.CreatedAt.Equal(want.CreatedAt) || !got.LastSeenAt.Equal(want.LastSeenAt) || got.Account != want.Account {
 			t.Errorf("Get = %+v, want %+v", got, want)
+		}
+		if got, _ := st.Get(ctx, c); got.Account != "" {
+			t.Errorf("an anonymous session has the account %q", got.Account)
 		}
 		if _, err := st.Get(ctx, b); !errors.Is(err, session.ErrNotFound) {
 			t.Errorf("Get of an unknown hash = %v, want ErrNotFound", err)
@@ -166,13 +173,15 @@ func Suite(t *testing.T, newStore func(t *testing.T) session.Store) {
 			}
 		}
 		next := sess(t, b, t0, t0.Add(time.Hour))
+		// A login replaces an anonymous session with one of an account.
+		next.Account = "account-2"
 		if err := st.Replace(ctx, a, next); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := st.Get(ctx, a); !errors.Is(err, session.ErrNotFound) {
 			t.Errorf("old session after Replace: %v", err)
 		}
-		if got, err := st.Get(ctx, b); err != nil || got.CSRF != next.CSRF {
+		if got, err := st.Get(ctx, b); err != nil || got.CSRF != next.CSRF || got.Account != "account-2" {
 			t.Errorf("new session after Replace: %+v, %v", got, err)
 		}
 		// A replaced session cannot be replaced again, and a taken hash

@@ -64,6 +64,7 @@ func TestRenewKeepsTheAbsoluteLifetime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	old.Account = "account-1"
 	later := t0.Add(3 * 24 * time.Hour)
 	id, s, err := Renew(src, old, later)
 	if err != nil {
@@ -74,6 +75,9 @@ func TestRenewKeepsTheAbsoluteLifetime(t *testing.T) {
 	}
 	if !s.CreatedAt.Equal(old.CreatedAt) || !s.LastSeenAt.Equal(later) {
 		t.Errorf("renewed times %v %v", s.CreatedAt, s.LastSeenAt)
+	}
+	if s.Account != "account-1" {
+		t.Errorf("renewal dropped the account: %q", s.Account)
 	}
 	if got, want := s.ExpiresAt(), later.Add(IdleLifetime); !got.Equal(want) {
 		t.Errorf("ExpiresAt = %v, want %v", got, want)

@@ -9,7 +9,8 @@
 //
 // What this package does not do:
 //   - read a cookie or write a response: the web adapter does, with these rules;
-//   - attach an account: a session holds none until epic 4;
+//   - know what an account is: a session carries the identifier of one,
+//     opaque here, set at login by the identity context (epic 4);
 //   - draw randomness or read the clock itself: both are parameters, so the
 //     rules can be tested exactly.
 package session
@@ -63,6 +64,9 @@ type Session struct {
 	CSRF       string
 	CreatedAt  time.Time
 	LastSeenAt time.Time
+	// Account is the identifier of the account logged in to the session;
+	// empty before a login.
+	Account string
 }
 
 // New draws a session created at now from random. It returns the identifier,
@@ -81,8 +85,9 @@ func New(random io.Reader, now time.Time) (string, Session, error) {
 }
 
 // Renew draws a new identifier and a new CSRF token for s at now, as at login
-// or at a change of privilege. The creation time is kept, so the absolute
-// lifetime is not extended. The caller replaces s with the result in one
+// or at a change of privilege. The creation time and the account are kept, so
+// the absolute lifetime is not extended; a login sets the account of the
+// result before storing it. The caller replaces s with the result in one
 // operation of the store.
 func Renew(random io.Reader, s Session, now time.Time) (string, Session, error) {
 	id, fresh, err := New(random, now)
@@ -90,6 +95,7 @@ func Renew(random io.Reader, s Session, now time.Time) (string, Session, error) 
 		return "", Session{}, err
 	}
 	fresh.CreatedAt = s.CreatedAt
+	fresh.Account = s.Account
 	return id, fresh, nil
 }
 
