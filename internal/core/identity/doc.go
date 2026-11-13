@@ -1,8 +1,11 @@
 // Package identity holds who a person is to Raun and what the forge lets
 // them do: forge identities and their tokens, and the port of the forge that
 // logs a person in, lists the repositories they reach and gives their
-// permission on one. Accounts, the namespace, workspaces and the permission
-// service join it in epic 4 (#26 to #28); see
+// permission on one; accounts and the rule of their names, the sign-up rule,
+// the login with its states and sign-ups, and the token service that
+// refreshes tokens once and revokes them for good; and the port of the store
+// that keeps them, with its contract suite in identitytest. Workspaces and
+// the permission service join it in epic 4 (#27, #28); see
 // docs/implementation/04-forge-port-and-identity.md.
 //
 // The forge port is a small required interface, Forge, and optional
@@ -16,5 +19,7 @@
 //   - name a forge or import a forge library: adapters translate;
 //   - map forge roles: an adapter gives the permission already mapped to view
 //     or decide, by the table of docs/forge.md;
-//   - print a token: Secret renders as [redacted] in every format.
+//   - print a token: Secret renders as [redacted] in every format;
+//   - encrypt anything: the store seals the tokens it keeps;
+//   - read a request or a cookie: the web adapter does, with these rules.
 package identity
