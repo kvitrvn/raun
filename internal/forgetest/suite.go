@@ -31,6 +31,9 @@ type Fixture struct {
 	// Approve is Alice approving Raun at url: the code and the state the
 	// forge sends back.
 	Approve func(t *testing.T, url string) (code, state string)
+	// ExpireCodes makes the forge refuse the authorization codes it gave,
+	// as time passes, while the tokens it gave stay valid.
+	ExpireCodes func(t *testing.T)
 	// ExpireAccess makes the forge refuse the access tokens it gave, as
 	// time passes, while their refresh tokens stay valid.
 	ExpireAccess func(t *testing.T)
@@ -93,6 +96,7 @@ func Scenario(name string, bare bool) (*Fake, Fixture) {
 			}
 			return code, state
 		},
+		ExpireCodes:  func(*testing.T) { f.Advance(CodeLifetime) },
 		ExpireAccess: func(*testing.T) { f.Advance(AccessLifetime + time.Second) },
 		Revoke:       func(*testing.T) { f.Revoke("1001") },
 		SetDown:      func(_ *testing.T, down bool) { f.SetDown(down) },
@@ -216,8 +220,13 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		if id.Forge != fx.Forge.Name() || id.ID != fx.Alice || id.Login == "" {
 			t.Errorf("identity = %+v", id)
 		}
-		if tokens.Access.Reveal() == "" || tokens.Refresh.Reveal() == "" || !tokens.AccessExpiry.Before(tokens.RefreshExpiry) {
-			t.Errorf("tokens have expiries %v and %v", tokens.AccessExpiry, tokens.RefreshExpiry)
+		if tokens.Access.Reveal() == "" || tokens.Refresh.Reveal() == "" {
+			t.Error("Exchange gave an empty token")
+		}
+		// The suite does not know the clock of the forge: it checks the
+		// expiries against each other, and against time passing on Refresh.
+		if tokens.AccessExpiry.IsZero() || !tokens.AccessExpiry.Before(tokens.RefreshExpiry) {
+			t.Errorf("tokens have expiries %v and %v, want an access expiry before the refresh expiry", tokens.AccessExpiry, tokens.RefreshExpiry)
 		}
 	})
 
@@ -245,6 +254,18 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 			t.Errorf("Exchange of an unknown code = %v, want ErrInvalidCode", err)
 		}
 		noSecret(t, err, verifier)
+	})
+
+	t.Run("a code expires", func(t *testing.T) {
+		fx := newFixture(t)
+		verifier, raw := authorize(t, fx, "s")
+		code, _ := fx.Approve(t, raw)
+		fx.ExpireCodes(t)
+		_, _, err := fx.Forge.Exchange(ctx, code, verifier)
+		if !errors.Is(err, identity.ErrInvalidCode) {
+			t.Errorf("Exchange of an expired code = %v, want ErrInvalidCode", err)
+		}
+		noSecret(t, err, code, verifier)
 	})
 
 	t.Run("repositories", func(t *testing.T) {
@@ -301,6 +322,9 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		}
 		if fresh.Access.Reveal() == "" || fresh.Access.Reveal() == tokens.Access.Reveal() {
 			t.Error("Refresh gave no new access token")
+		}
+		if !fresh.AccessExpiry.After(tokens.AccessExpiry) {
+			t.Errorf("Refresh after the expiry gave an access expiry of %v, want after %v", fresh.AccessExpiry, tokens.AccessExpiry)
 		}
 		if _, err := fx.Forge.Repositories(ctx, fresh); err != nil {
 			t.Errorf("Repositories after Refresh: %v", err)
@@ -370,6 +394,13 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		}
 		if p, err := fx.Forge.Permission(ctx, tokens, repo); err != nil || p != identity.PermissionDecide {
 			t.Errorf("Permission(%s) once back = %s, %v; want decide", repo.FullName, p, err)
+		}
+		fresh, err := fx.Forge.Refresh(ctx, tokens)
+		if err != nil {
+			t.Fatalf("Refresh once back: %v", err)
+		}
+		if _, err := fx.Forge.Repositories(ctx, fresh); err != nil {
+			t.Errorf("Repositories after the Refresh once back: %v", err)
 		}
 	})
 

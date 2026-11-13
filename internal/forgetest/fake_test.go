@@ -104,10 +104,17 @@ func TestRefreshKeepsSomeoneElsesAccess(t *testing.T) {
 	}
 }
 
-// TestAdvanceIsSafeForConcurrentUse moves the clock while the fake serves:
-// go test -race reports a clock written outside the lock.
+// TestAdvanceIsSafeForConcurrentUse moves the clock while the fake reads it
+// to check tokens: go test -race reports a clock written outside the lock.
 func TestAdvanceIsSafeForConcurrentUse(t *testing.T) {
 	f, fx := Scenario("fake", false)
+	ctx := context.Background()
+	v, _ := identity.NewVerifier(stubReader{})
+	code, _ := fx.Approve(t, f.AuthorizeURL("s", identity.Challenge(v)))
+	_, tokens, err := f.Exchange(ctx, code, v)
+	if err != nil {
+		t.Fatal(err)
+	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -116,8 +123,9 @@ func TestAdvanceIsSafeForConcurrentUse(t *testing.T) {
 		}
 	}()
 	for range 100 {
-		_ = fx.Forge.AuthorizeURL("s", "c")
-		_, _, _ = f.Exchange(context.Background(), "not-a-code", "v")
+		if _, err := f.Repositories(ctx, tokens); err != nil {
+			t.Fatal(err)
+		}
 	}
 	<-done
 }
