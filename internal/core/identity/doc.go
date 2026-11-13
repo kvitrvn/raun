@@ -6,9 +6,11 @@
 // refreshes tokens once and revokes them for good; and the port of the store
 // that keeps them, with its contract suite in identitytest; workspaces,
 // personal and shared, their owners and members, in the one namespace of
-// accounts and workspaces; and the permission service, the one place that
+// accounts and workspaces; the permission service, the one place that
 // decides what an account may do on a repository, from the forge, with a
-// short cache. See docs/implementation/04-forge-port-and-identity.md.
+// short cache; and the administrators of the instance, named in RAUN_ADMINS
+// and worked out at each request. See
+// docs/implementation/04-forge-port-and-identity.md.
 //
 // The forge port is a small required interface, Forge, and optional
 // capabilities an adapter implements when its forge offers them, detected by

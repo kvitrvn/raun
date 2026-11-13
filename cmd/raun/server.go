@@ -163,6 +163,8 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 	}
 	// The role is worked out at each request from the account's identities,
 	// with or without a forge: without one, nobody logs in to have it.
+	// RAUN_ADMINS is one list on purpose: it names the administrators, and
+	// admits them to sign-up and login as cfg.signup.Admins.
 	administrators := identity.NewAdministrators(cfg.signup.Admins, accounts)
 	var login *identity.Login
 	var workspaces *identity.Workspaces

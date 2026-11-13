@@ -14,12 +14,20 @@ type adminSwitch struct {
 	mu     sync.Mutex
 	admins map[string]bool
 	err    error
+	calls  int
 }
 
 func (a *adminSwitch) IsAdministrator(_ context.Context, account string) (bool, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.calls++
 	return a.admins[account], a.err
+}
+
+func (a *adminSwitch) count() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.calls
 }
 
 func (a *adminSwitch) set(account string, admin bool, err error) {
@@ -59,8 +67,12 @@ func TestInstanceSettings(t *testing.T) {
 	}
 
 	admins.set(account, true, nil)
+	before := admins.count()
 	resp = alice.do(http.MethodGet, "/instance", nil)
 	body = readBody(t, resp)
+	if n := admins.count() - before; n != 1 {
+		t.Errorf("the role was read %d times for one request, want once", n)
+	}
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "RAUN_HTTP_ADDR") || !strings.Contains(body, "[redacted]") ||
 		resp.Header.Get("Content-Security-Policy") == "" {
 		t.Errorf("an administrator = %d %s", resp.StatusCode, body)
