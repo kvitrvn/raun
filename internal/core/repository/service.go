@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -17,6 +19,12 @@ type Options struct {
 	// Reach tells which repositories the App reaches; nil when the forge
 	// cannot.
 	Reach Reach
+	// Events verifies and parses the deliveries of the forge; nil when the
+	// forge cannot.
+	Events Events
+	// Log keeps the keys of the deliveries and the event log; required
+	// with Events.
+	Log EventStore
 	// Missing are the capabilities of Preconditions() the forge lacks.
 	Missing []Capability
 	// Now gives the time of a change; nil means time.Now.
@@ -31,6 +39,8 @@ type Service struct {
 	workspaces Workspaces
 	store      Store
 	reach      Reach
+	events     Events
+	log        EventStore
 	missing    []Capability
 	now        func() time.Time
 }
@@ -45,6 +55,8 @@ func New(opts Options) *Service {
 		workspaces: opts.Workspaces,
 		store:      opts.Store,
 		reach:      opts.Reach,
+		events:     opts.Events,
+		log:        opts.Log,
 		missing:    slices.Clone(opts.Missing),
 		now:        opts.Now,
 	}
@@ -210,6 +222,9 @@ type View struct {
 	Permission Permission
 	// Member: the person belongs to the workspace of the repository.
 	Member bool
+	// Events are the newest rows of its event log, LogLimit at most,
+	// newest first; none without an event store.
+	Events []LoggedEvent
 }
 
 // CanDecide reports whether the person may activate or deactivate the
@@ -240,7 +255,69 @@ func (s *Service) Open(ctx context.Context, account, workspace, fullName string)
 	} else if err != nil {
 		return View{}, err
 	}
-	return View{Repository: r, Permission: p, Member: member}, nil
+	var events []LoggedEvent
+	if s.log != nil {
+		events, err = s.log.Log(ctx, r.Forge, r.ID, LogLimit)
+		if err != nil {
+			return View{}, fmt.Errorf("read the event log: %w", err)
+		}
+	}
+	return View{Repository: r, Permission: p, Member: member, Events: events}, nil
+}
+
+// Receive verifies, parses and records a delivery of the forge, header
+// giving the headers of its request and body its raw body. It keeps the
+// keys of every delivery the forge signed and, for an active repository,
+// a row of its event log, in one operation. It changes nothing else: what
+// a delivery causes runs after it, such as asking the forge what the App
+// reaches on OutcomeInstallation. Errors: ErrNoEvents, ErrSignature,
+// ErrMalformed, and those of the store, after which nothing is kept.
+func (s *Service) Receive(ctx context.Context, header func(string) string, body []byte) (Outcome, error) {
+	if s.events == nil || s.log == nil {
+		return "", ErrNoEvents
+	}
+	d, err := s.events.Parse(header, body)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(body)
+	k := Key{Forge: s.forge.Name(), Delivery: d.ID, Digest: hex.EncodeToString(sum[:]), ReceivedAt: s.now().UTC()}
+	row := logRow(d, k)
+	logged, err := s.log.Record(ctx, k, row)
+	switch {
+	case errors.Is(err, ErrDuplicate):
+		return OutcomeDuplicate, nil
+	case err != nil:
+		return "", fmt.Errorf("record the delivery: %w", err)
+	case d.Kind == KindInstallation:
+		return OutcomeInstallation, nil
+	case !logged:
+		return OutcomeDropped, nil
+	case row.Result == ResultIgnored:
+		return OutcomeIgnored, nil
+	}
+	return OutcomeRecorded, nil
+}
+
+// logRow is the row of the event log of d, nil for a delivery of no
+// repository or of the App itself.
+func logRow(d Delivery, k Key) *LoggedEvent {
+	if d.Repository == "" || d.Kind == KindInstallation {
+		return nil
+	}
+	row := &LoggedEvent{
+		Forge: k.Forge, Repository: d.Repository, Delivery: d.ID, Event: d.Event, Action: d.Action,
+		ReceivedAt: k.ReceivedAt, Result: ResultRecorded,
+	}
+	switch {
+	case d.Kind == KindPush && d.Push != nil:
+		row.Ref, row.Before, row.After = d.Push.Ref, d.Push.Before, d.Push.After
+	case d.Kind == KindPullRequest && d.PullRequest != nil:
+		row.Ref, row.Before, row.After = d.PullRequest.HeadRef, d.PullRequest.BaseCommit, d.PullRequest.HeadCommit
+	default:
+		row.Result = ResultIgnored
+	}
+	return row
 }
 
 // InWorkspace returns the repositories of the workspace with this name that

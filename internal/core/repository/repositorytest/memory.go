@@ -5,6 +5,7 @@ package repositorytest
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -19,16 +20,24 @@ type Memory struct {
 	mu         sync.Mutex
 	workspaces map[string]string // identifier -> name
 	repos      map[key]repository.Repository
+	deliveries map[key]time.Time // forge and delivery identifier -> received
+	digests    map[key]time.Time // forge and digest -> received
+	events     []repository.LoggedEvent
 }
 
 type key struct{ forge, id string }
 
-var _ repository.Store = (*Memory)(nil)
+var (
+	_ repository.Store      = (*Memory)(nil)
+	_ repository.EventStore = (*Memory)(nil)
+)
 
 func (m *Memory) init() {
 	if m.repos == nil {
 		m.workspaces = map[string]string{}
 		m.repos = map[key]repository.Repository{}
+		m.deliveries = map[key]time.Time{}
+		m.digests = map[key]time.Time{}
 	}
 }
 
@@ -170,4 +179,93 @@ func (m *Memory) SetReach(_ context.Context, forge string, reached []string) ([]
 	}
 	slices.Sort(lost)
 	return lost, nil
+}
+
+func (m *Memory) Record(_ context.Context, k repository.Key, row *repository.LoggedEvent) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	if err := checkKey(k, row); err != nil {
+		return false, err
+	}
+	if _, ok := m.deliveries[key{k.Forge, k.Delivery}]; ok {
+		return false, repository.ErrDuplicate
+	}
+	if _, ok := m.digests[key{k.Forge, k.Digest}]; ok {
+		return false, repository.ErrDuplicate
+	}
+	m.deliveries[key{k.Forge, k.Delivery}] = k.ReceivedAt.UTC()
+	m.digests[key{k.Forge, k.Digest}] = k.ReceivedAt.UTC()
+	if row == nil {
+		return false, nil
+	}
+	if r, ok := m.repos[key{row.Forge, row.Repository}]; !ok || !r.Active {
+		return false, nil
+	}
+	e := *row
+	e.ReceivedAt = e.ReceivedAt.UTC()
+	m.events = append(m.events, e)
+	return true, nil
+}
+
+// checkKey refuses what a store refuses: a key without its parts, a row of
+// another delivery or with an unknown result.
+func checkKey(k repository.Key, row *repository.LoggedEvent) error {
+	if k.Forge == "" || k.Delivery == "" || len(k.Digest) != 64 {
+		return fmt.Errorf("record: incomplete key %+v", k)
+	}
+	if row != nil && (row.Forge != k.Forge || row.Delivery != k.Delivery || row.Repository == "" ||
+		(row.Result != repository.ResultRecorded && row.Result != repository.ResultIgnored)) {
+		return fmt.Errorf("record: invalid row %+v", *row)
+	}
+	return nil
+}
+
+func (m *Memory) Log(_ context.Context, forge, repo string, limit int) ([]repository.LoggedEvent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	var out []repository.LoggedEvent
+	for _, e := range m.events {
+		if e.Forge == forge && e.Repository == repo {
+			out = append(out, e)
+		}
+	}
+	slices.SortStableFunc(out, func(a, b repository.LoggedEvent) int {
+		if c := b.ReceivedAt.Compare(a.ReceivedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(b.Delivery, a.Delivery)
+	})
+	if len(out) > limit {
+		out = out[:max(limit, 0)]
+	}
+	return out, nil
+}
+
+func (m *Memory) PurgeEvents(_ context.Context, before time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	n := 0
+	for _, keys := range []map[key]time.Time{m.deliveries, m.digests} {
+		for k, at := range keys {
+			if at.Before(before) {
+				delete(keys, k)
+				n++
+			}
+		}
+	}
+	// A delivery is one key whatever it holds: its two entries count once.
+	n /= 2
+	kept := m.events[:0]
+	for _, e := range m.events {
+		if e.ReceivedAt.Before(before) {
+			n++
+			continue
+		}
+		kept = append(kept, e)
+	}
+	m.events = kept
+	return n, nil
 }

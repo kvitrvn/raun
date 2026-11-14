@@ -481,3 +481,147 @@ func TestForgeErrorsLeaveTheStateAlone(t *testing.T) {
 		t.Errorf("state after the failures: %+v", got)
 	}
 }
+
+// stubEvents parses the deliveries scripted by body; a delivery is signed
+// when its signature header says "good".
+type stubEvents struct {
+	deliveries map[string]repository.Delivery
+	parsed     int
+}
+
+func (e *stubEvents) Parse(header func(string) string, body []byte) (repository.Delivery, error) {
+	if header("Signature") != "good" {
+		return repository.Delivery{}, repository.ErrSignature
+	}
+	e.parsed++
+	d, ok := e.deliveries[string(body)]
+	if !ok {
+		return repository.Delivery{}, repository.ErrMalformed
+	}
+	d.ID = header("Delivery")
+	return d, nil
+}
+
+func signed(delivery string) func(string) string {
+	return func(name string) string {
+		return map[string]string{"Signature": "good", "Delivery": delivery}[name]
+	}
+}
+
+func pushTo(repo, after string) repository.Delivery {
+	return repository.Delivery{Forge: "github", Event: "push", Kind: repository.KindPush, Repository: repo,
+		Push: &repository.Push{Ref: "refs/heads/main", Before: "b0", After: after, Head: after}}
+}
+
+func newReceiving(t *testing.T) (*world, *stubEvents) {
+	t.Helper()
+	w := newWorld(t)
+	events := &stubEvents{deliveries: map[string]repository.Delivery{
+		"push api":     pushTo("2001", "c1"),
+		"push api c0":  pushTo("2001", "c0"),
+		"push web":     pushTo("2002", "c1"),
+		"push nowhere": pushTo("9999", "c1"),
+		"pr closed": {Forge: "github", Event: "pull_request", Action: "closed", Kind: repository.KindPullRequest, Repository: "2001",
+			PullRequest: &repository.PullRequest{Number: 7, Action: "closed", HeadRef: "feature", HeadCommit: "h1", BaseRef: "main", BaseCommit: "b1", HeadRepository: "2001", BaseRepository: "2001"}},
+		"pr reopened": {Forge: "github", Event: "pull_request", Action: "reopened", Kind: repository.KindPullRequest, Repository: "2001",
+			PullRequest: &repository.PullRequest{Number: 7, Action: "reopened", HeadRef: "feature", HeadCommit: "h1", BaseRef: "main", BaseCommit: "b1", HeadRepository: "2001", BaseRepository: "2001"}},
+		"issues":       {Forge: "github", Event: "issues", Action: "opened", Kind: repository.KindIgnored, Repository: "2001"},
+		"ping":         {Forge: "github", Event: "ping", Kind: repository.KindIgnored},
+		"installation": {Forge: "github", Event: "installation", Action: "deleted", Kind: repository.KindInstallation},
+	}}
+	w.service = repository.New(repository.Options{
+		Forge: w.forge, Workspaces: w.workspaces, Store: w.store, Reach: w.forge,
+		Events: events, Log: w.store, Now: func() time.Time { return w.now },
+	})
+	if _, err := w.service.Activate(context.Background(), "alice", "acme", "2001"); err != nil {
+		t.Fatal(err)
+	}
+	return w, events
+}
+
+func TestReceive(t *testing.T) {
+	ctx := context.Background()
+	w, events := newReceiving(t)
+	for _, tc := range []struct {
+		delivery, body string
+		want           repository.Outcome
+	}{
+		{"d1", "push api", repository.OutcomeRecorded},
+		{"d1", "push api c0", repository.OutcomeDuplicate}, // sent again
+		{"d2", "push api", repository.OutcomeDuplicate},    // replayed under a new identifier
+		{"d3", "push api c0", repository.OutcomeRecorded},  // a push back to a commit
+		{"d4", "pr closed", repository.OutcomeRecorded},    // closed, then reopened at the same head:
+		{"d5", "pr reopened", repository.OutcomeRecorded},  // both kept
+		{"d6", "push web", repository.OutcomeDropped},      // never activated
+		{"d7", "push nowhere", repository.OutcomeDropped},  // unknown
+		{"d8", "issues", repository.OutcomeIgnored},        // logged as ignored
+		{"d9", "ping", repository.OutcomeDropped},          // of no repository
+		{"d10", "installation", repository.OutcomeInstallation},
+		{"d11", "installation", repository.OutcomeDuplicate}, // a replayed installation delivery
+	} {
+		w.now = w.now.Add(time.Second)
+		got, err := w.service.Receive(ctx, signed(tc.delivery), []byte(tc.body))
+		if err != nil || got != tc.want {
+			t.Errorf("Receive(%s, %q) = %v, %v; want %v", tc.delivery, tc.body, got, err, tc.want)
+		}
+	}
+	v, err := w.service.Open(ctx, "alice", "acme", "acme/api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var log []string
+	for _, e := range v.Events {
+		log = append(log, e.Delivery+":"+string(e.Result))
+	}
+	if strings.Join(log, " ") != "d8:ignored d5:recorded d4:recorded d3:recorded d1:recorded" {
+		t.Errorf("the event log = %v", log)
+	}
+	if e := v.Events[1]; e.Event != "pull_request" || e.Action != "reopened" || e.Ref != "feature" || e.Before != "b1" || e.After != "h1" {
+		t.Errorf("the row of a pull request = %+v", e)
+	}
+	if e := v.Events[4]; e.Ref != "refs/heads/main" || e.Before != "b0" || e.After != "c1" || !e.ReceivedAt.Equal(time.Date(2026, 11, 14, 10, 0, 1, 0, time.UTC)) {
+		t.Errorf("the row of a push = %+v", e)
+	}
+	if events.parsed != 12 {
+		t.Errorf("%d deliveries parsed", events.parsed)
+	}
+}
+
+func TestReceiveRefusals(t *testing.T) {
+	ctx := context.Background()
+	w, _ := newReceiving(t)
+	unsigned := func(string) string { return "" }
+	if _, err := w.service.Receive(ctx, unsigned, []byte("push api")); !errors.Is(err, repository.ErrSignature) {
+		t.Errorf("an unsigned delivery = %v", err)
+	}
+	if _, err := w.service.Receive(ctx, signed("d1"), []byte("garbage")); !errors.Is(err, repository.ErrMalformed) {
+		t.Errorf("a malformed delivery = %v", err)
+	}
+	// Neither kept a key: the same delivery, signed, is recorded.
+	if got, err := w.service.Receive(ctx, signed("d1"), []byte("push api")); err != nil || got != repository.OutcomeRecorded {
+		t.Errorf("after the refusals = %v, %v", got, err)
+	}
+	none := repository.New(repository.Options{Forge: w.forge, Workspaces: w.workspaces, Store: w.store})
+	if _, err := none.Receive(ctx, signed("d1"), []byte("push api")); !errors.Is(err, repository.ErrNoEvents) {
+		t.Errorf("Receive without the capability = %v", err)
+	}
+}
+
+// TestReceiveAfterADeactivation: the deliveries of a deactivated repository
+// keep their keys and log nothing; its log stays readable.
+func TestReceiveAfterADeactivation(t *testing.T) {
+	ctx := context.Background()
+	w, _ := newReceiving(t)
+	if _, err := w.service.Receive(ctx, signed("d1"), []byte("push api")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.service.Deactivate(ctx, "alice", "acme", "acme/api"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := w.service.Receive(ctx, signed("d2"), []byte("push api c0")); err != nil || got != repository.OutcomeDropped {
+		t.Errorf("a push to a deactivated repository = %v, %v", got, err)
+	}
+	if v, err := w.service.Open(ctx, "carol", "acme", "acme/api"); err != nil || len(v.Events) != 1 {
+		t.Errorf("the log of a deactivated repository = %+v, %v", v.Events, err)
+	}
+}
