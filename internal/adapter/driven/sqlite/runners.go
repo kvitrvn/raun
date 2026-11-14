@@ -185,19 +185,23 @@ func (s Runners) Authenticate(ctx context.Context, hash string, now time.Time) (
 		return out, err
 	}
 	// The last contact is written every ContactEvery at most, apart from
-	// the read: most requests write nothing.
+	// the read: most requests write nothing, and of concurrent requests
+	// one writes. It is advisory: a write that fails leaves the runner
+	// authenticated, and a later request writes it.
+	written := false
 	err = s.s.write(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `UPDATE runners SET last_contact_at = ?
-			WHERE id = ? AND revoked_at IS NULL AND (last_contact_at IS NULL OR last_contact_at < ?)`,
-			formatTime(now), out.ID, formatTime(now)); err != nil {
-			return fmt.Errorf("authenticate runner: %w", err)
+		res, err := tx.ExecContext(ctx, `UPDATE runners SET last_contact_at = ?
+			WHERE id = ? AND revoked_at IS NULL AND (last_contact_at IS NULL OR last_contact_at <= ?)`,
+			formatTime(now), out.ID, formatTime(now.Add(-job.ContactEvery)))
+		if err != nil {
+			return err
 		}
+		written = affected(res) == 1
 		return nil
 	})
-	if err != nil {
-		return job.Runner{}, err
+	if err == nil && written {
+		out.LastContact = now
 	}
-	out.LastContact = now
 	return out, nil
 }
 

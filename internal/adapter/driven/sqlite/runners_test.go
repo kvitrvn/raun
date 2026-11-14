@@ -112,3 +112,48 @@ func TestNoClaimAfterARevocation(t *testing.T) {
 		}
 	}
 }
+
+// TestTheLastContactIsAdvisory: a runner whose last contact cannot be
+// written is authenticated still.
+func TestTheLastContactIsAdvisory(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openMigrated(t)
+	r, token := newRunner(t, s, "builder")
+	// The writer is gone; the readers still answer.
+	if err := s.writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Runners().Authenticate(ctx, job.HashToken(token), when())
+	if err != nil || got.ID != r.ID || !got.LastContact.IsZero() {
+		t.Errorf("Authenticate without a writer = %+v, %v", got, err)
+	}
+}
+
+// TestConcurrentContactsWriteOnce: of authentications at once past
+// ContactEvery, one writes the last contact.
+func TestConcurrentContactsWriteOnce(t *testing.T) {
+	ctx := context.Background()
+	s, _ := openMigrated(t)
+	r, token := newRunner(t, s, "builder")
+	hash := job.HashToken(token)
+	var wg sync.WaitGroup
+	for i := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := s.Runners().Authenticate(ctx, hash, when().Add(time.Duration(i)*time.Millisecond)); err != nil {
+				t.Errorf("Authenticate: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	stored, err := s.Runners().Runner(ctx, r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Whichever wrote first, the others found it less than ContactEvery
+	// old and left it.
+	if stored.LastContact.IsZero() || stored.LastContact.After(when().Add(8*time.Millisecond)) {
+		t.Errorf("the last contact: %s", stored.LastContact)
+	}
+}

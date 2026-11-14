@@ -367,6 +367,11 @@ func (m *Memory) RotateRunner(_ context.Context, id, hash string) error {
 	case r.runner.Revoked():
 		return job.ErrRevoked
 	}
+	for _, o := range m.runners {
+		if o != r && o.hash == hash {
+			return fmt.Errorf("%w: a token of another runner", job.ErrInvalidRunner)
+		}
+	}
 	r.hash = hash
 	return nil
 }

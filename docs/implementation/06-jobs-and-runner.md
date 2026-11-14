@@ -133,7 +133,7 @@ Choices #38 made within the decisions above, for the owner to confirm in its rev
 - **The token** is 32 random bytes in hexadecimal, as a lease token is; a request finds its runner by the SHA-256 of the token, on a unique index. A token longer than 128 bytes is refused before it is hashed.
 - **One refusal.** A missing or malformed `Authorization`, an unknown, replaced or revoked token, all answer the same `401` with `WWW-Authenticate`; a store that fails answers `500`. A cookie is never read on the runner API, and the token of a runner opens no page.
 - **Until #39** every path below `/api/runner/` authenticates the runner and answers `404`.
-- **The last contact** is written once a minute at most, apart from the read that authenticates; the release stays empty until #39 reads it.
+- **The last contact** is written once a minute at most, by one of concurrent requests, apart from the read that authenticates; it is advisory, so a write that fails leaves the runner authenticated. The release stays empty until #39 reads it.
 - **A revoked runner stays**, with its name, which no other runner takes; it is never given a token again.
 - **No editing of a runner** yet: its scope and capabilities are set when it is created; changing them is left to #41 or a later need.
 - **Migration 9** adds the table `runners`, and an index on the open runs of a runner; `runs.runner` keeps no reference, as migration 8 left it.

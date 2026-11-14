@@ -177,7 +177,8 @@ type RunnerStore interface {
 	// runner revoked already is left as it is. ErrNoRunner.
 	RevokeRunner(ctx context.Context, id string, at time.Time) (int, error)
 	// Authenticate returns the runner whose token has hash, and writes now
-	// as its last contact when the one stored is ContactEvery old or more.
+	// as its last contact when the one stored is ContactEvery old or more;
+	// that write is advisory, and failing it fails nothing.
 	// ErrUnauthenticated for no runner, or a revoked one.
 	Authenticate(ctx context.Context, hash string, now time.Time) (Runner, error)
 	// ClaimFor claims for the runner with this identifier as Store.Claim
