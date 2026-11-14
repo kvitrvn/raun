@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,6 +27,15 @@ type Options struct {
 	// Log keeps the keys of the deliveries and the event log; required
 	// with Events.
 	Log EventStore
+	// Files reads the files of a repository; nil when the forge cannot.
+	// The service keeps its answers in a cache by repository and commit.
+	Files Files
+	// Configurations keeps the configuration of each repository; required
+	// with Files.
+	Configurations ConfigurationStore
+	// ReadTimeout bounds a read of a configuration; zero means
+	// ReadTimeout.
+	ReadTimeout time.Duration
 	// Missing are the capabilities of Preconditions() the forge lacks.
 	Missing []Capability
 	// Now gives the time of a change; nil means time.Now.
@@ -41,8 +52,15 @@ type Service struct {
 	reach      Reach
 	events     Events
 	log        EventStore
-	missing    []Capability
-	now        func() time.Time
+	files      Files
+	configs    ConfigurationStore
+	// refreshing serializes the reads of the configuration of each
+	// repository, whoever asks: a later read resolves a later head, and
+	// stores last.
+	refreshing  keyedLocks
+	readTimeout time.Duration
+	missing     []Capability
+	now         func() time.Time
 }
 
 // New returns the service of opts.
@@ -50,15 +68,22 @@ func New(opts Options) *Service {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
+	var files Files
+	if opts.Files != nil {
+		files = newFileCache(opts.Files, opts.Forge.Name(), opts.Now)
+	}
 	return &Service{
-		forge:      opts.Forge,
-		workspaces: opts.Workspaces,
-		store:      opts.Store,
-		reach:      opts.Reach,
-		events:     opts.Events,
-		log:        opts.Log,
-		missing:    slices.Clone(opts.Missing),
-		now:        opts.Now,
+		files:       files,
+		readTimeout: cmp.Or(opts.ReadTimeout, ReadTimeout),
+		configs:     opts.Configurations,
+		forge:       opts.Forge,
+		workspaces:  opts.Workspaces,
+		store:       opts.Store,
+		reach:       opts.Reach,
+		events:      opts.Events,
+		log:         opts.Log,
+		missing:     slices.Clone(opts.Missing),
+		now:         opts.Now,
 	}
 }
 
@@ -225,6 +250,9 @@ type View struct {
 	// Events are the newest rows of its event log, LogLimit at most,
 	// newest first; none without an event store.
 	Events []LoggedEvent
+	// Configuration is the last read of its configuration; nil when none
+	// was read yet.
+	Configuration *Configuration
 }
 
 // CanDecide reports whether the person may activate or deactivate the
@@ -262,7 +290,126 @@ func (s *Service) Open(ctx context.Context, account, workspace, fullName string)
 			return View{}, fmt.Errorf("read the event log: %w", err)
 		}
 	}
-	return View{Repository: r, Permission: p, Member: member, Events: events}, nil
+	var config *Configuration
+	if s.configs != nil {
+		c, ok, err := s.configs.Configuration(ctx, r.Forge, r.ID)
+		if err != nil {
+			return View{}, fmt.Errorf("read the configuration: %w", err)
+		}
+		if ok {
+			config = &c
+		}
+	}
+	return View{Repository: r, Permission: p, Member: member, Events: events, Configuration: config}, nil
+}
+
+var (
+	// ErrNoFiles: the forge cannot read the files of a repository.
+	ErrNoFiles = errors.New("the forge cannot read files")
+	// ErrBusy: another read of the configuration of the repository held it
+	// past the deadline of the wait; nothing was read.
+	ErrBusy = errors.New("another read of the configuration is in progress")
+)
+
+// ReadTimeout bounds a read of the configuration of a repository.
+const ReadTimeout = 10 * time.Second
+
+// RefreshConfiguration reads the configuration of the active repository of
+// the forge with this stable identifier at the head of its default branch,
+// as the forge resolves it now, and stores what came of it: configured,
+// not configured, or unreadable when the forge could not give it or it is
+// larger than MaxConfigurationSize, without its content then. A
+// repository that is not active is left as it is. It returns only what
+// keeps it from storing the result: ErrNoFiles, ErrNotFound, ErrBusy, the
+// end of ctx and the errors of the stores.
+func (s *Service) RefreshConfiguration(ctx context.Context, id string) error {
+	if s.files == nil || s.configs == nil {
+		return ErrNoFiles
+	}
+	rows, err := s.store.Known(ctx, s.forge.Name(), []string{id})
+	if err != nil {
+		return fmt.Errorf("read the repository: %w", err)
+	}
+	if len(rows) == 0 {
+		return ErrNotFound
+	}
+	if !rows[0].Active {
+		return nil
+	}
+	// The wait for another read of the repository and the read have a
+	// deadline each, never the write of the result.
+	waitCtx, cancelWait := context.WithTimeout(ctx, s.readTimeout)
+	unlock, err := s.refreshing.lock(waitCtx, id)
+	cancelWait()
+	if err != nil {
+		// Another read held the repository all along: nothing is read,
+		// and the caller may ask again.
+		return fmt.Errorf("%w: %w", ErrBusy, err)
+	}
+	defer unlock()
+	// Read again under the lock: the repository may have changed while
+	// another read held it.
+	rows, err = s.store.Known(ctx, s.forge.Name(), []string{id})
+	if err != nil {
+		return fmt.Errorf("read the repository: %w", err)
+	}
+	if len(rows) == 0 || !rows[0].Active {
+		return nil
+	}
+	r := rows[0]
+	readCtx, cancel := context.WithTimeout(ctx, s.readTimeout)
+	c := s.readConfiguration(readCtx, r)
+	cancel()
+	if err := ctx.Err(); err != nil && c.State == ConfigurationUnreadable {
+		// A read the caller cut short says nothing of the file.
+		return err
+	}
+	if err := s.configs.PutConfiguration(ctx, r.Forge, r.ID, c); err != nil {
+		return fmt.Errorf("store the configuration: %w", err)
+	}
+	return nil
+}
+
+// readConfiguration reads the configuration of r.
+func (s *Service) readConfiguration(ctx context.Context, r Repository) Configuration {
+	c := Configuration{ReadAt: s.now().UTC()}
+	commit, err := s.files.Head(ctx, r.ID, r.DefaultBranch)
+	switch {
+	case errors.Is(err, ErrNoFile):
+		c.State = ConfigurationMissing
+		return c
+	case err != nil:
+		c.State, c.Reason = ConfigurationUnreadable, ReasonUnavailable
+		return c
+	}
+	c.Commit = commit
+	content, err := s.files.Read(ctx, r.ID, commit, ConfigurationPath, MaxConfigurationSize)
+	switch {
+	case err == nil:
+		c.State, c.Content = ConfigurationConfigured, content
+	case errors.Is(err, ErrNoFile):
+		c.State = ConfigurationMissing
+	case errors.Is(err, ErrFileTooLarge):
+		c.State, c.Reason = ConfigurationUnreadable, ReasonTooLarge
+	default:
+		c.State, c.Reason = ConfigurationUnreadable, ReasonUnavailable
+	}
+	return c
+}
+
+// Active returns the stable identifiers of the active repositories of the
+// forge, sorted: those whose configuration a start reads again.
+func (s *Service) Active(ctx context.Context) ([]string, error) {
+	return s.store.Active(ctx, s.forge.Name())
+}
+
+// Receipt is what came of a delivery, and what it asks the caller to do
+// after the answer.
+type Receipt struct {
+	Outcome Outcome
+	// Refresh is the stable identifier of a repository whose configuration
+	// is to be read again: a push to its default branch, recorded.
+	Refresh string
 }
 
 // Receive verifies, parses and records a delivery of the forge, header
@@ -272,31 +419,53 @@ func (s *Service) Open(ctx context.Context, account, workspace, fullName string)
 // a delivery causes runs after it, such as asking the forge what the App
 // reaches on OutcomeInstallation. Errors: ErrNoEvents, ErrSignature,
 // ErrMalformed, and those of the store, after which nothing is kept.
-func (s *Service) Receive(ctx context.Context, header func(string) string, body []byte) (Outcome, error) {
+func (s *Service) Receive(ctx context.Context, header func(string) string, body []byte) (Receipt, error) {
 	if s.events == nil || s.log == nil {
-		return "", ErrNoEvents
+		return Receipt{}, ErrNoEvents
 	}
 	d, err := s.events.Parse(header, body)
 	if err != nil {
-		return "", err
+		return Receipt{}, err
 	}
 	sum := sha256.Sum256(body)
 	k := Key{Forge: s.forge.Name(), Delivery: d.ID, Digest: hex.EncodeToString(sum[:]), ReceivedAt: s.now().UTC()}
 	row := logRow(d, k)
+	// Decided before anything is kept: a failure keeps nothing, and the
+	// delivery sent again asks again.
+	refresh, err := s.pushesDefault(ctx, d)
+	if err != nil {
+		return Receipt{}, err
+	}
 	logged, err := s.log.Record(ctx, k, row)
 	switch {
 	case errors.Is(err, ErrDuplicate):
-		return OutcomeDuplicate, nil
+		return Receipt{Outcome: OutcomeDuplicate}, nil
 	case err != nil:
-		return "", fmt.Errorf("record the delivery: %w", err)
+		return Receipt{}, fmt.Errorf("record the delivery: %w", err)
 	case d.Kind == KindInstallation:
-		return OutcomeInstallation, nil
+		return Receipt{Outcome: OutcomeInstallation}, nil
 	case !logged:
-		return OutcomeDropped, nil
+		return Receipt{Outcome: OutcomeDropped}, nil
 	case row.Result == ResultIgnored:
-		return OutcomeIgnored, nil
+		return Receipt{Outcome: OutcomeIgnored}, nil
 	}
-	return OutcomeRecorded, nil
+	return Receipt{Outcome: OutcomeRecorded, Refresh: refresh}, nil
+}
+
+// pushesDefault returns the repository of d when d pushes a commit to its
+// default branch, as Raun knows it: its configuration is to be read again.
+func (s *Service) pushesDefault(ctx context.Context, d Delivery) (string, error) {
+	if s.files == nil || d.Kind != KindPush || d.Push == nil || d.Push.Deleted || d.Push.Tag {
+		return "", nil
+	}
+	rows, err := s.store.Known(ctx, s.forge.Name(), []string{d.Repository})
+	if err != nil {
+		return "", fmt.Errorf("read the repository: %w", err)
+	}
+	if len(rows) == 0 || !rows[0].Active || d.Push.Ref != "refs/heads/"+rows[0].DefaultBranch {
+		return "", nil
+	}
+	return d.Repository, nil
 }
 
 // logRow is the row of the event log of d, nil for a delivery of no
@@ -413,4 +582,51 @@ func (s *Service) decide(ctx context.Context, account, id string) error {
 		return ErrNotDecider
 	}
 	return nil
+}
+
+// keyedLocks holds one lock per key, while it is held or waited on. Its
+// zero value is ready.
+type keyedLocks struct {
+	mu    sync.Mutex
+	locks map[string]*keyedLock
+}
+
+// keyedLock is held while its channel holds a value.
+type keyedLock struct {
+	held  chan struct{}
+	users int
+}
+
+// lock takes the lock of key, waiting until ctx ends at most, and returns
+// what releases it.
+func (k *keyedLocks) lock(ctx context.Context, key string) (func(), error) {
+	k.mu.Lock()
+	if k.locks == nil {
+		k.locks = map[string]*keyedLock{}
+	}
+	l, ok := k.locks[key]
+	if !ok {
+		l = &keyedLock{held: make(chan struct{}, 1)}
+		k.locks[key] = l
+	}
+	l.users++
+	k.mu.Unlock()
+	leave := func() {
+		k.mu.Lock()
+		l.users--
+		if l.users == 0 {
+			delete(k.locks, key)
+		}
+		k.mu.Unlock()
+	}
+	select {
+	case l.held <- struct{}{}:
+		return func() {
+			<-l.held
+			leave()
+		}, nil
+	case <-ctx.Done():
+		leave()
+		return nil, ctx.Err()
+	}
 }

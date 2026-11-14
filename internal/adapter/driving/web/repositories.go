@@ -21,6 +21,7 @@ type RepositoryService interface {
 	Deactivate(ctx context.Context, account, workspace, fullName string) (repository.Repository, error)
 	Open(ctx context.Context, account, workspace, fullName string) (repository.View, error)
 	InWorkspace(ctx context.Context, account, workspace string) ([]repository.Repository, error)
+	RefreshConfiguration(ctx context.Context, id string) error
 }
 
 // maxQuery bounds the search of the Repositories screen.
@@ -138,6 +139,11 @@ func (s *Server) repositoryActivate(w http.ResponseWriter, r *http.Request) {
 	}
 	switch {
 	case err == nil:
+		// Activated whatever the file holds: a failure to read it shows
+		// on the page as unreadable, or as not read yet.
+		if err := s.repositories.RefreshConfiguration(r.Context(), repo.ID); err != nil {
+			s.warn(r, "configuration not read at activation", err.Error())
+		}
 		redirect(w, repositoryPath(repo.Workspace.Name, repo.FullName))
 	case s.forgeFailed(w, r, err):
 	case errors.As(err, &missing):
@@ -197,7 +203,12 @@ func (s *Server) repositoryPage(w http.ResponseWriter, r *http.Request) {
 				Event:      e.Event, Action: e.Action, Ref: e.Ref, Before: e.Before, After: e.After, Result: string(e.Result),
 			})
 		}
+		var config ui.ConfigurationView
+		if c := v.Configuration; c != nil {
+			config = ui.ConfigurationView{State: string(c.State), Commit: c.Commit, Reason: c.Reason, ReadAt: c.ReadAt.UTC().Format("2006-01-02 15:04:05 UTC")}
+		}
 		s.render(w, r, http.StatusOK, ui.RepositoryPage(s.page(r, rp.FullName, ""), ui.RepositoryProps{
+			Configuration: config,
 			Events:        events,
 			Workspace:     rp.Workspace.Name,
 			ID:            rp.ID,

@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/kvitrvn/raun/internal/adapter/driving/web"
@@ -84,12 +87,12 @@ func (w repositoryWorkspaces) WorkspaceOf(ctx context.Context, name, account str
 
 // missingCapabilities are the capabilities of repository.Preconditions forge
 // lacks. A forge that receives events has webhooks too: on GitHub, the
-// webhook of the App covers every repository it reaches. No forge reads
-// files before #33, which declares the operations and detects them here;
-// until then no repository can be activated, and the Repositories screen
-// says why.
+// webhook of the App covers every repository it reaches.
 func missingCapabilities(forge identity.Forge) []repository.Capability {
-	missing := []repository.Capability{repository.CapabilityFiles}
+	var missing []repository.Capability
+	if _, ok := forge.(repository.Files); !ok {
+		missing = append(missing, repository.CapabilityFiles)
+	}
 	if _, ok := forge.(repository.Events); !ok {
 		missing = append(missing, repository.CapabilityWebhooks, repository.CapabilityEvents)
 	}
@@ -98,22 +101,125 @@ func missingCapabilities(forge identity.Forge) []repository.Capability {
 
 // newRepositories returns the repository service of forge, nil without a
 // forge.
-func newRepositories(forge identity.Forge, permissions *identity.PermissionService, workspaces identity.WorkspaceStore, store repository.Store, log repository.EventStore, missing func(identity.Forge) []repository.Capability) *repository.Service {
+func newRepositories(forge identity.Forge, permissions *identity.PermissionService, workspaces identity.WorkspaceStore, store repositoryStores, missing func(identity.Forge) []repository.Capability) *repository.Service {
 	if forge == nil {
 		return nil
 	}
 	reach, _ := forge.(repository.Reach)
 	events, _ := forge.(repository.Events)
+	var files repository.Files
+	if f, ok := forge.(repository.Files); ok {
+		files = repositoryFiles{f}
+	}
 	return repository.New(repository.Options{
-		Forge:      repositoryForge{name: forge.Name(), permissions: permissions},
-		Workspaces: repositoryWorkspaces{store: workspaces},
-		Store:      store,
-		Reach:      reach,
-		Events:     events,
-		Log:        log,
-		Missing:    missing(forge),
-		Now:        time.Now,
+		Forge:          repositoryForge{name: forge.Name(), permissions: permissions},
+		Workspaces:     repositoryWorkspaces{store: workspaces},
+		Store:          store,
+		Reach:          reach,
+		Events:         events,
+		Log:            store,
+		Files:          files,
+		Configurations: store,
+		Missing:        missing(forge),
+		Now:            time.Now,
 	})
+}
+
+// repositoryFiles are the files of the forge as the repository context
+// reads them: a forge that cannot answer is repository.ErrUnavailable, as
+// the port says.
+type repositoryFiles struct {
+	files repository.Files
+}
+
+// filesError is err of a forge in the terms of the repository context.
+func filesError(err error) error {
+	if errors.Is(err, identity.ErrUnavailable) && !errors.Is(err, repository.ErrUnavailable) {
+		return fmt.Errorf("%w: %w", repository.ErrUnavailable, err)
+	}
+	return err
+}
+
+func (f repositoryFiles) Head(ctx context.Context, repo, branch string) (string, error) {
+	commit, err := f.files.Head(ctx, repo, branch)
+	return commit, filesError(err)
+}
+
+func (f repositoryFiles) Read(ctx context.Context, repo, commit, path string, limit int64) ([]byte, error) {
+	content, err := f.files.Read(ctx, repo, commit, path, limit)
+	return content, filesError(err)
+}
+
+// repositoryStores are the stores of the repository context, on one
+// database.
+type repositoryStores interface {
+	repository.Store
+	repository.EventStore
+	repository.ConfigurationStore
+}
+
+// configRefresh reads again the configuration of the repositories it is
+// asked for, one at a time, after the answer to a push to their default
+// branch, and of every active repository at start, which recovers what a
+// stop cut short. A repository asked for twice before its read is read
+// once: each read resolves the head of the default branch then.
+type configRefresh struct {
+	mu      sync.Mutex
+	pending map[string]bool
+	wake    chan struct{}
+}
+
+func newConfigRefresh() *configRefresh {
+	return &configRefresh{pending: map[string]bool{}, wake: make(chan struct{}, 1)}
+}
+
+// request asks for a read of the configuration of the repository with this
+// stable identifier, without waiting.
+func (c *configRefresh) request(id string) {
+	c.mu.Lock()
+	c.pending[id] = true
+	c.mu.Unlock()
+	select {
+	case c.wake <- struct{}{}:
+	default:
+	}
+}
+
+// take returns the repositories asked for, sorted, and forgets them.
+func (c *configRefresh) take() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ids := slices.Sorted(maps.Keys(c.pending))
+	clear(c.pending)
+	return ids
+}
+
+// run reads on each request until done or the end of ctx, through refresh,
+// and tells refreshed, when set, of each read.
+func (c *configRefresh) run(ctx context.Context, logger *slog.Logger, refresh func(context.Context, string) error, refreshed func(string, error), done <-chan struct{}) {
+	for {
+		select {
+		case <-done:
+			return
+		case <-ctx.Done():
+			return
+		case <-c.wake:
+		}
+		for _, id := range c.take() {
+			err := refresh(ctx, id)
+			switch {
+			case errors.Is(err, repository.ErrBusy) && ctx.Err() == nil:
+				// The read it waited for may have resolved an older
+				// head: ask again.
+				c.request(id)
+			case err != nil && !errors.Is(err, repository.ErrNotFound) && ctx.Err() == nil:
+				logger.Warn("read the configuration of a repository", slog.String("repository", id), slog.String("error", err.Error()))
+			}
+			if refreshed != nil {
+				refreshed(id, err)
+			}
+		}
+	}
 }
 
 // reachTimeout bounds one sync of the reach of the App.
@@ -192,26 +298,33 @@ func (r *reachSync) run(ctx context.Context, logger *slog.Logger, sync func(cont
 type hookReceiver struct {
 	repositories *repository.Service
 	sync         *reachSync
+	configs      *configRefresh
 }
 
 func (h hookReceiver) Receive(ctx context.Context, header func(string) string, body []byte) (repository.Outcome, error) {
-	outcome, err := h.repositories.Receive(ctx, header, body)
-	if err == nil && outcome == repository.OutcomeInstallation {
+	got, err := h.repositories.Receive(ctx, header, body)
+	if err != nil {
+		return "", err
+	}
+	if got.Outcome == repository.OutcomeInstallation {
 		h.sync.request()
 	}
-	return outcome, err
+	if got.Refresh != "" {
+		h.configs.request(got.Refresh)
+	}
+	return got.Outcome, nil
 }
 
 // hooks is the receiver of the web handler: nil without a forge that
 // receives events.
-func hooks(forge identity.Forge, r *repository.Service, sync *reachSync) web.HookReceiver {
+func hooks(forge identity.Forge, r *repository.Service, sync *reachSync, configs *configRefresh) web.HookReceiver {
 	if r == nil {
 		return nil
 	}
 	if _, ok := forge.(repository.Events); !ok {
 		return nil
 	}
-	return hookReceiver{repositories: r, sync: sync}
+	return hookReceiver{repositories: r, sync: sync, configs: configs}
 }
 
 // repositoryService is r as the web handler takes it: nil without a forge.

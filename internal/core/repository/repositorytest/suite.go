@@ -17,8 +17,10 @@ import (
 type Fixture struct {
 	Store repository.Store
 	// Events is the event store of the same data as Store.
-	Events       repository.EventStore
-	AddWorkspace func(t *testing.T, w repository.Workspace, owner string)
+	Events repository.EventStore
+	// Configurations is the configuration store of the same data.
+	Configurations repository.ConfigurationStore
+	AddWorkspace   func(t *testing.T, w repository.Workspace, owner string)
 }
 
 // Identifiers of the suite: 32 hexadecimal digits, as accounts and
@@ -489,6 +491,97 @@ func EventSuite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		}
 		if won != 1 || len(logOf(t, s, "2001")) != 1 {
 			t.Errorf("%d deliveries recorded, %d rows; want one", won, len(logOf(t, s, "2001")))
+		}
+	})
+}
+
+// ConfigurationSuite runs the contract of repository.ConfigurationStore, and
+// of Store.Active, on the stores newFixture gives.
+func ConfigurationSuite(t *testing.T, newFixture func(t *testing.T) Fixture) {
+	ctx := context.Background()
+	setup := func(t *testing.T) Fixture {
+		t.Helper()
+		f := newFixture(t)
+		f.AddWorkspace(t, acme, alice)
+		mustActivate(t, f.Store, repo("2001", "acme/api", acme, alice))
+		mustActivate(t, f.Store, repo("2002", "acme/web", acme, alice))
+		mustActivate(t, f.Store, repo("2003", "acme/lib", acme, alice))
+		if err := f.Store.Deactivate(ctx, acme.ID, "github", "2002", alice, t0); err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	configured := repository.Configuration{State: repository.ConfigurationConfigured, Commit: strings.Repeat("a", 40), Content: []byte("version: 1\n"), ReadAt: t0}
+
+	t.Run("active", func(t *testing.T) {
+		f := setup(t)
+		if got, err := f.Store.Active(ctx, "github"); err != nil || strings.Join(got, " ") != "2001 2003" {
+			t.Errorf("Active = %v, %v", got, err)
+		}
+		if got, err := f.Store.Active(ctx, "gitea"); err != nil || len(got) != 0 {
+			t.Errorf("Active of another forge = %v, %v", got, err)
+		}
+	})
+
+	t.Run("put and read", func(t *testing.T) {
+		f := setup(t)
+		s := f.Configurations
+		if _, ok, err := s.Configuration(ctx, "github", "2001"); err != nil || ok {
+			t.Fatalf("before a read: %v, %v", ok, err)
+		}
+		if err := s.PutConfiguration(ctx, "github", "2001", configured); err != nil {
+			t.Fatal(err)
+		}
+		got, ok, err := s.Configuration(ctx, "github", "2001")
+		if err != nil || !ok || got.State != configured.State || got.Commit != configured.Commit || string(got.Content) != "version: 1\n" || !got.ReadAt.Equal(t0) {
+			t.Fatalf("Configuration = %+v, %v, %v", got, ok, err)
+		}
+		// One repository never gets the configuration of another.
+		if _, ok, err := s.Configuration(ctx, "github", "2003"); err != nil || ok {
+			t.Errorf("another repository: %v, %v", ok, err)
+		}
+		if _, ok, err := s.Configuration(ctx, "gitea", "2001"); err != nil || ok {
+			t.Errorf("another forge: %v, %v", ok, err)
+		}
+		// A new read replaces the last one, content included.
+		missing := repository.Configuration{State: repository.ConfigurationMissing, Commit: strings.Repeat("b", 40), ReadAt: t0.Add(time.Hour)}
+		if err := s.PutConfiguration(ctx, "github", "2001", missing); err != nil {
+			t.Fatal(err)
+		}
+		if got, _, _ := s.Configuration(ctx, "github", "2001"); got.State != repository.ConfigurationMissing || len(got.Content) != 0 || got.Commit != missing.Commit {
+			t.Errorf("after a new read: %+v", got)
+		}
+		// A deactivated repository keeps its configuration.
+		unreadable := repository.Configuration{State: repository.ConfigurationUnreadable, Reason: repository.ReasonTooLarge, ReadAt: t0}
+		if err := s.PutConfiguration(ctx, "github", "2002", unreadable); err != nil {
+			t.Fatal(err)
+		}
+		if got, ok, _ := s.Configuration(ctx, "github", "2002"); !ok || got.Reason != repository.ReasonTooLarge || got.Commit != "" {
+			t.Errorf("an unreadable configuration: %+v", got)
+		}
+	})
+
+	t.Run("refusals", func(t *testing.T) {
+		f := setup(t)
+		s := f.Configurations
+		if err := s.PutConfiguration(ctx, "github", "9999", configured); !errors.Is(err, repository.ErrNotFound) {
+			t.Errorf("an unknown repository: %v", err)
+		}
+		for name, c := range map[string]repository.Configuration{
+			"an unknown state":         {State: "invalid", ReadAt: t0},
+			"too large":                {State: repository.ConfigurationConfigured, Content: make([]byte, repository.MaxConfigurationSize+1), ReadAt: t0},
+			"content of a missing one": {State: repository.ConfigurationMissing, Content: []byte("x"), ReadAt: t0},
+		} {
+			if err := s.PutConfiguration(ctx, "github", "2001", c); err == nil {
+				t.Errorf("%s: stored", name)
+			}
+		}
+		if _, ok, _ := s.Configuration(ctx, "github", "2001"); ok {
+			t.Error("a refused configuration was kept")
+		}
+		exact := repository.Configuration{State: repository.ConfigurationConfigured, Content: make([]byte, repository.MaxConfigurationSize), ReadAt: t0}
+		if err := s.PutConfiguration(ctx, "github", "2001", exact); err != nil {
+			t.Errorf("a configuration of exactly the bound: %v", err)
 		}
 	})
 }
