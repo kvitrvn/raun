@@ -30,8 +30,10 @@ type Files interface {
 	// this stable identifier; ErrNoFile when there is no such branch.
 	Head(ctx context.Context, repository, branch string) (string, error)
 	// Read returns the file at path, from the root, at commit, limit bytes
-	// at most. ErrNoFile when there is no file there: a directory, a
-	// link or a submodule is not one; ErrFileTooLarge past limit.
+	// at most. ErrNoFile when there is no file there: a directory or a
+	// submodule is not one, nor a link the forge does not resolve; a link
+	// the forge resolves to a file of the same repository at the same
+	// commit reads as that file, as untrusted. ErrFileTooLarge past limit.
 	Read(ctx context.Context, repository, commit, path string, limit int64) ([]byte, error)
 }
 

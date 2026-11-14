@@ -107,7 +107,10 @@ func newRepositories(forge identity.Forge, permissions *identity.PermissionServi
 	}
 	reach, _ := forge.(repository.Reach)
 	events, _ := forge.(repository.Events)
-	files, _ := forge.(repository.Files)
+	var files repository.Files
+	if f, ok := forge.(repository.Files); ok {
+		files = repositoryFiles{f}
+	}
 	return repository.New(repository.Options{
 		Forge:          repositoryForge{name: forge.Name(), permissions: permissions},
 		Workspaces:     repositoryWorkspaces{store: workspaces},
@@ -120,6 +123,31 @@ func newRepositories(forge identity.Forge, permissions *identity.PermissionServi
 		Missing:        missing(forge),
 		Now:            time.Now,
 	})
+}
+
+// repositoryFiles are the files of the forge as the repository context
+// reads them: a forge that cannot answer is repository.ErrUnavailable, as
+// the port says.
+type repositoryFiles struct {
+	files repository.Files
+}
+
+// filesError is err of a forge in the terms of the repository context.
+func filesError(err error) error {
+	if errors.Is(err, identity.ErrUnavailable) && !errors.Is(err, repository.ErrUnavailable) {
+		return fmt.Errorf("%w: %w", repository.ErrUnavailable, err)
+	}
+	return err
+}
+
+func (f repositoryFiles) Head(ctx context.Context, repo, branch string) (string, error) {
+	commit, err := f.files.Head(ctx, repo, branch)
+	return commit, filesError(err)
+}
+
+func (f repositoryFiles) Read(ctx context.Context, repo, commit, path string, limit int64) ([]byte, error) {
+	content, err := f.files.Read(ctx, repo, commit, path, limit)
+	return content, filesError(err)
 }
 
 // repositoryStores are the stores of the repository context, on one

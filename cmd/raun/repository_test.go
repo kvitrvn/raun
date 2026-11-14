@@ -284,3 +284,23 @@ func TestAFailedSyncIsTriedAgain(t *testing.T) {
 	case <-time.After(20 * time.Millisecond):
 	}
 }
+
+func TestFilesErrorsOfTheRepositoryContext(t *testing.T) {
+	if err := filesError(identity.ErrUnavailable); !errors.Is(err, repository.ErrUnavailable) || !errors.Is(err, identity.ErrUnavailable) {
+		t.Errorf("filesError(unavailable) = %v", err)
+	}
+	for _, err := range []error{nil, repository.ErrNoFile, repository.ErrFileTooLarge, repository.ErrUnavailable} {
+		if got := filesError(err); got != err {
+			t.Errorf("filesError(%v) = %v", err, got)
+		}
+	}
+	f, _ := forgetest.Scenario("github", false)
+	f.SetDown(true)
+	files := repositoryFiles{f}
+	if _, err := files.Head(context.Background(), "2001", "main"); !errors.Is(err, repository.ErrUnavailable) {
+		t.Errorf("Head of a forge down = %v", err)
+	}
+	if _, err := files.Read(context.Background(), "2001", "c", ".raun.yaml", 10); !errors.Is(err, repository.ErrUnavailable) {
+		t.Errorf("Read of a forge down = %v", err)
+	}
+}

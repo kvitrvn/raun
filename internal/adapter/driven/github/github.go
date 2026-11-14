@@ -68,6 +68,8 @@ type App struct {
 	now           func() time.Time
 	wait          func(ctx context.Context, d time.Duration) error
 	tokens        *tokenCache
+	// installs keeps the installation of each repository a read found.
+	installs *installCache
 }
 
 var (
@@ -176,6 +178,7 @@ func New(opts Options) (*App, error) {
 		now:           now,
 		wait:          wait,
 		tokens:        newTokenCache(),
+		installs:      &installCache{byRepo: map[int64]int64{}},
 	}, nil
 }
 

@@ -43,6 +43,12 @@ func TestReadAnswers(t *testing.T) {
 		{"a submodule", func(w http.ResponseWriter) {
 			writeJSON(w, http.StatusOK, map[string]any{"type": "submodule", "size": 0})
 		}, repository.ErrNoFile},
+		{"no type", func(w http.ResponseWriter) {
+			writeJSON(w, http.StatusOK, map[string]any{"size": 1, "encoding": "base64", "content": "eA=="})
+		}, identity.ErrUnavailable},
+		{"an unknown type", func(w http.ResponseWriter) {
+			writeJSON(w, http.StatusOK, map[string]any{"type": "blob", "size": 1, "encoding": "base64", "content": "eA=="})
+		}, identity.ErrUnavailable},
 		{"a file too large for the API to inline", func(w http.ResponseWriter) {
 			writeJSON(w, http.StatusOK, map[string]any{"type": "file", "size": 5 << 20, "encoding": "none", "content": ""})
 		}, repository.ErrFileTooLarge},
@@ -142,5 +148,53 @@ func TestHeadOfARepositoryWithoutCommit(t *testing.T) {
 	}
 	if _, err := a.Head(ctx, "2001", ""); !errors.Is(err, repository.ErrNoFile) {
 		t.Errorf("Head of no branch = %v, want ErrNoFile", err)
+	}
+}
+
+// TestTheInstallationOfARepositoryIsKept: reads of one repository look its
+// installation up once, until GitHub no longer serves it.
+func TestTheInstallationOfARepositoryIsKept(t *testing.T) {
+	ctx := context.Background()
+	key := testKey(t)
+	g := newGitHub(t, key)
+	a := g.app(t, key, nil)
+	for range 3 {
+		if _, err := a.Head(ctx, "2001", "main"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := a.Read(ctx, "2001", forgetest.FilesHead, ".raun.yaml", 1<<16); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lookups := func() int {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		return g.calls["GET /api/v3/repositories/2001/installation"]
+	}
+	if n := lookups(); n != 1 {
+		t.Errorf("%d lookups of the installation, want 1", n)
+	}
+	// Removed: the next mint fails and forgets it, the one after looks it
+	// up again.
+	g.change(func() {
+		delete(g.installations, 501)
+		g.installations[502] = false
+		for i := range g.repos {
+			if g.repos[i].installation == 501 {
+				g.repos[i].installation = 502
+			}
+		}
+	})
+	a.tokens.mu.Lock()
+	clear(a.tokens.tokens)
+	a.tokens.mu.Unlock()
+	if _, err := a.Head(ctx, "2001", "main"); !errors.Is(err, identity.ErrUnavailable) {
+		t.Fatalf("a read through a removed installation = %v", err)
+	}
+	if _, err := a.Head(ctx, "2001", "main"); err != nil {
+		t.Fatalf("a read once the installation moved: %v", err)
+	}
+	if n := lookups(); n != 2 {
+		t.Errorf("%d lookups of the installation, want 2", n)
 	}
 }

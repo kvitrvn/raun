@@ -780,3 +780,93 @@ func TestAPushRefreshes(t *testing.T) {
 		}
 	}
 }
+
+// gatedFiles is stubFiles whose first Read waits for open, and whose reads
+// can answer only once their deadline passed.
+type gatedFiles struct {
+	mu       sync.Mutex
+	heads    map[string]string
+	files    map[string]string
+	open     chan struct{}
+	gated    bool
+	reading  chan struct{}
+	lateness bool
+}
+
+func (f *gatedFiles) Head(_ context.Context, repo, _ string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.heads[repo], nil
+}
+
+func (f *gatedFiles) Read(ctx context.Context, _, commit, _ string, _ int64) ([]byte, error) {
+	f.mu.Lock()
+	gated, late := f.gated, f.lateness
+	f.gated = false
+	content := f.files[commit]
+	f.mu.Unlock()
+	if gated {
+		close(f.reading)
+		<-f.open
+	}
+	if late {
+		// The answer came just as the deadline passed.
+		<-ctx.Done()
+	}
+	return []byte(content), nil
+}
+
+// TestOverlappingRefreshesStoreTheLatestHead: a read that started first and
+// ends last never stores its older head over a later one.
+func TestOverlappingRefreshesStoreTheLatestHead(t *testing.T) {
+	ctx := context.Background()
+	w, events := newReceiving(t)
+	files := &gatedFiles{heads: map[string]string{"2001": "c1"}, files: map[string]string{"c1": "one", "c2": "two"},
+		open: make(chan struct{}), gated: true, reading: make(chan struct{})}
+	w.service = repository.New(repository.Options{
+		Forge: w.forge, Workspaces: w.workspaces, Store: w.store, Events: events, Log: w.store,
+		Files: files, Configurations: w.store, Now: func() time.Time { return w.now },
+	})
+	first := make(chan error, 1)
+	go func() { first <- w.service.RefreshConfiguration(ctx, "2001") }()
+	<-files.reading // the first read resolved c1, and waits
+	files.mu.Lock()
+	files.heads["2001"] = "c2"
+	files.mu.Unlock()
+	second := make(chan error, 1)
+	go func() { second <- w.service.RefreshConfiguration(ctx, "2001") }()
+	select {
+	case err := <-second:
+		t.Fatalf("the second read ran beside the first: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(files.open)
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-second; err != nil {
+		t.Fatal(err)
+	}
+	v, err := w.service.Open(ctx, "alice", "acme", "acme/api")
+	if err != nil || v.Configuration == nil || v.Configuration.Commit != "c2" || string(v.Configuration.Content) != "two" {
+		t.Errorf("configuration = %+v, %v; want the later head", v.Configuration, err)
+	}
+}
+
+// TestTheDeadlineBoundsTheReadOnly: a read that answers at its deadline is
+// stored, with the context of the caller.
+func TestTheDeadlineBoundsTheReadOnly(t *testing.T) {
+	ctx := context.Background()
+	w, events := newReceiving(t)
+	files := &gatedFiles{heads: map[string]string{"2001": "c1"}, files: map[string]string{"c1": "one"}, lateness: true}
+	w.service = repository.New(repository.Options{
+		Forge: w.forge, Workspaces: w.workspaces, Store: w.store, Events: events, Log: w.store,
+		Files: files, Configurations: w.store, ReadTimeout: 10 * time.Millisecond, Now: func() time.Time { return w.now },
+	})
+	if err := w.service.RefreshConfiguration(ctx, "2001"); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := w.service.Open(ctx, "alice", "acme", "acme/api"); v.Configuration == nil || v.Configuration.State != repository.ConfigurationConfigured {
+		t.Errorf("configuration = %+v", v.Configuration)
+	}
+}

@@ -25,9 +25,12 @@ func repositoryID(id string) (int64, error) {
 }
 
 // readScope finds the installation of the App that reaches the repository
-// id, with the JWT of the App, and returns the narrowest scope that reads
-// it: that repository alone, contents read.
+// id, with the JWT of the App unless an earlier read found it, and returns
+// the narrowest scope that reads it: that repository alone, contents read.
 func (a *App) readScope(ctx context.Context, id int64) (scope, error) {
+	if installation, ok := a.installs.get(id); ok {
+		return readScopeOf(installation, id), nil
+	}
 	jwt, err := a.jwt()
 	if err != nil {
 		return scope{}, fmt.Errorf("github: installation of a repository: %w: %w", identity.ErrUnavailable, err)
@@ -56,7 +59,13 @@ func (a *App) readScope(ctx context.Context, id int64) (scope, error) {
 	if out.ID <= 0 {
 		return scope{}, fail(req, identity.ErrUnavailable, "malformed response")
 	}
-	return scope{installation: out.ID, repositories: []int64{id}, permissions: map[string]string{"contents": "read"}}, nil
+	a.installs.put(id, out.ID)
+	return readScopeOf(out.ID, id), nil
+}
+
+// readScopeOf is the scope that reads the repository id in installation.
+func readScopeOf(installation, id int64) scope {
+	return scope{installation: installation, repositories: []int64{id}, permissions: map[string]string{"contents": "read"}}
 }
 
 // asReader sends the GET of path with a token of the narrowest scope that
@@ -110,7 +119,9 @@ func (a *App) Head(ctx context.Context, repo, branch string) (string, error) {
 
 // Read implements repository.Files: the file at path at commit, through the
 // contents API, limit bytes at most. Its size is checked before its content
-// is decoded; a directory, a link or a submodule is not a file.
+// is decoded. A directory, a submodule or a link GitHub does not resolve is
+// not a file; GitHub resolves a link to a file of the same repository and
+// gives that file.
 func (a *App) Read(ctx context.Context, repo, commit, path string, limit int64) ([]byte, error) {
 	id, err := repositoryID(repo)
 	if err != nil {
@@ -151,8 +162,13 @@ func (a *App) Read(ctx context.Context, repo, commit, path string, limit int64) 
 	if err := decode(req, r, &out); err != nil {
 		return nil, err
 	}
-	if out.Type != "file" {
+	switch out.Type {
+	case "file":
+	case "dir", "symlink", "submodule":
 		return nil, fmt.Errorf("github: %s %s: a %s: %w", req.method, req.path, out.Type, repository.ErrNoFile)
+	default:
+		// An answer of another shape says nothing of the file.
+		return nil, fail(req, identity.ErrUnavailable, "malformed response")
 	}
 	if out.Size == nil || *out.Size < 0 {
 		return nil, fail(req, identity.ErrUnavailable, "malformed response")

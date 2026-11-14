@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -31,6 +33,9 @@ type Options struct {
 	// Configurations keeps the configuration of each repository; required
 	// with Files.
 	Configurations ConfigurationStore
+	// ReadTimeout bounds a read of a configuration; zero means
+	// ReadTimeout.
+	ReadTimeout time.Duration
 	// Missing are the capabilities of Preconditions() the forge lacks.
 	Missing []Capability
 	// Now gives the time of a change; nil means time.Now.
@@ -49,8 +54,13 @@ type Service struct {
 	log        EventStore
 	files      Files
 	configs    ConfigurationStore
-	missing    []Capability
-	now        func() time.Time
+	// refreshing serializes the reads of the configuration of each
+	// repository, whoever asks: a later read resolves a later head, and
+	// stores last.
+	refreshing  keyedLocks
+	readTimeout time.Duration
+	missing     []Capability
+	now         func() time.Time
 }
 
 // New returns the service of opts.
@@ -63,16 +73,17 @@ func New(opts Options) *Service {
 		files = newFileCache(opts.Files, opts.Forge.Name(), opts.Now)
 	}
 	return &Service{
-		files:      files,
-		configs:    opts.Configurations,
-		forge:      opts.Forge,
-		workspaces: opts.Workspaces,
-		store:      opts.Store,
-		reach:      opts.Reach,
-		events:     opts.Events,
-		log:        opts.Log,
-		missing:    slices.Clone(opts.Missing),
-		now:        opts.Now,
+		files:       files,
+		readTimeout: cmp.Or(opts.ReadTimeout, ReadTimeout),
+		configs:     opts.Configurations,
+		forge:       opts.Forge,
+		workspaces:  opts.Workspaces,
+		store:       opts.Store,
+		reach:       opts.Reach,
+		events:      opts.Events,
+		log:         opts.Log,
+		missing:     slices.Clone(opts.Missing),
+		now:         opts.Now,
 	}
 }
 
@@ -317,17 +328,29 @@ func (s *Service) RefreshConfiguration(ctx context.Context, id string) error {
 	if len(rows) == 0 {
 		return ErrNotFound
 	}
-	r := rows[0]
-	if !r.Active {
+	if !rows[0].Active {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, ReadTimeout)
-	defer cancel()
-	c := s.readConfiguration(ctx, r)
+	unlock := s.refreshing.lock(id)
+	defer unlock()
+	// Read again under the lock: the repository may have changed while
+	// another read held it.
+	rows, err = s.store.Known(ctx, s.forge.Name(), []string{id})
+	if err != nil {
+		return fmt.Errorf("read the repository: %w", err)
+	}
+	if len(rows) == 0 || !rows[0].Active {
+		return nil
+	}
+	r := rows[0]
+	readCtx, cancel := context.WithTimeout(ctx, s.readTimeout)
+	c := s.readConfiguration(readCtx, r)
+	cancel()
 	if err := ctx.Err(); err != nil && c.State == ConfigurationUnreadable {
-		// A read cut short says nothing of the file.
+		// A read the caller cut short says nothing of the file.
 		return err
 	}
+	// The deadline bounds the read, never the write of its result.
 	if err := s.configs.PutConfiguration(ctx, r.Forge, r.ID, c); err != nil {
 		return fmt.Errorf("store the configuration: %w", err)
 	}
@@ -544,4 +567,41 @@ func (s *Service) decide(ctx context.Context, account, id string) error {
 		return ErrNotDecider
 	}
 	return nil
+}
+
+// keyedLocks holds one lock per key, while it is held or waited on. Its
+// zero value is ready.
+type keyedLocks struct {
+	mu    sync.Mutex
+	locks map[string]*keyedLock
+}
+
+type keyedLock struct {
+	sync.Mutex
+	users int
+}
+
+// lock takes the lock of key, and returns what releases it.
+func (k *keyedLocks) lock(key string) func() {
+	k.mu.Lock()
+	if k.locks == nil {
+		k.locks = map[string]*keyedLock{}
+	}
+	l, ok := k.locks[key]
+	if !ok {
+		l = &keyedLock{}
+		k.locks[key] = l
+	}
+	l.users++
+	k.mu.Unlock()
+	l.Lock()
+	return func() {
+		l.Unlock()
+		k.mu.Lock()
+		l.users--
+		if l.users == 0 {
+			delete(k.locks, key)
+		}
+		k.mu.Unlock()
+	}
 }
