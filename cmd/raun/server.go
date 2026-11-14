@@ -17,6 +17,7 @@ import (
 	"github.com/kvitrvn/raun/internal/adapter/driven/sqlite"
 	"github.com/kvitrvn/raun/internal/adapter/driving/web"
 	"github.com/kvitrvn/raun/internal/core/identity"
+	"github.com/kvitrvn/raun/internal/core/repository"
 	"github.com/kvitrvn/raun/internal/core/session"
 )
 
@@ -37,6 +38,9 @@ type serverDeps struct {
 	// forge, when set, is the forge instead of the GitHub App of the
 	// configuration: the fake forge of the tests.
 	forge identity.Forge
+	// missing, when set, tells the capabilities of activation the forge
+	// lacks instead of missingCapabilities.
+	missing func(identity.Forge) []repository.Capability
 }
 
 // purgeInterval is how often what has expired is deleted, after the purge
@@ -176,6 +180,11 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		// tokens of the login: they share its lock.
 		permissions = identity.NewPermissionService(forge, login.Tokens(), accounts, time.Now)
 	}
+	missing := deps.missing
+	if missing == nil {
+		missing = missingCapabilities
+	}
+	repositories := newRepositories(forge, permissions, accounts, store.Repositories(), missing)
 
 	handler, err := web.New(web.Options{
 		Logger:         logger,
@@ -187,6 +196,8 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		Accounts:       accounts,
 		Workspaces:     workspaceService(workspaces),
 		Permissions:    permissionCache(permissions),
+		Repositories:   repositoryService(repositories),
+		ForgeURL:       cfg.github.webURL,
 		Administrators: administrators,
 		Settings:       cfg.shownSettings(),
 	})
