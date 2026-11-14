@@ -117,7 +117,8 @@ Choices #34 made within the decisions above, for the owner to confirm in its rev
 - **One operation per comment**: it finds the comment of Raun, then updates it or creates one, so the check of the author and the marker stay in each forge, never in a caller. It takes plain text and escapes it; epic 7 decides whether a report needs trusted formatting, and changes the contract then.
 - **Raun's identity on GitHub** is the bot of the App, `<slug>[bot]` of type `Bot`, the slug read from `GET /app`; a comment that names another App is not Raun's.
 - **Several comments of Raun**: the oldest is updated, the others left alone.
-- **Concurrency**: the comments of one pull request are written one at a time in a server; across servers, two could create two comments, and the oldest stays the one updated.
+- **Concurrency**: the comments of one pull request are written one at a time in an adapter, the one of the server; across servers, two could create two comments, and the oldest stays the one updated.
+- **Escaping** is written in the adapter and in the fake, which cannot share code with it; the contract suite checks that both write the same bytes for a hostile text.
 - **Bounds**: a description of 140 characters, one line, refused beyond; a comment of 65,000 bytes, cut beyond, saying so. Writes are never sent again after a failure.
 - **Permissions**: Commit statuses write for a status, Pull requests write for a comment, each in a token of the repository alone; the App already asks for both.
 

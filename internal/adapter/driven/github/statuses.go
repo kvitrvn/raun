@@ -24,8 +24,8 @@ var statusStates = []string{"pending", "success", "failure", "error"}
 
 // writeID parses the stable identifier of a repository to write to.
 func writeID(repo string) (int64, error) {
-	n, err := strconv.ParseInt(repo, 10, 64)
-	if err != nil || n <= 0 || strconv.FormatInt(n, 10) != repo {
+	n, ok := parseRepositoryID(repo)
+	if !ok {
 		return 0, fmt.Errorf("github: %q is not the identifier of a GitHub repository", repo)
 	}
 	return n, nil

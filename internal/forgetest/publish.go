@@ -48,6 +48,11 @@ const (
 	// MaxDescription bounds the description of a status, in characters,
 	// as GitHub does.
 	MaxDescription = 140
+	// MaxComment bounds the body of a comment, in bytes, under the 65536
+	// characters GitHub takes; a text past it is cut and ends with
+	// Truncated.
+	MaxComment = 65000
+	Truncated  = "\n\n(truncated)"
 )
 
 // StatusStates are the states of a status.
@@ -125,9 +130,9 @@ func (f *Fake) PublishComment(_ context.Context, repo string, number int64, text
 		return "", err
 	}
 	k := repo + "#" + strconv.FormatInt(number, 10)
-	body := Marker + "\n" + EscapeText(text)
+	body := CommentBody(text)
 	for i, c := range f.comments[k] {
-		if c.Raun && strings.HasPrefix(c.Body, Marker+"\n") {
+		if c.Raun && Marked(c.Body) {
 			f.comments[k][i].Body = body
 			return c.ID, nil
 		}
@@ -169,29 +174,66 @@ func (f *Fake) Statuses(repo, commit string) []PublishedStatus {
 	return out
 }
 
-// EscapeText is plain text as Markdown that shows it as written: HTML is
-// written as entities, so no tag nor comment, a marker included, survives;
-// a mention or a reference to an issue is broken; the punctuation of
-// Markdown is escaped. Lines stay lines.
-func EscapeText(text string) string {
+// Marked reports whether body is a comment of Raun's form: Marker alone on
+// its first line.
+func Marked(body string) bool {
+	return body == Marker || strings.HasPrefix(body, Marker+"\n") || strings.HasPrefix(body, Marker+"\r\n")
+}
+
+// CommentBody is the body of the comment of Raun for text: Marker, then the
+// text escaped, MaxComment bytes in all at most.
+func CommentBody(text string) string {
+	return Marker + "\n" + EscapeText(text, MaxComment-len(Marker)-1)
+}
+
+// EscapeText is plain text as Markdown that shows it as written, budget
+// bytes at most: HTML is written as entities, so no tag nor comment, a
+// marker included, survives; a mention or a reference to an issue is
+// broken; the punctuation of Markdown, and math, is escaped; the spaces and
+// tabs that start a line are written as non-breaking spaces, so no line
+// becomes code, where nothing is escaped. Lines stay lines. A text that does
+// not fit is cut between two characters and ends with Truncated. A forge
+// adapter writes the same bytes; the contract suite checks it.
+func EscapeText(text string, budget int) string {
 	var b strings.Builder
+	start := true
 	for _, r := range strings.ToValidUTF8(text, "\uFFFD") {
-		switch r {
-		case '&':
-			b.WriteString("&amp;")
-		case '<':
-			b.WriteString("&lt;")
-		case '>':
-			b.WriteString("&gt;")
-		case '@':
-			b.WriteString("&#64;")
-		case '\\', '`', '*', '_', '[', ']', '(', ')', '!', '#', '|', '~', '{', '}', '+', '-', '.', '=', ':':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		case '\r':
+		var piece string
+		switch {
+		case start && r == ' ':
+			piece = "\u00a0"
+		case start && r == '\t':
+			piece = "\u00a0\u00a0\u00a0\u00a0"
 		default:
-			b.WriteRune(r)
+			piece = escapeRune(r)
 		}
+		if r != '\r' {
+			start = r == '\n' || (start && (r == ' ' || r == '\t'))
+		}
+		if b.Len()+len(piece) > budget-len(Truncated) {
+			b.WriteString(Truncated)
+			return b.String()
+		}
+		b.WriteString(piece)
 	}
 	return b.String()
+}
+
+// escapeRune is r as Markdown that shows it as written.
+func escapeRune(r rune) string {
+	switch r {
+	case '&':
+		return "&amp;"
+	case '<':
+		return "&lt;"
+	case '>':
+		return "&gt;"
+	case '@':
+		return "&#64;"
+	case '\\', '`', '*', '_', '[', ']', '(', ')', '!', '#', '|', '~', '{', '}', '+', '-', '.', '=', ':', '$':
+		return `\` + string(r)
+	case '\r':
+		return ""
+	}
+	return string(r)
 }

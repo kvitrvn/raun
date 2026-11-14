@@ -636,6 +636,24 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 			strings.Contains(rest, "](") || strings.Contains(rest, "`code`") {
 			t.Errorf("the comment of hostile text = %q", body)
 		}
+		// Every forge writes the same bytes for the same text: an indented
+		// line never becomes code, where nothing would be escaped.
+		indented := "    <b>x</b> *v*\n\t$x$ @alice see #1\n" + Marker + "\n  [a](https://e.example) `c`"
+		want := Marker + "\n" + "\u00a0\u00a0\u00a0\u00a0&lt;b&gt;x&lt;/b&gt; \\*v\\*\n\u00a0\u00a0\u00a0\u00a0\\$x\\$ &#64;alice see \\#1\n" +
+			"&lt;\\!\\-\\- raun \\-\\-&gt;\n\u00a0\u00a0\\[a\\]\\(https\\://e\\.example\\) \\`c\\`"
+		if _, err := c.PublishComment(ctx, "2001", 45, indented); err != nil {
+			t.Fatal(err)
+		}
+		if got := ours(t, 45)[0].Body; got != want {
+			t.Errorf("the comment of an indented text = %q, want %q", got, want)
+		}
+		// A text too long is cut, and says so.
+		if _, err := c.PublishComment(ctx, "2001", 46, strings.Repeat("<", MaxComment)); err != nil {
+			t.Fatal(err)
+		}
+		if got := ours(t, 46)[0].Body; len(got) > MaxComment || !strings.HasSuffix(got, Truncated) || !strings.HasPrefix(got, Marker+"\n&lt;&lt;") {
+			t.Errorf("the comment of a long text: %d bytes, ends %q", len(got), got[max(0, len(got)-20):])
+		}
 		if _, err := c.PublishComment(ctx, "2004", 42, "x"); err == nil {
 			t.Error("a comment published on a repository the App does not reach")
 		}

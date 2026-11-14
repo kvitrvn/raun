@@ -191,6 +191,38 @@ func TestAFailedListingWritesNothing(t *testing.T) {
 	}
 }
 
+// TestAnIncompleteEntryWritesNothing: an entry of the listing without its
+// author or its body could be the comment of Raun: nothing is written.
+func TestAnIncompleteEntryWritesNothing(t *testing.T) {
+	ctx := context.Background()
+	key := testKey(t)
+	for name, entry := range map[string]map[string]any{
+		"no author": {"id": 123, "body": commentMarker + "\nold"},
+		"no body":   {"id": 123, "user": map[string]any{"login": appSlug + "[bot]", "type": "Bot"}},
+		"no type":   {"id": 123, "body": "x", "user": map[string]any{"login": "alice"}},
+	} {
+		g := newGitHub(t, key)
+		a := g.app(t, key, nil)
+		g.change(func() {
+			g.intercept = func(w http.ResponseWriter, r *http.Request) bool {
+				if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues/42/comments") {
+					writeJSON(w, http.StatusOK, []any{entry})
+					return true
+				}
+				return false
+			}
+		})
+		if _, err := a.PublishComment(ctx, "2001", 42, "x"); !errors.Is(err, identity.ErrUnavailable) {
+			t.Errorf("%s: %v", name, err)
+		}
+		g.mu.Lock()
+		if len(g.comments) != 0 {
+			t.Errorf("%s: a comment was written", name)
+		}
+		g.mu.Unlock()
+	}
+}
+
 func TestConcurrentCommentsMakeOne(t *testing.T) {
 	ctx := context.Background()
 	key := testKey(t)
@@ -227,6 +259,9 @@ func TestEscapeText(t *testing.T) {
 		"@alice":                "&#64;alice",
 		"#1 *x* _y_ `z` [a](b)": `\#1 \*x\* \_y\_ \` + "`" + `z\` + "`" + ` \[a\]\(b\)`,
 		"https://x.example":     `https\://x\.example`,
+		"$x$":                   `\$x\$`,
+		"    code\n\tmore":      "\u00a0\u00a0\u00a0\u00a0code\n\u00a0\u00a0\u00a0\u00a0more",
+		"a  b":                  "a  b",
 	} {
 		if got := escapeText(in, maxComment); got != want {
 			t.Errorf("escapeText(%q) = %q, want %q", in, got, want)

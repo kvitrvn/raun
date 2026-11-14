@@ -17,11 +17,18 @@ var _ repository.Files = (*App)(nil)
 
 // repositoryID is the stable identifier id as GitHub numbers it.
 func repositoryID(id string) (int64, error) {
-	n, err := strconv.ParseInt(id, 10, 64)
-	if err != nil || n <= 0 || strconv.FormatInt(n, 10) != id {
+	n, ok := parseRepositoryID(id)
+	if !ok {
 		return 0, fmt.Errorf("github: %q is not the identifier of a GitHub repository: %w", id, repository.ErrNoFile)
 	}
 	return n, nil
+}
+
+// parseRepositoryID parses the stable identifier GitHub gives a repository:
+// a positive number, written as GitHub writes it.
+func parseRepositoryID(id string) (int64, bool) {
+	n, err := strconv.ParseInt(id, 10, 64)
+	return n, err == nil && n > 0 && strconv.FormatInt(n, 10) == id
 }
 
 // readScope returns the narrowest scope that reads the repository id: that

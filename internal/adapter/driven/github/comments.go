@@ -26,27 +26,27 @@ const truncated = "\n\n(truncated)"
 // escapeText is plain text as Markdown that shows it as written, budget
 // bytes at most: HTML is written as entities, so no tag nor comment, the
 // marker included, survives; a mention or a reference to an issue is
-// broken; the punctuation of Markdown is escaped. Lines stay lines. A text
-// that does not fit is cut between two characters and says so.
+// broken; the punctuation of Markdown, and math, is escaped; the spaces and
+// tabs that start a line are written as non-breaking spaces, so no line
+// becomes code, where nothing is escaped. Lines stay lines. A text that
+// does not fit is cut between two characters and says so. The fake forge
+// of internal/forgetest writes the same bytes, which the contract suite
+// checks.
 func escapeText(text string, budget int) string {
 	var b strings.Builder
-	for _, r := range strings.ToValidUTF8(text, "�") {
+	start := true
+	for _, r := range strings.ToValidUTF8(text, "\uFFFD") {
 		var piece string
-		switch r {
-		case '&':
-			piece = "&amp;"
-		case '<':
-			piece = "&lt;"
-		case '>':
-			piece = "&gt;"
-		case '@':
-			piece = "&#64;"
-		case '\\', '`', '*', '_', '[', ']', '(', ')', '!', '#', '|', '~', '{', '}', '+', '-', '.', '=', ':':
-			piece = `\` + string(r)
-		case '\r':
-			continue
+		switch {
+		case start && r == ' ':
+			piece = "\u00a0"
+		case start && r == '\t':
+			piece = "\u00a0\u00a0\u00a0\u00a0"
 		default:
-			piece = string(r)
+			piece = escapeRune(r)
+		}
+		if r != '\r' {
+			start = r == '\n' || (start && (r == ' ' || r == '\t'))
 		}
 		if b.Len()+len(piece) > budget-len(truncated) {
 			b.WriteString(truncated)
@@ -55,6 +55,25 @@ func escapeText(text string, budget int) string {
 		b.WriteString(piece)
 	}
 	return b.String()
+}
+
+// escapeRune is r as Markdown that shows it as written.
+func escapeRune(r rune) string {
+	switch r {
+	case '&':
+		return "&amp;"
+	case '<':
+		return "&lt;"
+	case '>':
+		return "&gt;"
+	case '@':
+		return "&#64;"
+	case '\\', '`', '*', '_', '[', ']', '(', ')', '!', '#', '|', '~', '{', '}', '+', '-', '.', '=', ':', '$':
+		return `\` + string(r)
+	case '\r':
+		return ""
+	}
+	return string(r)
 }
 
 // commentBody is the body of the comment of Raun for text.
@@ -68,12 +87,14 @@ func marked(body string) bool {
 }
 
 // botLogin returns the login of the bot of the App, <slug>[bot], from GET
-// /app under its JWT, once.
+// /app under its JWT, kept once found. The lock is never held across the
+// request: two first callers may both ask, and agree.
 func (a *App) botLogin(ctx context.Context) (string, error) {
 	a.bot.mu.Lock()
-	defer a.bot.mu.Unlock()
-	if a.bot.login != "" {
-		return a.bot.login, nil
+	login := a.bot.login
+	a.bot.mu.Unlock()
+	if login != "" {
+		return login, nil
 	}
 	jwt, err := a.jwt()
 	if err != nil {
@@ -101,8 +122,11 @@ func (a *App) botLogin(ctx context.Context) (string, error) {
 	if out.ID != a.appID || !token(out.Slug, 64, func(r rune) bool { return isAlnum(r) || r == '-' }) {
 		return "", fail(req, identity.ErrUnavailable, "malformed response")
 	}
-	a.bot.login = out.Slug + "[bot]"
-	return a.bot.login, nil
+	login = out.Slug + "[bot]"
+	a.bot.mu.Lock()
+	a.bot.login = login
+	a.bot.mu.Unlock()
+	return login, nil
 }
 
 // botIdentity is the identity of the App as GitHub shows it on what it
@@ -114,8 +138,8 @@ type botIdentity struct {
 
 // issueComment is a comment of a pull request as GitHub lists it.
 type issueComment struct {
-	ID   int64  `json:"id"`
-	Body string `json:"body"`
+	ID   int64   `json:"id"`
+	Body *string `json:"body"`
 	User *struct {
 		Login string `json:"login"`
 		Type  string `json:"type"`
@@ -132,15 +156,15 @@ type issueComment struct {
 // a person writing through the authorization of Raun, who is not the bot.
 func (a *App) ours(c issueComment, login string) bool {
 	return c.User != nil && c.User.Type == "Bot" && c.User.Login == login &&
-		(c.App == nil || c.App.ID == a.appID) && marked(c.Body)
+		(c.App == nil || c.App.ID == a.appID) && c.Body != nil && marked(*c.Body)
 }
 
 // PublishComment writes text, escaped, in the comment of Raun on the pull
 // request number of the repository with this stable identifier: the oldest
 // comment of Raun there when there are several, or a new one. It lists the
-// comments first, all of them, and a listing that fails writes nothing; the
-// writes are sent once. Calls for one pull request run one at a time in
-// this App.
+// comments first, all of them, and a listing that fails or is malformed
+// writes nothing; the writes are sent once. Calls for one pull request run
+// one at a time in this App, the adapter of one server.
 func (a *App) PublishComment(ctx context.Context, repo string, number int64, text string) (string, error) {
 	id, err := writeID(repo)
 	if err != nil {
@@ -182,7 +206,9 @@ func (a *App) PublishComment(ctx context.Context, repo string, number int64, tex
 			return 0, fail(req, identity.ErrUnavailable, "malformed response")
 		}
 		for _, c := range *out {
-			if c.ID <= 0 {
+			// An entry without its author or its body could be Raun's:
+			// deciding without it could write a second comment.
+			if c.ID <= 0 || c.Body == nil || c.User == nil || c.User.Login == "" || c.User.Type == "" {
 				return 0, fail(req, identity.ErrUnavailable, "malformed response")
 			}
 			if !probe && a.ours(c, login) && (found == 0 || c.ID < found) {

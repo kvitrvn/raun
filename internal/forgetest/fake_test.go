@@ -209,8 +209,24 @@ func TestEscapeText(t *testing.T) {
 		"1. item":               `1\. item`,
 		"a\r\nb":                "a\nb",
 	} {
-		if got := EscapeText(in); got != want {
+		if got := EscapeText(in, MaxComment); got != want {
 			t.Errorf("EscapeText(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestMarked(t *testing.T) {
+	for body, want := range map[string]bool{
+		Marker:               true,
+		Marker + "\nx":       true,
+		Marker + "\r\nx":     true,
+		Marker + "x":         false,
+		" " + Marker + "\nx": false,
+		"x\n" + Marker:       false,
+		"<!-- RAUN -->\nx":   false,
+	} {
+		if got := Marked(body); got != want {
+			t.Errorf("Marked(%q) = %v", body, got)
 		}
 	}
 }
