@@ -990,10 +990,10 @@ func TestAFailedReceiveKeepsNothing(t *testing.T) {
 	}
 }
 
-// TestTheJobsOfADelivery: the policy point is asked for the jobs of a
-// delivery recorded for an active repository, and its requests are kept
-// with the delivery; an ignored, dropped or duplicate delivery asks for
-// none.
+// TestTheJobsOfADelivery: the policy point is asked, before the delivery is
+// recorded, for every delivery of a repository that is not ignored, a
+// dropped one and a duplicate included; the store keeps the requests only
+// of a delivery it logs as recorded.
 func TestTheJobsOfADelivery(t *testing.T) {
 	ctx := context.Background()
 	w, events := newReceiving(t)
@@ -1032,9 +1032,13 @@ func TestTheJobsOfADelivery(t *testing.T) {
 	if strings.Join(asked, " ") != "d1 d2 d3 d5" {
 		t.Errorf("the policy was asked for %v", asked)
 	}
-	// Sent again: a duplicate, nothing more is asked or kept.
+	// Sent again: a duplicate. The policy is asked again, before the
+	// store finds the duplicate, and nothing more is kept.
 	if got, err := w.service.Receive(ctx, signed("d1"), []byte("push api")); err != nil || got.Outcome != repository.OutcomeDuplicate {
 		t.Errorf("a duplicate = %v, %v", got, err)
+	}
+	if strings.Join(asked, " ") != "d1 d2 d3 d5 d1" {
+		t.Errorf("the policy was asked for %v", asked)
 	}
 	if got := w.store.Requests("github", "d1"); len(got) != 1 {
 		t.Errorf("a duplicate changed the requests: %+v", got)
