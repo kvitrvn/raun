@@ -1,6 +1,6 @@
 # Forges
 
-> Status: decided by the [epic 4 review](implementation/04-forge-port-and-identity.md) (#23). The port of epic 4 exists in `internal/core/identity`: the types, `Forge` (login, repositories, permission) and the optional `Memberships` (#24); the fake forge and the contract suite are in `internal/forgetest`. The GitHub adapter is in `internal/adapter/driven/github` (#25), built at start when an App is configured; the login that uses it comes with #26, and the capabilities of epics 5 to 7 with the contexts that consume them.
+> Status: decided by the [epic 4 review](implementation/04-forge-port-and-identity.md) (#23). The port of epic 4 exists in `internal/core/identity`: the types, `Forge` (login, repositories, permission) and the optional `Memberships` (#24); the fake forge and the contract suite are in `internal/forgetest`. The GitHub adapter is in `internal/adapter/driven/github` (#25), built at start when an App is configured; the login that uses it comes with #26. The capabilities of epic 5 (files, webhooks, events, commit status, comment) are decided by the [epic 5 review](implementation/05-repositories-and-events.md) (#30), not implemented yet; the clone credential comes with epic 6.
 
 Raun reaches a forge through one port: a small set of operations every adapter implements, and optional capabilities an adapter implements when its forge offers them. A caller detects a capability by type assertion and handles its absence; a missing capability is never an error.
 
@@ -13,11 +13,11 @@ Raun reaches a forge through one port: a small set of operations every adapter i
 | Permission | Yes | The permission of a person on a repository | Epic 4 (#28) | — |
 | Membership | No | Whether a person belongs to an organization | Epic 4 (#26), for `RAUN_SIGNUP_ORGS` | An entry of `RAUN_SIGNUP_ORGS` naming an organization of that forge stops the server at start |
 | Files | No | Read files of a repository at a commit | Epic 5 (#33) | The repository cannot be activated |
-| Clone credential | No | A short-lived credential to clone one repository | Epic 6 | The repository cannot be activated |
-| Webhooks | No | Activate and deactivate the events of a repository | Epic 5 (#31) | The repository cannot be activated |
+| Clone credential | No | A short-lived credential to clone one repository | Epic 6 | The repository cannot be activated, from epic 6 on |
+| Webhooks | No | Activate and deactivate the events of a repository: on GitHub, the webhook of the App, one per instance | Epic 5 (#31, #32) | The repository cannot be activated |
 | Events | No | Verify and parse a webhook into a normalized event | Epic 5 (#32) | The repository cannot be activated |
-| Commit status | No | Publish the status of the check on a commit | Epic 7 | Nothing is published; the repository page says so |
-| Comment | No | Publish or update the comment of a pull request | Epic 7 | Nothing is published; the repository page says so |
+| Commit status | No | Publish the status of the check on a commit | Built by epic 5 (#34), used by epic 7 | Nothing is published; the repository page says so |
+| Comment | No | Publish or update the comment of a pull request | Built by epic 5 (#34), used by epic 7 | Nothing is published; the repository page says so |
 
 Each core context declares the operations it consumes, since a core context imports only its own package; an adapter implements all of them. No type of a forge library appears in a port.
 
@@ -46,6 +46,32 @@ Every call that uses an access token gives `ErrUnauthorized` when the forge refu
 - `Scenario` builds the fixture of the contract suite; `Suite` is the contract every adapter passes: an authorization URL that carries the state and the S256 challenge, login, codes and verifiers, an expired code, repositories, permissions, an expired access token refused by every call then refreshed, a refresh that rotates the refresh token, an expired refresh token refused for good, a revocation refused for good by every call, a transient failure of every call that takes nothing away, the refresh token included, a renamed login that keeps its identifier, no token, code or verifier in an error, and memberships when the forge has them. The fake passes it, with and without its optional capabilities.
 
 Each later epic adds its capabilities to the fake and to the suite.
+
+## Webhooks and events
+
+Decided by the [epic 5 review](implementation/05-repositories-and-events.md#webhook-trust), not implemented yet (#32).
+
+- **Endpoint**: one literal route per forge, `POST /hooks/github` for GitHub, never a `{forge}` wildcard, which would conflict with the routes of a workspace; outside the session and CSRF protections, authenticated by its signature alone.
+- **Signature first.** A body past 5 MiB is refused with `413`. Within it, `X-Hub-Signature-256`, an HMAC-SHA256 of the body under the webhook secret, is checked in constant time before anything parses it; a refused signature is the same whatever the reason and logs no payload.
+- **Duplicates and replays.** The delivery identifier and the SHA-256 of the raw body are both kept, 30 days, for every signed delivery: a delivery that repeats either one has no further effect. They are written with the row of the event log in one transaction, so a failure to record leaves none behind. A replayed body is the same byte for byte; two genuine deliveries differ.
+- **Answers.** `202` once recorded; `200` for a duplicate or a replay; `401` for a refused signature; `413` past 5 MiB; `202` for an installation delivery, which makes Raun check the installation with the forge, and for a repository that is not active, dropped; `500` when recording fails. GitHub never delivers a refused delivery again on its own; it can be delivered again by hand.
+- **Kept events.** `push` of a branch or a tag; `pull_request` `opened`, `reopened`, `synchronize`, `ready_for_review` and `closed`. `installation` and `installation_repositories` only make Raun check with the forge which repositories the App reaches, and are never logged in the event log of a repository. Any other signed delivery is recorded as ignored.
+
+The normalized events:
+
+| Event | Fields |
+| --- | --- |
+| Push | Repository (forge, stable identifier), delivery, ref and whether it is a branch or a tag, commits before and after, forced, deleted, head commit, sender |
+| Pull request | Repository, delivery, number, action, head and base refs and commits, head and base repositories, draft, sender; from a fork when the head repository is not the base repository |
+
+Each delivery of an active repository is kept in its event log, shown on its page, for 30 days until the epic 13 review decides the retention.
+
+## Statuses and comments
+
+Decided by the [epic 5 review](implementation/05-repositories-and-events.md#statuses-and-comments), built by #34, used by epic 7.
+
+- **Commit status** with the context `raun`, the states pending, success, failure and error, a short description and a link back to Raun. Not a check run: the App asks for Commit statuses, and a new permission would make every installation approve it again.
+- **One comment per pull request**, updated in place, found by the hidden marker `<!-- raun -->` on its first line among the comments the App wrote; text from the repository is escaped.
 
 ## Types
 
@@ -77,10 +103,10 @@ On github.com, in the settings of the organization or the account that owns the 
 - **Callback URL**: `<RAUN_PUBLIC_URL>/login/callback`, such as `https://raun.example.com/login/callback`.
 - **Expire user authorization tokens**: on. Raun refuses an App whose user tokens do not expire, and says so at the first login.
 - **Request user authorization (OAuth) during installation**: off; people log in from Raun.
-- **Webhook**: inactive for now; the webhook address and its secret come with epic 5 (#32).
-- **Repository permissions**: Metadata read, Contents read (epic 5, to read files; epic 6, to clone), Commit statuses read and write (epic 7), Pull requests read and write (epic 7).
+- **Webhook**: inactive until #32. Then active, with the URL `<RAUN_PUBLIC_URL>/hooks/github` and a secret that `RAUN_GITHUB_WEBHOOK_SECRET` gives Raun too.
+- **Repository permissions**: Metadata read, Contents read (epic 5, to read files; epic 6, to clone), Commit statuses read and write and Pull requests read and write (built by epic 5, #34, used by epic 7).
 - **Organization permissions**: Members read, for `RAUN_SIGNUP_ORGS` (#26).
-- **Events**, subscribed once the webhook exists (epic 5): `push`, `pull_request`, `installation`, `installation_repositories`.
+- **Events**, subscribed once the webhook exists (#32): `push`, `pull_request`, `installation_repositories`; `installation` comes to every App.
 - **Where can this GitHub App be installed**: only on this account, unless people of other organizations log in to the same Raun.
 
 All the permissions are requested from the start: changing the permissions of an App makes every installation approve them again.

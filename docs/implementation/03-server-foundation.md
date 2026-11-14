@@ -230,7 +230,7 @@ Rules made explicit while implementing the server (#18):
 | The encryption of stored secrets | Done by epic 4 (#26, with the first stored tokens) |
 | The first stored instance setting | The epic whose feature needs one |
 | The `_FILE` form of a variable and the secret type of the configuration | Done by epic 4 (#25), with the first secret variables, those of the GitHub App ([record](04-forge-port-and-identity.md#github-adapter-25)) |
-| The bypass and authentication of webhooks | Epic 5 review (#30) |
+| The bypass and authentication of webhooks | Decided by the epic 5 review ([record](05-repositories-and-events.md#webhook-trust)): `POST /hooks/github`, one literal route per forge, authenticated by its signature, 5 MiB a body |
 | The bypass and authentication of the runner API | Epic 6 |
 | How an upgrade is run, and the retention of logs | Epic 13 |
 
