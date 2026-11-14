@@ -17,6 +17,7 @@ import (
 	"github.com/kvitrvn/raun/internal/adapter/driven/sqlite"
 	"github.com/kvitrvn/raun/internal/adapter/driving/web"
 	"github.com/kvitrvn/raun/internal/core/identity"
+	"github.com/kvitrvn/raun/internal/core/job"
 	"github.com/kvitrvn/raun/internal/core/repository"
 	"github.com/kvitrvn/raun/internal/core/session"
 )
@@ -205,6 +206,12 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 	repositories := newRepositories(forge, permissions, accounts, store.Repositories(), missing, deps.jobs)
 	reach := newReachSync()
 	configs := newConfigRefresh()
+	// Runners are managed by the administrators, and need a login to have
+	// one.
+	var runners web.RunnerRegistry
+	if login != nil {
+		runners = job.NewRegistry(job.RegistryOptions{Store: store.Runners(), Admins: administrators, Random: rand.Reader, Now: time.Now})
+	}
 
 	handler, err := web.New(web.Options{
 		Logger:         logger,
@@ -222,6 +229,7 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		ForgeName:      forgeNameOf(forge),
 		Administrators: administrators,
 		Settings:       cfg.shownSettings(),
+		Runners:        runners,
 	})
 	if err != nil {
 		logger.Error("build the handler", slog.String("error", err.Error()))

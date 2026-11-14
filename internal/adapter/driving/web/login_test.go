@@ -53,13 +53,15 @@ func (f *forgotten) list() []string {
 	return slices.Clone(f.accounts)
 }
 
-func newLoginServer(t *testing.T) *loginServer {
+// newLoginServer is a server on the fake forge, its options changed by
+// each of options.
+func newLoginServer(t *testing.T, options ...func(*Options)) *loginServer {
 	t.Helper()
 	fake, _ := forgetest.Scenario("github", false)
 	l := &loginServer{forge: fake, sessions: &sessiontest.Memory{}, accounts: &identitytest.Memory{}, logs: &bytes.Buffer{}, forgot: &forgotten{}, repos: &stubRepositories{}, hooks: &stubHooks{}}
 	now := func() time.Time { return time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC) }
 	policy := identity.Policy{Users: []identity.Entry{{Forge: "github", ID: "1001"}}}
-	s, err := New(Options{
+	opts := Options{
 		Logger:       slog.New(slog.NewJSONHandler(l.logs, nil)),
 		PublicHost:   testHost,
 		Scheme:       "https",
@@ -74,7 +76,11 @@ func newLoginServer(t *testing.T) *loginServer {
 		Hooks:        l.hooks,
 		ForgeName:    "github",
 		Now:          now,
-	})
+	}
+	for _, o := range options {
+		o(&opts)
+	}
+	s, err := New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
