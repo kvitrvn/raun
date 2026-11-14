@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -36,6 +37,28 @@ func fixture(t *testing.T, key *rsa.PrivateKey) (*gitHub, forgetest.Fixture) {
 		},
 		Reached: []string{"2001", "2002", "2003"},
 		Head:    forgetest.FilesHead,
+		AddComment: func(_ *testing.T, number int64, body string) {
+			g.change(func() { g.addComment(2001, number, "alice", "User", 0, body) })
+		},
+		CommentsOf: func(_ *testing.T, number int64) []forgetest.PublishedComment {
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			var out []forgetest.PublishedComment
+			for _, c := range g.comments {
+				if c.repository == 2001 && c.number == number {
+					out = append(out, forgetest.PublishedComment{ID: strconv.FormatInt(c.id, 10), Raun: c.login == appSlug+"[bot]", Body: c.body})
+				}
+			}
+			return out
+		},
+		StatusesOf: func(_ *testing.T, commit string) []forgetest.PublishedStatus {
+			g.mu.Lock()
+			defer g.mu.Unlock()
+			if s, ok := g.statuses[2001][commit]; ok {
+				return []forgetest.PublishedStatus{s}
+			}
+			return nil
+		},
 		Push: func(t *testing.T) (map[string]string, []byte) {
 			t.Helper()
 			body, err := os.ReadFile("testdata/hooks/push-branch.json")

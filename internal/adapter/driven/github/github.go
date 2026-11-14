@@ -70,6 +70,10 @@ type App struct {
 	tokens        *tokenCache
 	// installs keeps the installation of each repository a read found.
 	installs *installCache
+	// bot is the identity of the App on what it writes; commenting
+	// serializes the comments of one pull request.
+	bot        *botIdentity
+	commenting *keyedMutex
 }
 
 var (
@@ -179,6 +183,8 @@ func New(opts Options) (*App, error) {
 		wait:          wait,
 		tokens:        newTokenCache(),
 		installs:      &installCache{byRepo: map[int64]int64{}},
+		bot:           &botIdentity{},
+		commenting:    &keyedMutex{},
 	}, nil
 }
 

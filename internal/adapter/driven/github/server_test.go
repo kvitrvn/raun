@@ -105,8 +105,10 @@ type gitHub struct {
 	refresh       map[string]ghToken
 	installTokens map[string]ghToken // token -> installation, as person
 	tokenScopes   map[string]mintRequest
-	heads         map[int64]map[string]string            // repository -> branch -> commit
-	files         map[int64]map[string]map[string]string // repository -> commit -> path -> content
+	heads         map[int64]map[string]string                    // repository -> branch -> commit
+	files         map[int64]map[string]map[string]string         // repository -> commit -> path -> content
+	statuses      map[int64]map[string]forgetest.PublishedStatus // repository -> commit -> status of raun
+	comments      []ghComment
 	down          bool
 	seq           int
 	mints         []mintRequest
@@ -146,6 +148,7 @@ func newGitHub(t *testing.T, key *rsa.PrivateKey) *gitHub {
 		access:        map[string]ghToken{},
 		refresh:       map[string]ghToken{},
 		installTokens: map[string]ghToken{},
+		statuses:      map[int64]map[string]forgetest.PublishedStatus{},
 		tokenScopes:   map[string]mintRequest{},
 		heads: map[int64]map[string]string{
 			2001: {"main": forgetest.FilesHead},
@@ -168,6 +171,11 @@ func newGitHub(t *testing.T, key *rsa.PrivateKey) *gitHub {
 	mux.HandleFunc("GET /api/v3/repositories/{id}/installation", g.repositoryInstallation)
 	mux.HandleFunc("GET /api/v3/repositories/{id}/commits/{branch}", g.commit)
 	mux.HandleFunc("GET /api/v3/repositories/{id}/contents/{path...}", g.contents)
+	mux.HandleFunc("GET /api/v3/app", g.appInfo)
+	mux.HandleFunc("POST /api/v3/repositories/{id}/statuses/{sha}", g.postStatus)
+	mux.HandleFunc("GET /api/v3/repositories/{id}/issues/{number}/comments", g.listComments)
+	mux.HandleFunc("POST /api/v3/repositories/{id}/issues/{number}/comments", g.postComment)
+	mux.HandleFunc("PATCH /api/v3/repositories/{id}/issues/comments/{comment}", g.patchComment)
 	g.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		g.calls[r.Method+" "+r.URL.Path]++
@@ -585,6 +593,12 @@ func (g *gitHub) repositoryInstallation(w http.ResponseWriter, r *http.Request) 
 // reader checks that r carries a live installation token that may read the
 // contents of the repository of its path; the caller holds the lock.
 func (g *gitHub) reader(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	return g.scoped(w, r, "contents", "read")
+}
+
+// scoped checks that r carries a live installation token of the repository
+// of its path alone, with permission at level; the caller holds the lock.
+func (g *gitHub) scoped(w http.ResponseWriter, r *http.Request, permission, level string) (int64, bool) {
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 	tok, ok := g.installTokens[token]
 	if !ok || !g.clock.Now().Before(tok.expires) {
@@ -594,7 +608,8 @@ func (g *gitHub) reader(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	s := g.tokenScopes[token]
 	for _, repo := range g.repos {
-		if repo.id == id && repo.installation == tok.person && slices.Contains(s.Repositories, id) && s.Permissions["contents"] != "" {
+		if repo.id == id && repo.installation == tok.person && len(s.Repositories) == 1 && s.Repositories[0] == id &&
+			(s.Permissions[permission] == level || s.Permissions[permission] == "write") {
 			return id, true
 		}
 	}
@@ -645,4 +660,133 @@ func (g *gitHub) contents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+}
+
+// appSlug is the slug of the scripted App: its bot is appSlug[bot].
+const appSlug = "raun-test"
+
+// ghComment is a comment of a pull request of the scripted GitHub.
+type ghComment struct {
+	id         int64
+	repository int64
+	number     int64
+	login      string
+	kind       string // User or Bot
+	app        int64  // the App it was written through, 0 for none
+	body       string
+}
+
+func (c ghComment) json() map[string]any {
+	out := map[string]any{"id": c.id, "body": c.body, "user": map[string]any{"login": c.login, "type": c.kind, "id": 99}}
+	if c.app != 0 {
+		out["performed_via_github_app"] = map[string]any{"id": c.app, "slug": "x"}
+	} else {
+		out["performed_via_github_app"] = nil
+	}
+	return out
+}
+
+func (g *gitHub) appInfo(w http.ResponseWriter, r *http.Request) {
+	if err := g.checkJWT(r); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "A JSON web token could not be decoded: " + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"id": g.appID, "slug": appSlug, "name": "Raun test"})
+}
+
+func (g *gitHub) postStatus(w http.ResponseWriter, r *http.Request) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	id, ok := g.scoped(w, r, "statuses", "write")
+	if !ok {
+		return
+	}
+	var in struct {
+		State       string `json:"state"`
+		Context     string `json:"context"`
+		Description string `json:"description"`
+		Target      string `json:"target_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"message": "Validation Failed"})
+		return
+	}
+	if g.statuses[id] == nil {
+		g.statuses[id] = map[string]forgetest.PublishedStatus{}
+	}
+	g.statuses[id][r.PathValue("sha")] = forgetest.PublishedStatus{Context: in.Context, State: in.State, Description: in.Description, Target: in.Target}
+	writeJSON(w, http.StatusCreated, map[string]any{"id": 1, "state": in.State, "context": in.Context})
+}
+
+func (g *gitHub) listComments(w http.ResponseWriter, r *http.Request) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	id, ok := g.scoped(w, r, "pull_requests", "read")
+	if !ok {
+		return
+	}
+	number, _ := strconv.ParseInt(r.PathValue("number"), 10, 64)
+	var out []map[string]any
+	for _, c := range g.comments {
+		if c.repository == id && c.number == number {
+			out = append(out, c.json())
+		}
+	}
+	writeJSON(w, http.StatusOK, append([]map[string]any{}, page(r, out)...))
+}
+
+func (g *gitHub) postComment(w http.ResponseWriter, r *http.Request) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	id, ok := g.scoped(w, r, "pull_requests", "write")
+	if !ok {
+		return
+	}
+	number, _ := strconv.ParseInt(r.PathValue("number"), 10, 64)
+	var in struct {
+		Body string `json:"body"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"message": "Validation Failed"})
+		return
+	}
+	c := g.addComment(id, number, appSlug+"[bot]", "Bot", 0, in.Body)
+	writeJSON(w, http.StatusCreated, c.json())
+}
+
+func (g *gitHub) patchComment(w http.ResponseWriter, r *http.Request) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	id, ok := g.scoped(w, r, "pull_requests", "write")
+	if !ok {
+		return
+	}
+	cid, _ := strconv.ParseInt(r.PathValue("comment"), 10, 64)
+	var in struct {
+		Body string `json:"body"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"message": "Validation Failed"})
+		return
+	}
+	for i, c := range g.comments {
+		if c.id == cid && c.repository == id {
+			if c.login != appSlug+"[bot]" {
+				writeJSON(w, http.StatusForbidden, map[string]string{"message": "Resource not accessible by integration"})
+				return
+			}
+			g.comments[i].body = in.Body
+			writeJSON(w, http.StatusOK, g.comments[i].json())
+			return
+		}
+	}
+	writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+}
+
+// addComment adds a comment; the caller holds the lock.
+func (g *gitHub) addComment(repo, number int64, login, kind string, app int64, body string) ghComment {
+	g.seq++
+	c := ghComment{id: int64(7000 + g.seq), repository: repo, number: number, login: login, kind: kind, app: app, body: body}
+	g.comments = append(g.comments, c)
+	return c
 }
