@@ -230,5 +230,6 @@ Two checks exist:
 | Repository configuration (`.raun.yaml`) | A `version` field | Epic 8 |
 | Agent report contract | A `version` field | Epic 8 |
 | Run manifest | A `version` field | Epic 10 |
+| Runner protocol | Its number, in the path `/api/runner/v1/` and the header `Raun-Runner-Protocol` | Epic 6 ([docs/runner.md](runner.md#protocol)) |
 
 Items are stored in the database; the JSON document of an item is an internal representation, changed only through a migration. A format read from outside, such as `.raun.yaml` or an agent report, with an unknown version is refused, never guessed.
