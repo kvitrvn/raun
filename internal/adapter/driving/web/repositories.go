@@ -190,7 +190,15 @@ func (s *Server) repositoryPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rp := v.Repository
+		var events []ui.EventRow
+		for _, e := range v.Events {
+			events = append(events, ui.EventRow{
+				ReceivedAt: e.ReceivedAt.UTC().Format("2006-01-02 15:04:05 UTC"),
+				Event:      e.Event, Action: e.Action, Ref: e.Ref, Before: e.Before, After: e.After, Result: string(e.Result),
+			})
+		}
 		s.render(w, r, http.StatusOK, ui.RepositoryPage(s.page(r, rp.FullName, ""), ui.RepositoryProps{
+			Events:        events,
 			Workspace:     rp.Workspace.Name,
 			ID:            rp.ID,
 			FullName:      rp.FullName,

@@ -32,6 +32,7 @@ type loginServer struct {
 	logs     *bytes.Buffer
 	forgot   *forgotten
 	repos    *stubRepositories
+	hooks    *stubHooks
 }
 
 // forgotten records the accounts whose permissions logout forgets.
@@ -55,7 +56,7 @@ func (f *forgotten) list() []string {
 func newLoginServer(t *testing.T) *loginServer {
 	t.Helper()
 	fake, _ := forgetest.Scenario("github", false)
-	l := &loginServer{forge: fake, sessions: &sessiontest.Memory{}, accounts: &identitytest.Memory{}, logs: &bytes.Buffer{}, forgot: &forgotten{}, repos: &stubRepositories{}}
+	l := &loginServer{forge: fake, sessions: &sessiontest.Memory{}, accounts: &identitytest.Memory{}, logs: &bytes.Buffer{}, forgot: &forgotten{}, repos: &stubRepositories{}, hooks: &stubHooks{}}
 	now := func() time.Time { return time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC) }
 	policy := identity.Policy{Users: []identity.Entry{{Forge: "github", ID: "1001"}}}
 	s, err := New(Options{
@@ -70,6 +71,8 @@ func newLoginServer(t *testing.T) *loginServer {
 		Permissions:  l.forgot,
 		Repositories: l.repos,
 		ForgeURL:     "https://github.example",
+		Hooks:        l.hooks,
+		ForgeName:    "github",
 		Now:          now,
 	})
 	if err != nil {

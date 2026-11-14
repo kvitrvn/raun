@@ -148,6 +148,28 @@ type RepositoryProps struct {
 	State         string
 	CanDecide     bool
 	Missing       []string
+	// Events are the newest rows of its event log, newest first.
+	Events []EventRow
+}
+
+// EventRow is a delivery of the forge in the event log of a repository.
+// Its values come from the payload: they are only ever text.
+type EventRow struct {
+	ReceivedAt string
+	Event      string
+	Action     string
+	Ref        string
+	Before     string
+	After      string
+	Result     string
+}
+
+// short is the start of a commit, as the log shows it.
+func short(commit string) string {
+	if len(commit) > 12 {
+		return commit[:12]
+	}
+	return commit
 }
 
 // RepositoryPage shows a repository to a person the forge lets read it.
@@ -200,7 +222,61 @@ templ RepositoryPage(p Page, rp RepositoryProps) {
 			}
 			<p class="text-[12.5px] text-muted-foreground">Default branch: <span class="font-mono">{ rp.DefaultBranch }</span></p>
 		</section>
-		@Empty(EmptyProps{Title: "Nothing analyzed yet", Description: "The configuration, the events and the runs of this repository show here once Raun reads them.", Icon: IconFolder})
+		<section data-slot="events" class="cn-card flex flex-col gap-3 px-7 py-6">
+			<h2 class="text-[17px] font-semibold">Events</h2>
+			if len(rp.Events) == 0 {
+				<p class="text-[13.5px] text-muted-foreground">No event received while the repository was active, in the last 30 days.</p>
+			} else {
+				@Table(TableProps{Label: "Events of the repository, newest first"}) {
+					@TableHeader() {
+						@TableRow() {
+							@TableHead() {
+								Received
+							}
+							@TableHead() {
+								Event
+							}
+							@TableHead() {
+								Ref
+							}
+							@TableHead() {
+								Commits
+							}
+							@TableHead() {
+								Result
+							}
+						}
+					}
+					@TableBody() {
+						for _, e := range rp.Events {
+							@TableRow() {
+								@TableCell(TableCellProps{Class: "whitespace-nowrap"}) {
+									{ e.ReceivedAt }
+								}
+								@TableCell(TableCellProps{Class: "font-mono"}) {
+									{ e.Event }
+									if e.Action != "" {
+										<span class="text-muted-foreground">{ " " + e.Action }</span>
+									}
+								}
+								@TableCell(TableCellProps{Class: "font-mono break-all"}) {
+									{ e.Ref }
+								}
+								@TableCell(TableCellProps{Class: "font-mono whitespace-nowrap"}) {
+									if e.Before != "" || e.After != "" {
+										{ short(e.Before) } → { short(e.After) }
+									}
+								}
+								@TableCell() {
+									{ e.Result }
+								}
+							}
+						}
+					}
+				}
+			}
+		</section>
+		@Empty(EmptyProps{Title: "Nothing analyzed yet", Description: "The configuration and the runs of this repository show here once Raun reads them.", Icon: IconFolder})
 	}
 }
 
