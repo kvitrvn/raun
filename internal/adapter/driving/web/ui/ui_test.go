@@ -231,9 +231,10 @@ var (
 	styleAttribute   = regexp.MustCompile(`(?i)\sstyle=["']`)
 	handlerAttribute = regexp.MustCompile(`(?i)\son[a-z]+=["']`)
 	inlineScript     = regexp.MustCompile(`(?i)<script(\s[^>]*)?>`)
-	// A link to a page of the forge navigates; only a source or a
-	// stylesheet loads.
-	foreignOrigin = regexp.MustCompile(`(?i)(\ssrc="(https?:)?//|<link\s[^>]*href="(https?:)?//)`)
+	// A link to a page of the forge navigates, and is the only absolute
+	// address allowed: a source, a stylesheet, a base or the target of a
+	// form never points to another origin.
+	foreignOrigin = regexp.MustCompile(`(?i)(\s(src|action|formaction)="(https?:)?//|<(link|base|area)\s[^>]*href="(https?:)?//)`)
 )
 
 // checkMarkup refuses what the Content Security Policy forbids, and checks

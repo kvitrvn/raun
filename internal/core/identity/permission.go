@@ -150,9 +150,12 @@ func (p *PermissionService) Permission(ctx context.Context, account string, repo
 
 // Repositories returns the repositories the account with this identifier
 // reaches through Raun, as the forge lists them with the account's own
-// tokens, sorted by full name. Nothing is kept: each call asks the forge.
-// The errors are those of Permission: ErrNoIdentity, the errors of the token
-// service, ErrUnauthorized and ErrUnavailable, which also wraps a failure of
+// tokens, sorted by full name. Nothing is kept: each call asks the forge,
+// so no invalidation can make it keep a stale answer, and an answer given
+// across one is returned as it is, like any answer of a moment ago. The
+// errors are ErrNoIdentity, the errors of the token service, which forget
+// the permissions of the account, ErrUnauthorized, which drops nothing, as
+// no repository is named, and ErrUnavailable, which also wraps a failure of
 // a store and a context the caller gave up.
 func (p *PermissionService) Repositories(ctx context.Context, account string) ([]Repository, error) {
 	if account == "" {

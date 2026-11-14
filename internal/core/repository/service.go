@@ -17,7 +17,7 @@ type Options struct {
 	// Reach tells which repositories the App reaches; nil when the forge
 	// cannot.
 	Reach Reach
-	// Missing are the capabilities of Preconditions the forge lacks.
+	// Missing are the capabilities of Preconditions() the forge lacks.
 	Missing []Capability
 	// Now gives the time of a change; nil means time.Now.
 	Now func() time.Time

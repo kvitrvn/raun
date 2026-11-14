@@ -45,9 +45,11 @@ const (
 	CapabilityEvents Capability = "events"
 )
 
-// Preconditions are the capabilities activation needs, in the order they
-// are named.
-var Preconditions = []Capability{CapabilityFiles, CapabilityWebhooks, CapabilityEvents}
+// Preconditions returns the capabilities activation needs, in the order
+// they are named.
+func Preconditions() []Capability {
+	return []Capability{CapabilityFiles, CapabilityWebhooks, CapabilityEvents}
+}
 
 // MissingError names the capabilities the forge lacks; it wraps
 // ErrMissingCapability.

@@ -191,12 +191,23 @@ func (s Repositories) Deactivate(ctx context.Context, workspace, forge, id, acco
 
 func (s Repositories) Refresh(ctx context.Context, listed []repository.Listed) error {
 	return s.s.write(ctx, func(tx *sql.Tx) error {
+		known := map[[2]string]bool{}
+		forges := map[string]bool{}
 		for _, l := range listed {
-			var known int
-			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM repositories WHERE forge = ? AND forge_id = ?`, l.Forge, l.ID).Scan(&known); err != nil {
+			if forges[l.Forge] {
+				continue
+			}
+			forges[l.Forge] = true
+			ids, err := knownIDs(ctx, tx, l.Forge)
+			if err != nil {
 				return fmt.Errorf("refresh repository: %w", err)
 			}
-			if known == 0 {
+			for _, id := range ids {
+				known[[2]string{l.Forge, id}] = true
+			}
+		}
+		for _, l := range listed {
+			if !known[[2]string{l.Forge, l.ID}] {
 				continue
 			}
 			if err := takeName(ctx, tx, l.Forge, l.ID, l.FullName); err != nil {
@@ -209,6 +220,24 @@ func (s Repositories) Refresh(ctx context.Context, listed []repository.Listed) e
 		}
 		return nil
 	})
+}
+
+// knownIDs returns the identifiers of the repositories of forge.
+func knownIDs(ctx context.Context, tx *sql.Tx, forge string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT forge_id FROM repositories WHERE forge = ?`, forge)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 func (s Repositories) SetReach(ctx context.Context, forge string, reached []string) ([]string, error) {
