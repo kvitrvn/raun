@@ -6,6 +6,7 @@ import (
 	"github.com/kvitrvn/raun/internal/core/identity"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -109,8 +110,30 @@ func (f *stubForge) Refresh(_ context.Context, t identity.Tokens) (identity.Toke
 	return f.issue(f.holders[t.Access.Reveal()]), nil
 }
 
-func (f *stubForge) Repositories(context.Context, identity.Tokens) ([]identity.Repository, error) {
-	return nil, nil
+// Repositories lists the repositories granted to the holder of t, by
+// identifier; permErr and refuseOnce apply as to Permission.
+func (f *stubForge) Repositories(_ context.Context, t identity.Tokens) ([]identity.Repository, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.permErr != nil {
+		return nil, f.permErr
+	}
+	if f.refuseOnce {
+		f.refuseOnce = false
+		return nil, identity.ErrUnauthorized
+	}
+	holder, ok := f.holders[t.Access.Reveal()]
+	if !ok {
+		return nil, identity.ErrUnauthorized
+	}
+	var out []identity.Repository
+	for id, p := range f.rights[holder] {
+		if p != identity.PermissionNone {
+			out = append(out, identity.Repository{Forge: "stub", ID: id, FullName: "acme/" + id})
+		}
+	}
+	slices.SortFunc(out, func(a, b identity.Repository) int { return strings.Compare(a.FullName, b.FullName) })
+	return out, nil
 }
 
 func (f *stubForge) Permission(ctx context.Context, t identity.Tokens, r identity.Repository) (identity.Permission, error) {

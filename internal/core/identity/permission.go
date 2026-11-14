@@ -148,6 +148,38 @@ func (p *PermissionService) Permission(ctx context.Context, account string, repo
 	}
 }
 
+// Repositories returns the repositories the account with this identifier
+// reaches through Raun, as the forge lists them with the account's own
+// tokens, sorted by full name. Nothing is kept: each call asks the forge.
+// The errors are those of Permission: ErrNoIdentity, the errors of the token
+// service, ErrUnauthorized and ErrUnavailable, which also wraps a failure of
+// a store and a context the caller gave up.
+func (p *PermissionService) Repositories(ctx context.Context, account string) ([]Repository, error) {
+	if account == "" {
+		return nil, ErrNoIdentity
+	}
+	identity, err := p.identityOf(ctx, account, p.forge.Name())
+	if err != nil {
+		return nil, err
+	}
+	var out []Repository
+	err = p.tokens.With(ctx, identity, func(t Tokens) error {
+		var err error
+		out, err = p.forge.Repositories(ctx, t)
+		return err
+	})
+	switch {
+	case errors.Is(err, ErrRevoked) || errors.Is(err, ErrNotFound):
+		p.Forget(account)
+		return nil, err
+	case errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrUnavailable):
+		return nil, err
+	case err != nil:
+		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
+	}
+	return out, nil
+}
+
 // ask asks the forge the permission of key, for the question c.
 func (p *PermissionService) ask(ctx context.Context, key permissionKey, repo Repository, c *permissionCall) (Permission, error) {
 	identity, err := p.identityOf(ctx, key.account, repo.Forge)
