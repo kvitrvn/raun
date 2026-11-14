@@ -51,11 +51,11 @@ Each later epic adds its capabilities to the fake and to the suite.
 
 Decided by the [epic 5 review](implementation/05-repositories-and-events.md#webhook-trust), not implemented yet (#32).
 
-- **Endpoint**: `POST /hooks/<forge>`, `/hooks/github` for GitHub, outside the session and CSRF protections, authenticated by its signature alone.
+- **Endpoint**: one literal route per forge, `POST /hooks/github` for GitHub, never a `{forge}` wildcard, which would conflict with the routes of a workspace; outside the session and CSRF protections, authenticated by its signature alone.
 - **Signature first.** A body past 5 MiB is refused with `413`. Within it, `X-Hub-Signature-256`, an HMAC-SHA256 of the body under the webhook secret, is checked in constant time before anything parses it; a refused signature is the same whatever the reason and logs no payload.
-- **Duplicates and replays.** The delivery identifier and the SHA-256 of the raw body are both kept, 30 days, for every signed delivery: a delivery that repeats either one has no further effect. A replayed body is the same byte for byte; two genuine deliveries differ.
+- **Duplicates and replays.** The delivery identifier and the SHA-256 of the raw body are both kept, 30 days, for every signed delivery: a delivery that repeats either one has no further effect. They are written with the row of the event log in one transaction, so a failure to record leaves none behind. A replayed body is the same byte for byte; two genuine deliveries differ.
 - **Answers.** `202` once recorded; `200` for a duplicate or a replay; `401` for a refused signature; `413` past 5 MiB; `202` for an installation delivery, which makes Raun check the installation with the forge, and for a repository that is not active, dropped; `500` when recording fails. GitHub never delivers a refused delivery again on its own; it can be delivered again by hand.
-- **Kept events.** `push` of a branch or a tag; `pull_request` `opened`, `reopened`, `synchronize`, `ready_for_review` and `closed`. `installation` and `installation_repositories` keep track of the repositories the App reaches. Any other signed delivery is recorded as ignored.
+- **Kept events.** `push` of a branch or a tag; `pull_request` `opened`, `reopened`, `synchronize`, `ready_for_review` and `closed`. `installation` and `installation_repositories` only make Raun check with the forge which repositories the App reaches, and are never logged in the event log of a repository. Any other signed delivery is recorded as ignored.
 
 The normalized events:
 
