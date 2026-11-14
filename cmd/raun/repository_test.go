@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -115,9 +116,9 @@ func TestRepositoriesThroughTheServer(t *testing.T) {
 	}
 }
 
-// TestNoActivationWithoutTheCapabilities: until a forge offers files,
-// webhooks and events, the screen says why nothing can be activated, and an
-// activation is refused.
+// TestNoActivationWithoutTheCapabilities: until a forge reads files (#33),
+// the screen says why nothing can be activated, and an activation is
+// refused.
 func TestNoActivationWithoutTheCapabilities(t *testing.T) {
 	dir := t.TempDir()
 	keyFile, _ := writeAppKey(t, dir)
@@ -125,7 +126,7 @@ func TestNoActivationWithoutTheCapabilities(t *testing.T) {
 	s := start(t, dir, append(app(keyFile), "RAUN_SIGNUP_USERS=github:1001"), serverDeps{forge: fake})
 	alice := signedUp(t, s, fake, "1001", "alice")
 	_, _, home := alice.send(http.MethodGet, "/", nil)
-	if !strings.Contains(home, "No repository can be activated yet") || !strings.Contains(home, "files, webhooks, events") || strings.Contains(home, `action="/repositories"`) {
+	if !strings.Contains(home, "No repository can be activated yet") || !strings.Contains(home, `<span class="font-mono">files</span>`) || strings.Contains(home, `action="/repositories"`) {
 		t.Fatalf("the screen: %s", home)
 	}
 	if status, _, body := alice.submit("/", "/repositories", url.Values{"workspace": {"alice"}, "repository": {"2001"}}); status != http.StatusConflict {
@@ -157,7 +158,7 @@ func TestForgeErrorsOfTheRepositoryContext(t *testing.T) {
 // TestNoRepositoriesWithoutAForge: a server without a forge has no
 // repository service.
 func TestNoRepositoriesWithoutAForge(t *testing.T) {
-	if r := newRepositories(nil, nil, nil, nil, missingCapabilities); r != nil {
+	if r := newRepositories(nil, nil, nil, nil, nil, missingCapabilities); r != nil {
 		t.Error("a repository service without a forge")
 	}
 	if repositoryService(nil) != nil {
@@ -166,7 +167,18 @@ func TestNoRepositoriesWithoutAForge(t *testing.T) {
 	if got := missingCapabilities(nil); len(got) != len(repository.Preconditions()) {
 		t.Errorf("missingCapabilities = %v", got)
 	}
+	// A forge that receives events lacks only files, before #33; one that
+	// does not lacks webhooks and events too.
 	f := forgetest.New("github", nil)
+	if got := missingCapabilities(f); len(got) != 1 || got[0] != repository.CapabilityFiles {
+		t.Errorf("missingCapabilities(fake) = %v, want files", got)
+	}
+	if got := missingCapabilities(f.Bare()); len(got) != 3 {
+		t.Errorf("missingCapabilities(bare) = %v, want all three", got)
+	}
+	if hooks(f.Bare(), &repository.Service{}, newReachSync()) != nil || hooks(f, nil, newReachSync()) != nil {
+		t.Error("a hook without a forge that receives events")
+	}
 	if _, ok := any(f).(repository.Reach); !ok {
 		t.Error("the fake forge cannot tell its reach")
 	}
@@ -217,5 +229,56 @@ func TestPermissionOfRefusedTokens(t *testing.T) {
 	}
 	if _, err := f.Permission(ctx, "a1", "2002"); !errors.Is(err, repository.ErrRefused) {
 		t.Errorf("Permission once the tokens are gone = %v, want ErrRefused", err)
+	}
+}
+
+// TestAFailedSyncIsTriedAgain: a sync that fails is tried again, after a
+// wait that grows, without a new request; a success resets the wait.
+func TestAFailedSyncIsTriedAgain(t *testing.T) {
+	r := newReachSync()
+	r.retryFirst, r.retry = time.Millisecond, 4*time.Millisecond
+	var calls int
+	results := make(chan error, 8)
+	sync := func(context.Context) ([]string, error) {
+		calls++
+		if calls <= 3 {
+			return nil, repository.ErrUnavailable
+		}
+		return []string{"2001"}, nil
+	}
+	done := make(chan struct{})
+	defer close(done)
+	var logs syncBuffer
+	go r.run(context.Background(), newLogger(slog.LevelInfo, "json", &logs), sync, func(_ []string, err error) { results <- err }, done)
+	r.request()
+	for i := range 4 {
+		select {
+		case err := <-results:
+			if (i < 3) != (err != nil) {
+				t.Fatalf("sync %d: %v", i, err)
+			}
+		case <-time.After(wait):
+			t.Fatalf("sync %d did not run: the failure was not tried again", i)
+		}
+	}
+	select {
+	case err := <-results:
+		t.Errorf("a sync ran after the success, without a request: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if got := strings.Count(logs.String(), "trying again later"); got != 3 {
+		t.Errorf("%d failures logged, want 3", got)
+	}
+	// No reach on the forge is no failure: nothing is tried again.
+	r2 := newReachSync()
+	r2.retryFirst = time.Millisecond
+	none := make(chan error, 4)
+	go r2.run(context.Background(), newLogger(slog.LevelInfo, "json", &logs), func(context.Context) ([]string, error) { return nil, repository.ErrNoReach }, func(_ []string, err error) { none <- err }, done)
+	r2.request()
+	<-none
+	select {
+	case <-none:
+		t.Error("a forge without reach was asked again")
+	case <-time.After(20 * time.Millisecond):
 	}
 }

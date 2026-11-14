@@ -1,0 +1,8 @@
+{
+  "ref": "refs/notes/commits",
+  "before": "6113728f27ae82c7b1a177c8d03f9e96e0adf246",
+  "after": "0d1a26e67d8f5eaf1f6ba5c57fc3c7d91ac0fd1c",
+  "repository": {"id": 2001, "full_name": "acme/api"},
+  "sender": {"login": "alice", "id": 1001},
+  "head_commit": null
+}

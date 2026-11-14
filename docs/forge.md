@@ -1,6 +1,6 @@
 # Forges
 
-> Status: decided by the [epic 4 review](implementation/04-forge-port-and-identity.md) (#23). The port of epic 4 exists in `internal/core/identity`: the types, `Forge` (login, repositories, permission) and the optional `Memberships` (#24); the fake forge and the contract suite are in `internal/forgetest`. The GitHub adapter is in `internal/adapter/driven/github` (#25), built at start when an App is configured; the login that uses it comes with #26. The capabilities of epic 5 are decided by the [epic 5 review](implementation/05-repositories-and-events.md) (#30): the repositories and their activation consume the port since #31, with Reach on the fake forge; files, webhooks, events, commit status and comment are not implemented yet, so no forge offers what activation needs before #32 and #33; the clone credential comes with epic 6.
+> Status: decided by the [epic 4 review](implementation/04-forge-port-and-identity.md) (#23). The port of epic 4 exists in `internal/core/identity`: the types, `Forge` (login, repositories, permission) and the optional `Memberships` (#24); the fake forge and the contract suite are in `internal/forgetest`. The GitHub adapter is in `internal/adapter/driven/github` (#25), built at start when an App is configured; the login that uses it comes with #26. The capabilities of epic 5 are decided by the [epic 5 review](implementation/05-repositories-and-events.md) (#30): the repositories and their activation consume the port since #31; Reach, Webhooks and Events exist on the GitHub adapter and the fake forge since #32; files, commit status and comment are not implemented yet, so no forge offers what activation needs before #33; the clone credential comes with epic 6.
 
 Raun reaches a forge through one port: a small set of operations every adapter implements, and optional capabilities an adapter implements when its forge offers them. A caller detects a capability by type assertion and handles its absence; a missing capability is never an error.
 
@@ -12,11 +12,11 @@ Raun reaches a forge through one port: a small set of operations every adapter i
 | Repositories | Yes | The repositories a person can reach through Raun | Epic 4, epic 5 (#31) | — |
 | Permission | Yes | The permission of a person on a repository | Epic 4 (#28) | — |
 | Membership | No | Whether a person belongs to an organization | Epic 4 (#26), for `RAUN_SIGNUP_ORGS` | An entry of `RAUN_SIGNUP_ORGS` naming an organization of that forge stops the server at start |
-| Reach | No | Every repository the App reaches, by stable identifier, or an error, never a part of them | Epic 5 (#31): the state of a repository, which an installation delivery of #32 makes Raun check | Raun cannot tell that the App lost a repository; the fake forge has it, the GitHub adapter gets it with #32 |
+| Reach | No | Every repository the App reaches, by stable identifier, or an error, never a part of them | Epic 5 (#31, #32): the state of a repository, which an installation delivery makes Raun check | Raun cannot tell that the App lost a repository |
 | Files | No | Read files of a repository at a commit | Epic 5 (#33) | The repository cannot be activated |
 | Clone credential | No | A short-lived credential to clone one repository | Epic 6 | The repository cannot be activated, from epic 6 on |
-| Webhooks | No | Activate and deactivate the events of a repository: on GitHub, the webhook of the App, one per instance | Epic 5 (#31, #32) | The repository cannot be activated |
-| Events | No | Verify and parse a webhook into a normalized event | Epic 5 (#32) | The repository cannot be activated |
+| Webhooks | No | Activate and deactivate the events of a repository: on GitHub, the webhook of the App, one per instance, which covers every repository the App reaches and needs no operation: a forge with Events has it | Epic 5 (#31, #32) | The repository cannot be activated |
+| Events | No | Verify and parse a delivery into a normalized event (`repository.Events`, `Parse`) | Epic 5 (#32) | The repository cannot be activated, and the server has no hook |
 | Commit status | No | Publish the status of the check on a commit | Built by epic 5 (#34), used by epic 7 | Nothing is published; the repository page says so |
 | Comment | No | Publish or update the comment of a pull request | Built by epic 5 (#34), used by epic 7 | Nothing is published; the repository page says so |
 
@@ -42,30 +42,31 @@ Every call that uses an access token gives `ErrUnauthorized` when the forge refu
 
 `internal/forgetest` is test code, never linked into the binary (`make architecture` refuses any package named `golden` or ending in `test` in the dependencies of `cmd/raun`).
 
-- `New` gives a forge in memory with scripted people, repositories (installed or not), permissions and organizations; `RenameRepository` renames a repository and `SetInstalled` installs or removes the App on one, keeping its identifier; `Reached` gives the repositories the App is installed on; `Approve` plays a person approving Raun; `Revoke` withdraws a person's tokens; `SetDown` makes every call unavailable; `Advance` moves its clock forward. It runs PKCE, single-use codes of 10 minutes, access tokens of 8 hours, refresh tokens of 6 months that serve once, on the clock it is given.
+- `New` gives a forge in memory with scripted people, repositories (installed or not), permissions and organizations; `RenameRepository` renames a repository and `SetInstalled` installs or removes the App on one, keeping its identifier; `Reached` gives the repositories the App is installed on; `Deliver` signs a delivery of its own format (`X-Fake-Signature`, `X-Fake-Delivery`), whose bodies always differ, and `Parse` verifies and reads it; `Approve` plays a person approving Raun; `Revoke` withdraws a person's tokens; `SetDown` makes every call unavailable; `Advance` moves its clock forward. It runs PKCE, single-use codes of 10 minutes, access tokens of 8 hours, refresh tokens of 6 months that serve once, on the clock it is given.
 - `Bare` gives the same forge without its optional capabilities.
-- `Scenario` builds the fixture of the contract suite; `Suite` is the contract every adapter passes: an authorization URL that carries the state and the S256 challenge, login, codes and verifiers, an expired code, repositories, permissions, an expired access token refused by every call then refreshed, a refresh that rotates the refresh token, an expired refresh token refused for good, a revocation refused for good by every call, a transient failure of every call that takes nothing away, the refresh token included, a renamed login that keeps its identifier, no token, code or verifier in an error, memberships when the forge has them, and its reach when it has it. The fake passes it, with and without its optional capabilities.
+- `Scenario` builds the fixture of the contract suite; `Suite` is the contract every adapter passes: an authorization URL that carries the state and the S256 challenge, login, codes and verifiers, an expired code, repositories, permissions, an expired access token refused by every call then refreshed, a refresh that rotates the refresh token, an expired refresh token refused for good, a revocation refused for good by every call, a transient failure of every call that takes nothing away, the refresh token included, a renamed login that keeps its identifier, no token, code or verifier in an error, memberships when the forge has them, its reach when it has it, and its events when it has them: a signed push parsed, a body changed after signing or no signature refused alike. The fake passes it, with and without its optional capabilities.
 
 Each later epic adds its capabilities to the fake and to the suite.
 
 ## Webhooks and events
 
-Decided by the [epic 5 review](implementation/05-repositories-and-events.md#webhook-trust), not implemented yet (#32).
+Decided by the [epic 5 review](implementation/05-repositories-and-events.md#webhook-trust), implemented by #32: the port `repository.Events` and the receiving service in `internal/core/repository`, the parsing in `internal/adapter/driven/github/events.go`, the keys and the event log in `internal/adapter/driven/sqlite`, the hook in `internal/adapter/driving/web/hooks.go`.
 
-- **Endpoint**: one literal route per forge, `POST /hooks/github` for GitHub, never a `{forge}` wildcard, which would conflict with the routes of a workspace; outside the session and CSRF protections, authenticated by its signature alone.
+- **Endpoint**: one literal route per forge, `POST /hooks/github` for GitHub, never a `{forge}` wildcard, which would conflict with the routes of a workspace. The root mux serves it before the application, like the assets: it keeps the Host check, the access log and the security headers, passes none of the protections of the application, and authenticates by its signature alone.
 - **Signature first.** A body past 5 MiB is refused with `413`. Within it, `X-Hub-Signature-256`, an HMAC-SHA256 of the body under the webhook secret, is checked in constant time before anything parses it; a refused signature is the same whatever the reason and logs no payload.
 - **Duplicates and replays.** The delivery identifier and the SHA-256 of the raw body are both kept, 30 days, for every signed delivery: a delivery that repeats either one has no further effect. They are written with the row of the event log in one transaction, so a failure to record leaves none behind. A replayed body is the same byte for byte; two genuine deliveries differ.
-- **Answers.** `202` once recorded; `200` for a duplicate or a replay; `401` for a refused signature; `413` past 5 MiB; `202` for an installation delivery, which makes Raun check the installation with the forge, and for a repository that is not active, dropped; `500` when recording fails. GitHub never delivers a refused delivery again on its own; it can be delivered again by hand.
+- **Answers.** `202` once recorded; `200` for a duplicate or a replay; `401` for a refused signature; `400` for a signed delivery that is not one of the forge (a missing or malformed `X-GitHub-Delivery`, of 128 letters, digits and hyphens at most, or `X-GitHub-Event`, or a body without the required fields of its event), which keeps nothing; `413` past 5 MiB; `202` for an installation delivery, which makes Raun ask the forge which repositories the App reaches, after the answer, and for a repository that is not active, dropped; `500` when recording fails. GitHub never delivers a refused delivery again on its own; it can be delivered again by hand.
+- **Payloads** are decoded as the answers of the API are (epic 4): the fields Raun reads are checked, an identifier as a number and a commit as 40 or 64 hexadecimal digits, and the others ignored. Nothing of a payload is logged.
 - **Kept events.** `push` of a branch or a tag; `pull_request` `opened`, `reopened`, `synchronize`, `ready_for_review` and `closed`. `installation` and `installation_repositories` only make Raun check with the forge which repositories the App reaches, and are never logged in the event log of a repository. Any other signed delivery is recorded as ignored.
 
 The normalized events:
 
 | Event | Fields |
 | --- | --- |
-| Push | Repository (forge, stable identifier), delivery, ref and whether it is a branch or a tag, commits before and after, forced, deleted, head commit, sender |
-| Pull request | Repository, delivery, number, action, head and base refs and commits, head and base repositories, draft, sender; from a fork when the head repository is not the base repository |
+| Push | Repository (forge, stable identifier), delivery, ref and whether it is a branch or a tag, commits before and after, forced, deleted, head commit (empty for a deleted ref), sender (stable identifier and login) |
+| Pull request | Repository, delivery, number, action, head and base refs and commits, head and base repositories (stable identifiers), draft, sender; from a fork when the head repository is not the base repository, or is unknown, as for a fork deleted since |
 
-Each delivery of an active repository is kept in its event log, shown on its page, for 30 days until the epic 13 review decides the retention.
+A push of another ref, such as a note, and a pull request of another action are ignored. Each delivery of an active repository is kept in its event log, with its ref and its commits (the base and head commits of a pull request) and whether it was recorded or ignored, shown on its page, newest first, the 50 newest, for 30 days until the epic 13 review decides the retention; the keys and the rows are purged at start and every hour.
 
 ## Statuses and comments
 
@@ -104,10 +105,10 @@ On github.com, in the settings of the organization or the account that owns the 
 - **Callback URL**: `<RAUN_PUBLIC_URL>/login/callback`, such as `https://raun.example.com/login/callback`.
 - **Expire user authorization tokens**: on. Raun refuses an App whose user tokens do not expire, and says so at the first login.
 - **Request user authorization (OAuth) during installation**: off; people log in from Raun.
-- **Webhook**: inactive until #32. Then active, with the URL `<RAUN_PUBLIC_URL>/hooks/github` and a secret that `RAUN_GITHUB_WEBHOOK_SECRET` gives Raun too.
+- **Webhook**: active, with the URL `<RAUN_PUBLIC_URL>/hooks/github` and a secret that `RAUN_GITHUB_WEBHOOK_SECRET` gives Raun too (`openssl rand -hex 32`).
 - **Repository permissions**: Metadata read, Contents read (epic 5, to read files; epic 6, to clone), Commit statuses read and write and Pull requests read and write (built by epic 5, #34, used by epic 7).
 - **Organization permissions**: Members read, for `RAUN_SIGNUP_ORGS` (#26).
-- **Events**, subscribed once the webhook exists (#32): `push`, `pull_request`, `installation_repositories`; `installation` comes to every App.
+- **Events**: `push`, `pull_request`, `installation_repositories`; `installation` comes to every App.
 - **Where can this GitHub App be installed**: only on this account, unless people of other organizations log in to the same Raun.
 
 All the permissions are requested from the start: changing the permissions of an App makes every installation approve them again.
@@ -130,23 +131,27 @@ The App is installed on the organizations or accounts whose repositories Raun sh
 | `RAUN_GITHUB_CLIENT_ID` | empty | The Client ID |
 | `RAUN_GITHUB_CLIENT_SECRET` | empty | Secret: the client secret |
 | `RAUN_GITHUB_PRIVATE_KEY` | empty | Secret: the PEM private key, PKCS #1 as GitHub gives it or PKCS #8, RSA of 2048 bits at least |
+| `RAUN_GITHUB_WEBHOOK_SECRET` | empty | Secret: the secret of the webhook of the App, printable characters without spaces, 256 at most |
 
-A secret can be given as a file instead, `RAUN_GITHUB_CLIENT_SECRET_FILE` and `RAUN_GITHUB_PRIVATE_KEY_FILE`, which suits a key of several lines and container secrets; setting both forms of one variable is an error. The file holds the value, one trailing newline aside, 64 KiB at most.
+A secret can be given as a file instead, `RAUN_GITHUB_CLIENT_SECRET_FILE`, `RAUN_GITHUB_PRIVATE_KEY_FILE` and `RAUN_GITHUB_WEBHOOK_SECRET_FILE`, which suits a key of several lines and container secrets; setting both forms of one variable is an error. The file holds the value, one trailing newline aside, 64 KiB at most.
 
 ```sh
 RAUN_GITHUB_APP_ID=123456
 RAUN_GITHUB_CLIENT_ID=Iv23liExample
 RAUN_GITHUB_CLIENT_SECRET_FILE=/run/secrets/github-client-secret
 RAUN_GITHUB_PRIVATE_KEY_FILE=/run/secrets/github-app.pem
+RAUN_GITHUB_WEBHOOK_SECRET_FILE=/run/secrets/github-webhook-secret
 ```
 
-The App is configured whole or not at all: with `RAUN_GITHUB_APP_ID`, the client ID, the client secret and the private key are required; without it, none of the other variables may be set, `RAUN_GITHUB_URL` included. A partial set, an invalid key or a malformed value stops the server at start, naming the variable and never showing a secret. The server reaches no GitHub at start: it builds the adapter, and logs `forge` with its name and address.
+The App is configured whole or not at all: with `RAUN_GITHUB_APP_ID`, the client ID, the client secret, the private key and the webhook secret are required; without it, none of the other variables may be set, `RAUN_GITHUB_URL` included. A partial set, an invalid key or a malformed value stops the server at start, naming the variable and never showing a secret. The server reaches no GitHub at start: it builds the adapter, and logs `forge` with its name and address.
 
 ### How Raun uses the App
 
 - **Login** is the App's user authorization, with PKCE (S256); user tokens last 8 hours and are refreshed, their refresh token lasts 6 months and serves once. GitHub Enterprise Server releases that predate PKCE ignore it; the login state of Raun still binds the login to the browser that started it.
 - **Repositories and permissions** are resolved with the person's own token, through the installations of the App the person can reach: GitHub answers with the repositories both the person and the App reach, and with the person's own rights on each, which the table above maps. A repository is found by its stable identifier, so a rename changes nothing. A repository without a commit has no default branch: the listing leaves it out, since it holds nothing to activate, and its permission still resolves. The App's own permissions never stand for a person's.
 - **Organization membership** is an active membership, found by the identifier of the organization: a pending invitation does not count. GitHub shows a user token the organizations where the App is installed only, so an organization of `RAUN_SIGNUP_ORGS` lets people in once the App is installed on it.
+- **Webhook secret.** Rotating it is a change in the App and in Raun, then a restart: the deliveries signed with the old secret in between are refused, and GitHub can deliver them again by hand. No previous secret is accepted.
+- **Reach.** Raun lists the installations of the App with its JWT, then the repositories of each with an installation token that reads metadata only; a suspended installation reaches nothing. It does so once at start and after each installation delivery, one sync at a time; a sync that fails is tried again after 30 seconds, then a wait doubled each time, up to 30 minutes.
 - **Installation tokens** are minted from the private key when a call needs one, with the repositories and permissions of that call and no more, and kept in memory until five minutes before they expire, then dropped. They serve the capabilities of epics 5 to 7.
 - **Rate limits and failures.** A request that consumes nothing (a read, the mint of an installation token) is sent again after a rate limit or a transient failure: it waits what GitHub asks, `Retry-After` or the reset of the quota, or 0.5 then 1 second after a server or network error, 3 attempts and 15 seconds of waiting at most, 10 seconds for one wait. A rate limit that resets later fails the call at once. The exchange of a code and a refresh are sent once, since a replay would spend a single-use value. A call that still fails is a transient failure of the port.
 - **Bounds.** Redirects are never followed, a response is read up to 4 MiB, and a listing up to 100 pages of 100 items; a longer listing is an error, never a shorter list.

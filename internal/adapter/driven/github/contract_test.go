@@ -3,6 +3,7 @@ package github
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"os"
 	"testing"
 	"time"
 
@@ -32,6 +33,15 @@ func fixture(t *testing.T, key *rsa.PrivateKey) (*gitHub, forgetest.Fixture) {
 		Unreachable: []identity.Repository{
 			{Forge: Name, ID: "2003", FullName: "acme/secret", DefaultBranch: "main", Private: true},
 			{Forge: Name, ID: "2004", FullName: "other/lib", DefaultBranch: "trunk"},
+		},
+		Reached: []string{"2001", "2002", "2003"},
+		Push: func(t *testing.T) (map[string]string, []byte) {
+			t.Helper()
+			body, err := os.ReadFile("testdata/hooks/push-branch.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			return map[string]string{headerEvent: "push", headerDelivery: "delivery-1", headerSignature: sign(webhookSecret, body)}, body
 		},
 		Approve: func(t *testing.T, url string) (string, string) {
 			t.Helper()

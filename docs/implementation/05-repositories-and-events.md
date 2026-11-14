@@ -84,6 +84,18 @@ Choices #31 made within the decisions above, for the owner to confirm in its rev
 - **Reach.** One optional capability of the forge, `Reach`, gives every repository the App reaches, across its installations, or an error, never a part of them; `SyncReach` makes each other repository Raun knows unreachable and not active, and one reached again reachable and still deactivated. #32 calls it on an installation delivery and adds it to the GitHub adapter; the fake forge has it.
 - **Preconditions.** No forge offers files, webhooks or events before #32 and #33, which declare their operations in this context and detect them: until then the screen names what is missing and nothing can be activated, outside tests.
 
+## Implementation of #32
+
+Choices #32 made within the decisions above, for the owner to confirm in its review:
+
+- **The secret is required with the App.** `RAUN_GITHUB_WEBHOOK_SECRET` joins the set of the App, all or none: no instance runs without it, and none ran before (raun-old never did).
+- **The hook is on the root mux.** Like `/-/assets/`, `POST /hooks/github` is served before the application, behind the Host check, the access log and the security headers: no protection of the application applies to it, its body bound of 64 KiB included, so it needs no bypass pattern. Its own bound is 5 MiB.
+- **A signed delivery that is not one of GitHub** (a missing or malformed delivery identifier or event name, a body that is not one JSON object, a kept event without its required fields) is answered `400` and keeps nothing. Payloads are decoded as the answers of the API are, with the exception of the epic 4 record: the fields Raun reads are checked, the others ignored.
+- **Webhooks needs no operation on GitHub**: the webhook of the App covers every repository it reaches, so a forge with Events has Webhooks too. A forge with a webhook per repository (epic 12) declares its operations then.
+- **The keys are unique per forge**, so a second forge never collides with the first. The log is written only while the repository is active, as the transaction that keeps the keys sees it, so a deactivation cannot fall in between.
+- **The sync of the reach** runs in the server, one at a time, after the answer to an installation delivery and once at start, which recovers a sync a stop cut short; requests that come during one make one more. A sync that fails is tried again after 30 seconds, then a wait doubled after each failure in a row up to 30 minutes, until one succeeds. No request is stored: a sync reads the forge, never a payload, and the jobs of epic 6 can take it over.
+- **The event log** shows the 50 newest rows, with the ref and the before and after commits (the base and head commits of a pull request), and nothing of the commits in between. A pull request whose head repository the forge no longer knows counts as from a fork, the stricter answer.
+
 ## Deferred
 
 | Topic | Where |
@@ -109,8 +121,8 @@ Choices #31 made within the decisions above, for the owner to confirm in its rev
 ## Exit criteria
 
 - [x] This page records the choices.
-- [ ] A test activates a repository on the fake forge, sends a signed push webhook and gets one normalized event (#31, #32).
-- [ ] A test refuses an unsigned webhook, ignores a duplicate delivery and a replayed body, and keeps a pull request closed and reopened at the same head (#32).
+- [x] A test activates a repository on the fake forge, sends a signed push webhook and gets one normalized event (#31, #32).
+- [x] A test refuses an unsigned webhook, ignores a duplicate delivery and a replayed body, and keeps a pull request closed and reopened at the same head (#32).
 - [x] A test refuses an activation by a person without write access, and keeps the knowledge of a renamed repository (#31).
 - [ ] A status and a pull request comment are published on the fake forge, and the comment is updated in place (#34).
 - [ ] `make verify` passes (checked at the end of the epic).

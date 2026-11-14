@@ -41,17 +41,21 @@ type serverDeps struct {
 	// missing, when set, tells the capabilities of activation the forge
 	// lacks instead of missingCapabilities.
 	missing func(identity.Forge) []repository.Capability
+	// synced, when set, is told what each sync of the reach of the App
+	// lost.
+	synced func(lost []string, err error)
 }
 
 // purgeInterval is how often what has expired is deleted, after the purge
 // at start.
 const purgeInterval = time.Hour
 
-// expiring are the stores the purge cleans: sessions, login states and
-// sign-ups.
+// expiring are the stores the purge cleans: sessions, login states,
+// sign-ups, and the keys of the deliveries and the event log.
 type expiring struct {
 	sessions session.Store
 	accounts identity.Store
+	events   repository.EventStore
 }
 
 // purge deletes the sessions, login states and sign-ups that have ended at
@@ -64,6 +68,9 @@ func purge(ctx context.Context, logger *slog.Logger, e expiring, now time.Time) 
 		{"sessions", e.sessions.DeleteExpired},
 		{"login states", e.accounts.DeleteExpiredLoginStates},
 		{"sign-ups", e.accounts.DeleteExpiredSignups},
+		{"deliveries and events", func(ctx context.Context, now time.Time) (int, error) {
+			return e.events.PurgeEvents(ctx, now.Add(-repository.EventRetention))
+		}},
 	} {
 		n, err := p.delete(ctx, now)
 		if err != nil {
@@ -150,7 +157,7 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		return exitFailure
 	}
 	accounts := store.Accounts(keys)
-	stale := expiring{sessions: sessions, accounts: accounts}
+	stale := expiring{sessions: sessions, accounts: accounts, events: store.Repositories()}
 	// The purge first: an expired sign-up is deleted, not rotated.
 	if err := purge(ctx, logger, stale, time.Now()); err != nil {
 		return exitFailure
@@ -184,7 +191,8 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 	if missing == nil {
 		missing = missingCapabilities
 	}
-	repositories := newRepositories(forge, permissions, accounts, store.Repositories(), missing)
+	repositories := newRepositories(forge, permissions, accounts, store.Repositories(), store.Repositories(), missing)
+	reach := newReachSync()
 
 	handler, err := web.New(web.Options{
 		Logger:         logger,
@@ -198,6 +206,8 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		Permissions:    permissionCache(permissions),
 		Repositories:   repositoryService(repositories),
 		ForgeURL:       cfg.github.webURL,
+		Hooks:          hooks(forge, repositories, reach),
+		ForgeName:      forgeNameOf(forge),
 		Administrators: administrators,
 		Settings:       cfg.shownSettings(),
 	})
@@ -249,6 +259,12 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		ticks = ticker.C
 	}
 	go purgeEvery(ctx, logger, stale, ticks, done)
+	if repositories != nil {
+		go reach.run(ctx, logger, repositories.SyncReach, deps.synced, done)
+		// What the App reaches may have changed while the server was
+		// stopped, or a sync was cut short by the stop.
+		reach.request()
+	}
 
 	served := make(chan error, 1)
 	go func() {
@@ -313,4 +329,12 @@ func reloadCertificates(logger *slog.Logger, certs *web.Certificates, reload <-c
 			logger.Info("TLS pair reloaded")
 		}
 	}
+}
+
+// forgeNameOf is the name of forge, empty without one.
+func forgeNameOf(forge identity.Forge) string {
+	if forge == nil {
+		return ""
+	}
+	return forge.Name()
 }

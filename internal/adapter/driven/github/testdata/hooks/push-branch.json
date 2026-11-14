@@ -1,0 +1,45 @@
+{
+  "ref": "refs/heads/main",
+  "before": "6113728f27ae82c7b1a177c8d03f9e96e0adf246",
+  "after": "0d1a26e67d8f5eaf1f6ba5c57fc3c7d91ac0fd1c",
+  "repository": {
+    "id": 2001,
+    "node_id": "R_kgDOAAAH0Q",
+    "name": "api",
+    "full_name": "acme/api",
+    "private": true,
+    "owner": {"name": "acme", "login": "acme", "id": 3001, "type": "Organization"},
+    "html_url": "https://github.com/acme/api",
+    "default_branch": "main",
+    "pushed_at": 1794644340,
+    "master_branch": "main"
+  },
+  "pusher": {"name": "alice", "email": "alice@example.com"},
+  "organization": {"login": "acme", "id": 3001},
+  "installation": {"id": 501, "node_id": "MDIzOkludGVncmF0aW9uSW5zdGFsbGF0aW9uNTAx"},
+  "sender": {"login": "alice", "id": 1001, "type": "User", "site_admin": false},
+  "created": false,
+  "deleted": false,
+  "forced": false,
+  "base_ref": null,
+  "compare": "https://github.com/acme/api/compare/6113728f27ae...0d1a26e67d8f",
+  "commits": [
+    {
+      "id": "0d1a26e67d8f5eaf1f6ba5c57fc3c7d91ac0fd1c",
+      "tree_id": "f9d2a07e9488b91af2641b26b9407fe22a451433",
+      "distinct": true,
+      "message": "Update README.md <script>alert(1)</script>",
+      "timestamp": "2026-11-14T10:00:00+01:00",
+      "author": {"name": "Alice", "email": "alice@example.com", "username": "alice"},
+      "added": [], "removed": [], "modified": ["README.md"]
+    }
+  ],
+  "head_commit": {
+    "id": "0d1a26e67d8f5eaf1f6ba5c57fc3c7d91ac0fd1c",
+    "tree_id": "f9d2a07e9488b91af2641b26b9407fe22a451433",
+    "distinct": true,
+    "message": "Update README.md <script>alert(1)</script>",
+    "timestamp": "2026-11-14T10:00:00+01:00",
+    "added": [], "removed": [], "modified": ["README.md"]
+  }
+}

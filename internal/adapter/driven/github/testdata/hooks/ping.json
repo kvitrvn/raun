@@ -1,0 +1,6 @@
+{
+  "zen": "Keep it logically awesome.",
+  "hook_id": 109948940,
+  "hook": {"type": "App", "id": 109948940, "active": true, "events": ["push", "pull_request"], "app_id": 42},
+  "sender": {"login": "alice", "id": 1001}
+}

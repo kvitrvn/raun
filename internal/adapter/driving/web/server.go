@@ -67,6 +67,12 @@ type Options struct {
 	// ForgeURL is the address of the forge on the web, for the links to a
 	// repository on it: https://github.com.
 	ForgeURL string
+	// Hooks receives the webhook deliveries of the forge at
+	// POST /hooks/<ForgeName>; nil means no hook.
+	Hooks HookReceiver
+	// ForgeName is the name of the forge, the last segment of its hook:
+	// github. Required with Hooks.
+	ForgeName string
 	// Administrators tells the administrators of the instance; nil means
 	// no Instance settings screen.
 	Administrators AdministratorChecker
@@ -94,6 +100,8 @@ type Server struct {
 	permissions    PermissionCache
 	repositories   RepositoryService
 	forgeURL       string
+	hooks          HookReceiver
+	forgeName      string
 	administrators AdministratorChecker
 	settings       []Setting
 	// patterns are the routes of the server, as route registered them:
@@ -140,6 +148,9 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 	if opts.Repositories != nil && opts.ForgeURL == "" {
 		return nil, errors.New("web: Options.ForgeURL is empty with Repositories")
 	}
+	if opts.Hooks != nil && !forgeName.MatchString(opts.ForgeName) {
+		return nil, fmt.Errorf("web: Options.ForgeName %q is not the name of a forge, with Hooks", opts.ForgeName)
+	}
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -173,6 +184,8 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 		permissions:    opts.Permissions,
 		repositories:   opts.Repositories,
 		forgeURL:       opts.ForgeURL,
+		hooks:          opts.Hooks,
+		forgeName:      opts.ForgeName,
 		administrators: opts.Administrators,
 		settings:       slices.Clone(opts.Settings),
 		now:            opts.Now,
@@ -205,6 +218,9 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 	// GET /{name}/{owner}/{repo}. They keep the Host check, and need no
 	// session, origin check or CSRF token.
 	s.route(root, "GET "+assetPrefix+"{file...}", s.checkHost(http.HandlerFunc(s.assets.serve)))
+	if s.hooks != nil {
+		s.hookRoute(root)
+	}
 	// Every other path is the application, behind the protections in the
 	// order of the record: the public address only, a bounded body, no
 	// cross-origin state change, the session, and its CSRF token on every

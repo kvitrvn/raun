@@ -64,6 +64,8 @@ type githubConfig struct {
 	clientID     string
 	clientSecret identity.Secret
 	privateKey   *rsa.PrivateKey
+	// webhookSecret signs the deliveries of the webhook of the App.
+	webhookSecret identity.Secret
 }
 
 // setting is the effective value of one variable.
@@ -111,6 +113,7 @@ var variables = []variable{
 	{name: "RAUN_GITHUB_CLIENT_ID", def: "", parse: parseGitHubClientID},
 	{name: "RAUN_GITHUB_CLIENT_SECRET", def: "", secret: true, parse: parseGitHubClientSecret},
 	{name: "RAUN_GITHUB_PRIVATE_KEY", def: "", secret: true, parse: parseGitHubPrivateKey},
+	{name: "RAUN_GITHUB_WEBHOOK_SECRET", def: "", secret: true, parse: parseGitHubWebhookSecret},
 	{name: "RAUN_SECRET_KEY", def: "", secret: true, parse: func(c *config, v string) error { return parseSecretKey(&c.secretKey, v) }},
 	{name: "RAUN_SECRET_KEY_PREVIOUS", def: "", secret: true, parse: func(c *config, v string) error { return parseSecretKey(&c.previousKey, v) }},
 	{name: "RAUN_SIGNUP_USERS", def: "", parse: func(c *config, v string) error { return parseEntries(&c.signup.Users, v) }},
@@ -269,7 +272,7 @@ func (c config) logAttrs() []slog.Attr {
 // checkGitHub checks that the GitHub App is set whole or not at all:
 // RAUN_GITHUB_APP_ID decides, and the other variables of the App follow it.
 func (c *config) checkGitHub(set map[string]bool) error {
-	others := []string{"RAUN_GITHUB_URL", "RAUN_GITHUB_CLIENT_ID", "RAUN_GITHUB_CLIENT_SECRET", "RAUN_GITHUB_PRIVATE_KEY"}
+	others := []string{"RAUN_GITHUB_URL", "RAUN_GITHUB_CLIENT_ID", "RAUN_GITHUB_CLIENT_SECRET", "RAUN_GITHUB_PRIVATE_KEY", "RAUN_GITHUB_WEBHOOK_SECRET"}
 	if c.github.appID == 0 {
 		var given []string
 		for _, name := range others {
@@ -291,6 +294,9 @@ func (c *config) checkGitHub(set map[string]bool) error {
 	}
 	if c.github.privateKey == nil {
 		missing = append(missing, "RAUN_GITHUB_PRIVATE_KEY")
+	}
+	if c.github.webhookSecret == "" {
+		missing = append(missing, "RAUN_GITHUB_WEBHOOK_SECRET")
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("RAUN_GITHUB_APP_ID: set, so %s must be set too", strings.Join(missing, ", "))
@@ -502,6 +508,15 @@ func parseGitHubClientSecret(c *config, value string) error {
 		return errors.New("not a client secret: printable characters without spaces, 256 at most")
 	}
 	c.github.clientSecret = identity.Secret(value)
+	return nil
+}
+
+func parseGitHubWebhookSecret(c *config, value string) error {
+	// The value is never shown, even when it is refused.
+	if len(value) > 256 || strings.ContainsFunc(value, func(r rune) bool { return r <= ' ' || r > '~' }) {
+		return errors.New("not a webhook secret: printable characters without spaces, 256 at most")
+	}
+	c.github.webhookSecret = identity.Secret(value)
 	return nil
 }
 

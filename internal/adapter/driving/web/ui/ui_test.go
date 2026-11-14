@@ -178,6 +178,13 @@ func TestPages(t *testing.T) {
 		{"repository-active", RepositoryPage(switcherPage, RepositoryProps{
 			Workspace: "acme", ID: "2001", FullName: "acme/api", ForgeHref: "https://github.com/acme/api", DefaultBranch: hostile, Private: true, State: StateActive, CanDecide: true,
 		})},
+		{"repository-events", RepositoryPage(switcherPage, RepositoryProps{
+			Workspace: "acme", ID: "2001", FullName: "acme/api", ForgeHref: "https://github.com/acme/api", DefaultBranch: "main", State: StateActive,
+			Events: []EventRow{
+				{ReceivedAt: "2026-11-14 10:00:02 UTC", Event: "pull_request", Action: "opened", Ref: hostile, Before: "6113728f27ae82c7b1a177c8d03f9e96e0adf246", After: "9c48853fa3dc5c1c3d6f1f1cd1f2743e72652840", Result: "recorded"},
+				{ReceivedAt: "2026-11-14 10:00:01 UTC", Event: "issues", Action: hostile, Result: "ignored"},
+			},
+		})},
 		{"repository-active-viewer", RepositoryPage(switcherPage, RepositoryProps{
 			Workspace: "acme", ID: "2001", FullName: "acme/api", ForgeHref: "https://github.com/acme/api", DefaultBranch: "main", State: StateActive,
 		})},

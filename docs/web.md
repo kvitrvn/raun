@@ -75,7 +75,7 @@ Raun's own: `Icon` (the icon set, drawn as markup), `Toast`, `Layout` (document,
 
 ## Repositories
 
-The Repositories screen is `/` for an account logged in: the repositories the forge lists for it through the App, searched by full name with `?q=`, each with a link to the forge and, once Raun knows it, its state and its workspace; one never activated has a form that activates it in a workspace of the account, `POST /repositories` with its stable identifier and the workspace, the full name and the branch coming from the forge. While the forge lacks files, webhooks or events, the screen says so and offers no activation. The page of a repository is `/<workspace>/<owner>/<name>`, at its current full name: it shows to whoever the forge lets read the repository, member of the workspace or not, and is not found otherwise, as an old name is. A member the forge lets decide deactivates it there (`POST /<workspace>/<owner>/<name>/deactivate`) or activates it again. The page of a workspace lists its repositories the forge lets the visitor read. A forge that does not answer gives `503`, one that refuses the tokens `403`.
+The Repositories screen is `/` for an account logged in: the repositories the forge lists for it through the App, searched by full name with `?q=`, each with a link to the forge and, once Raun knows it, its state and its workspace; one never activated has a form that activates it in a workspace of the account, `POST /repositories` with its stable identifier and the workspace, the full name and the branch coming from the forge. While the forge lacks files, webhooks or events, the screen says so and offers no activation. The page of a repository is `/<workspace>/<owner>/<name>`, at its current full name: it shows to whoever the forge lets read the repository, member of the workspace or not, and is not found otherwise, as an old name is. It shows the 50 newest rows of its event log, newest first, read-only once deactivated. A member the forge lets decide deactivates it there (`POST /<workspace>/<owner>/<name>/deactivate`) or activates it again. The page of a workspace lists its repositories the forge lets the visitor read. A forge that does not answer gives `503`, one that refuses the tokens `403`.
 
 ## Content Security Policy
 
@@ -91,6 +91,8 @@ The policy is in the [epic 3 record](implementation/03-server-foundation.md#requ
 ## Assets
 
 The server reads the embedded files at start and serves each under `/-/assets/` at a URL that carries the first 8 hexadecimal digits of its SHA-256 (`/-/assets/app.1a2b3c4d.css`), with `Cache-Control: public, max-age=31536000, immutable` and `X-Content-Type-Options: nosniff`. Fonts carry the hash in their file name, since the stylesheet names them; a font whose name does not match its content stops the server. Any other path below `/-/assets/`, a stale hash included, is not found. Pages are `Cache-Control: no-store`.
+
+`POST /hooks/github`, the hook of the forge, is served by the root mux too, behind the same three: it authenticates by its signature alone and reads its body up to 5 MiB, past the bound of the application ([docs/forge.md](forge.md#webhooks-and-events)). `hooks` is a reserved name.
 
 `/-/` holds the paths of Raun that no name can take, since a name never starts with a hyphen. The root mux serves `/-/assets/`, behind the Host check, the access log and the security headers, with no session, origin check or CSRF token; its pattern never meets those of the application, such as `GET /{name}/{owner}/{repo}` (epic 5 record).
 

@@ -57,7 +57,7 @@ func TestAPIOf(t *testing.T) {
 
 func TestNew(t *testing.T) {
 	key := testKey(t)
-	valid := Options{AppID: 42, ClientID: "Iv1", ClientSecret: "s", PrivateKey: key, CallbackURL: "https://raun.example/login/callback"}
+	valid := Options{AppID: 42, ClientID: "Iv1", ClientSecret: "s", PrivateKey: key, WebhookSecret: "w", CallbackURL: "https://raun.example/login/callback"}
 	a, err := New(valid)
 	if err != nil {
 		t.Fatal(err)
@@ -71,12 +71,13 @@ func TestNew(t *testing.T) {
 		t.Errorf("GHES App = %+v, %v", a, err)
 	}
 	for name, change := range map[string]func(o *Options){
-		"web URL":       func(o *Options) { o.WebURL = "http://ghe.example.com" },
-		"app ID":        func(o *Options) { o.AppID = 0 },
-		"client ID":     func(o *Options) { o.ClientID = "" },
-		"client secret": func(o *Options) { o.ClientSecret = "" },
-		"private key":   func(o *Options) { o.PrivateKey = nil },
-		"callback URL":  func(o *Options) { o.CallbackURL = "/login/callback" },
+		"web URL":        func(o *Options) { o.WebURL = "http://ghe.example.com" },
+		"app ID":         func(o *Options) { o.AppID = 0 },
+		"client ID":      func(o *Options) { o.ClientID = "" },
+		"client secret":  func(o *Options) { o.ClientSecret = "" },
+		"private key":    func(o *Options) { o.PrivateKey = nil },
+		"webhook secret": func(o *Options) { o.WebhookSecret = "" },
+		"callback URL":   func(o *Options) { o.CallbackURL = "/login/callback" },
 	} {
 		o := valid
 		change(&o)

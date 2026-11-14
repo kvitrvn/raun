@@ -256,7 +256,7 @@ func TestServerStopsBeforeListening(t *testing.T) {
 		{
 			name:     "a partial GitHub App",
 			env:      func(dir string) []string { return []string{"RAUN_GITHUB_APP_ID=42"} },
-			want:     "RAUN_GITHUB_APP_ID: set, so RAUN_GITHUB_CLIENT_ID, RAUN_GITHUB_CLIENT_SECRET, RAUN_GITHUB_PRIVATE_KEY must be set too",
+			want:     "RAUN_GITHUB_APP_ID: set, so RAUN_GITHUB_CLIENT_ID, RAUN_GITHUB_CLIENT_SECRET, RAUN_GITHUB_PRIVATE_KEY, RAUN_GITHUB_WEBHOOK_SECRET must be set too",
 			database: false,
 		},
 		{

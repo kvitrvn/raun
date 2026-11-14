@@ -54,6 +54,7 @@ func app(keyFile string) []string {
 		"RAUN_GITHUB_CLIENT_ID=Iv23liClientID",
 		"RAUN_GITHUB_CLIENT_SECRET=client-secret-sentinel",
 		"RAUN_GITHUB_PRIVATE_KEY_FILE=" + keyFile,
+		"RAUN_GITHUB_WEBHOOK_SECRET=webhook-secret-sentinel",
 		"RAUN_SECRET_KEY=" + secretKey(1),
 	}
 }
@@ -69,7 +70,7 @@ func TestLoadConfigGitHub(t *testing.T) {
 	}
 	g := c.github
 	if g.webURL != "https://github.com" || g.appID != 42 || g.clientID != "Iv23liClientID" ||
-		g.clientSecret.Reveal() != "client-secret-sentinel" || g.privateKey == nil {
+		g.clientSecret.Reveal() != "client-secret-sentinel" || g.privateKey == nil || g.webhookSecret.Reveal() != "webhook-secret-sentinel" {
 		t.Errorf("github = %+v", g)
 	}
 
@@ -77,17 +78,18 @@ func TestLoadConfigGitHub(t *testing.T) {
 	c, err = loadConfig([]string{
 		"RAUN_GITHUB_URL=https://ghe.example.com/", "RAUN_GITHUB_APP_ID=42", "RAUN_GITHUB_CLIENT_ID=Iv1.abc",
 		"RAUN_GITHUB_CLIENT_SECRET_FILE=" + secretFile, "RAUN_GITHUB_PRIVATE_KEY=" + keyPEM,
+		"RAUN_GITHUB_WEBHOOK_SECRET_FILE=" + secretFile,
 		"RAUN_SECRET_KEY=" + secretKey(1),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.github.webURL != "https://ghe.example.com" || c.github.clientSecret.Reveal() != "secret-from-file" || c.github.privateKey == nil {
+	if c.github.webURL != "https://ghe.example.com" || c.github.clientSecret.Reveal() != "secret-from-file" || c.github.privateKey == nil || c.github.webhookSecret.Reveal() != "secret-from-file" {
 		t.Errorf("github = %+v", c.github)
 	}
 	// A file written on Windows loses its CRLF.
 	crlf := writeFile(t, dir, "crlf", "secret-crlf\r\n")
-	c, err = loadConfig(append(app(keyFile)[:2], "RAUN_GITHUB_CLIENT_SECRET_FILE="+crlf, "RAUN_GITHUB_PRIVATE_KEY_FILE="+keyFile, "RAUN_SECRET_KEY="+secretKey(1)))
+	c, err = loadConfig(append(app(keyFile)[:2], "RAUN_GITHUB_CLIENT_SECRET_FILE="+crlf, "RAUN_GITHUB_PRIVATE_KEY_FILE="+keyFile, "RAUN_GITHUB_WEBHOOK_SECRET=w", "RAUN_SECRET_KEY="+secretKey(1)))
 	if err != nil || c.github.clientSecret.Reveal() != "secret-crlf" {
 		t.Errorf("secret from a CRLF file = %q, %v", c.github.clientSecret.Reveal(), err)
 	}
@@ -113,13 +115,17 @@ func TestLoadConfigRefusesGitHub(t *testing.T) {
 		env  []string
 		want string
 	}{
-		{"an App without its ID", without("RAUN_GITHUB_APP_ID"), "RAUN_GITHUB_APP_ID: unset, but RAUN_GITHUB_CLIENT_ID, RAUN_GITHUB_CLIENT_SECRET, RAUN_GITHUB_PRIVATE_KEY set"},
+		{"an App without its ID", without("RAUN_GITHUB_APP_ID"), "RAUN_GITHUB_APP_ID: unset, but RAUN_GITHUB_CLIENT_ID, RAUN_GITHUB_CLIENT_SECRET, RAUN_GITHUB_PRIVATE_KEY, RAUN_GITHUB_WEBHOOK_SECRET set"},
+		{"a webhook secret alone", []string{"RAUN_GITHUB_WEBHOOK_SECRET=w"}, "RAUN_GITHUB_APP_ID: unset, but RAUN_GITHUB_WEBHOOK_SECRET set"},
+		{"an App without its webhook secret", without("RAUN_GITHUB_WEBHOOK_SECRET"), "RAUN_GITHUB_APP_ID: set, so RAUN_GITHUB_WEBHOOK_SECRET must be set too"},
+		{"a webhook secret with a space", append(without("RAUN_GITHUB_WEBHOOK_SECRET"), "RAUN_GITHUB_WEBHOOK_SECRET=webhook sentinel"), "RAUN_GITHUB_WEBHOOK_SECRET: not a webhook secret"},
+		{"both forms of the webhook secret", append(app(keyFile), "RAUN_GITHUB_WEBHOOK_SECRET_FILE="+garbage), "RAUN_GITHUB_WEBHOOK_SECRET and RAUN_GITHUB_WEBHOOK_SECRET_FILE: set one or neither"},
 		{"an address alone", []string{"RAUN_GITHUB_URL=https://ghe.example.com"}, "RAUN_GITHUB_APP_ID: unset, but RAUN_GITHUB_URL set"},
 		{"an empty client ID alone", []string{"RAUN_GITHUB_CLIENT_ID="}, "RAUN_GITHUB_APP_ID: unset, but RAUN_GITHUB_CLIENT_ID set"},
 		{"an App without its client ID", without("RAUN_GITHUB_CLIENT_ID"), "RAUN_GITHUB_APP_ID: set, so RAUN_GITHUB_CLIENT_ID must be set too"},
 		{"an App without its secret", without("RAUN_GITHUB_CLIENT_SECRET"), "RAUN_GITHUB_APP_ID: set, so RAUN_GITHUB_CLIENT_SECRET must be set too"},
 		{"an App without its key", without("RAUN_GITHUB_PRIVATE_KEY_FILE"), "RAUN_GITHUB_APP_ID: set, so RAUN_GITHUB_PRIVATE_KEY must be set too"},
-		{"an ID alone", []string{"RAUN_GITHUB_APP_ID=42"}, "RAUN_GITHUB_CLIENT_ID, RAUN_GITHUB_CLIENT_SECRET, RAUN_GITHUB_PRIVATE_KEY must be set too"},
+		{"an ID alone", []string{"RAUN_GITHUB_APP_ID=42"}, "RAUN_GITHUB_CLIENT_ID, RAUN_GITHUB_CLIENT_SECRET, RAUN_GITHUB_PRIVATE_KEY, RAUN_GITHUB_WEBHOOK_SECRET must be set too"},
 		{"an ID of zero", append(without("RAUN_GITHUB_APP_ID"), "RAUN_GITHUB_APP_ID=0"), "RAUN_GITHUB_APP_ID: \"0\" is not the number of a GitHub App"},
 		{"an ID with a leading zero", append(without("RAUN_GITHUB_APP_ID"), "RAUN_GITHUB_APP_ID=042"), "RAUN_GITHUB_APP_ID:"},
 		{"an ID that is a name", append(without("RAUN_GITHUB_APP_ID"), "RAUN_GITHUB_APP_ID=raun"), "RAUN_GITHUB_APP_ID:"},

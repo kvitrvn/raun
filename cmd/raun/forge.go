@@ -18,12 +18,13 @@ func newForge(cfg config) (*github.App, error) {
 		return nil, nil
 	}
 	return github.New(github.Options{
-		WebURL:       cfg.github.webURL,
-		AppID:        cfg.github.appID,
-		ClientID:     cfg.github.clientID,
-		ClientSecret: cfg.github.clientSecret,
-		PrivateKey:   cfg.github.privateKey,
-		CallbackURL:  cfg.publicURL.JoinPath("/login/callback").String(),
+		WebURL:        cfg.github.webURL,
+		AppID:         cfg.github.appID,
+		ClientID:      cfg.github.clientID,
+		ClientSecret:  cfg.github.clientSecret,
+		PrivateKey:    cfg.github.privateKey,
+		WebhookSecret: cfg.github.webhookSecret,
+		CallbackURL:   cfg.publicURL.JoinPath("/login/callback").String(),
 	})
 }
 

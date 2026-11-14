@@ -2,6 +2,9 @@ package github
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -17,9 +20,9 @@ type installation struct {
 	SuspendedAt *time.Time `json:"suspended_at"`
 }
 
-// repository is a repository as GitHub lists it for a person, with that
+// userRepository is a repository as GitHub lists it for a person, with that
 // person's rights on it.
-type repository struct {
+type userRepository struct {
 	ID       int64  `json:"id"`
 	FullName string `json:"full_name"`
 	// DefaultBranch may be null or absent for a repository without a
@@ -37,7 +40,7 @@ type repository struct {
 
 // permission maps the rights of the person on r, by the table of
 // docs/forge.md: admin, maintain and write decide; triage and read view.
-func (r repository) permission() identity.Permission {
+func (r userRepository) permission() identity.Permission {
 	p := r.Permissions
 	switch {
 	case p.Admin || p.Maintain || p.Push:
@@ -55,7 +58,7 @@ func (r repository) permission() identity.Permission {
 // repository the App is not installed on, or the person cannot see, never
 // comes. An installation removed during the walk is skipped; any other
 // failure stops it with an error, never a shorter list.
-func (a *App) walk(ctx context.Context, t identity.Tokens, visit func(repository) bool) error {
+func (a *App) walk(ctx context.Context, t identity.Tokens, visit func(userRepository) bool) error {
 	auth := bearer(t.Access)
 	var installations []int64
 	err := a.pages(ctx, "/user/installations", nil, auth, func(req request, r *response, probe bool) (int, error) {
@@ -101,7 +104,7 @@ func (a *App) walk(ctx context.Context, t identity.Tokens, visit func(repository
 				return 0, status(req, r)
 			}
 			var out struct {
-				Repositories *[]repository `json:"repositories"`
+				Repositories *[]userRepository `json:"repositories"`
 			}
 			if err := decode(req, r, &out); err != nil {
 				return 0, err
@@ -140,7 +143,7 @@ func (a *App) walk(ctx context.Context, t identity.Tokens, visit func(repository
 func (a *App) Repositories(ctx context.Context, t identity.Tokens) ([]identity.Repository, error) {
 	seen := map[int64]bool{}
 	var out []identity.Repository
-	err := a.walk(ctx, t, func(r repository) bool {
+	err := a.walk(ctx, t, func(r userRepository) bool {
 		// A repository without a default branch has no commit: there is
 		// nothing to activate yet. Permission still resolves it.
 		if !seen[r.ID] && r.DefaultBranch != "" && r.permission() != identity.PermissionNone {
@@ -178,7 +181,7 @@ func (a *App) Permission(ctx context.Context, t identity.Tokens, repo identity.R
 		return identity.PermissionNone, nil
 	}
 	p := identity.PermissionNone
-	err = a.walk(ctx, t, func(r repository) bool {
+	err = a.walk(ctx, t, func(r userRepository) bool {
 		if r.ID != id {
 			return true
 		}
@@ -189,4 +192,92 @@ func (a *App) Permission(ctx context.Context, t identity.Tokens, repo identity.R
 		return identity.PermissionNone, err
 	}
 	return p, nil
+}
+
+// Reached implements repository.Reach: every repository the App reaches,
+// across its installations, by stable identifier, sorted. It lists the
+// installations with the JWT of the App, then the repositories of each with
+// a token of that installation that can read metadata only. A suspended
+// installation reaches nothing, nor one removed since it was listed; any
+// other failure is an error, never a shorter list.
+func (a *App) Reached(ctx context.Context) ([]string, error) {
+	jwt, err := a.jwt()
+	if err != nil {
+		return nil, fmt.Errorf("github: reach: %w: %w", identity.ErrUnavailable, err)
+	}
+	var installations []int64
+	err = a.pages(ctx, "/app/installations", nil, "Bearer "+jwt, func(req request, r *response, probe bool) (int, error) {
+		switch r.status {
+		case http.StatusOK:
+		case http.StatusUnauthorized:
+			return 0, fail(req, identity.ErrUnavailable, "GitHub refuses the JWT of the App: check RAUN_GITHUB_APP_ID, the private key and the clock")
+		default:
+			return 0, status(req, r)
+		}
+		var out *[]installation
+		if err := decode(req, r, &out); err != nil {
+			return 0, err
+		}
+		if out == nil {
+			return 0, fail(req, identity.ErrUnavailable, "malformed response")
+		}
+		for _, in := range *out {
+			if in.ID <= 0 {
+				return 0, fail(req, identity.ErrUnavailable, "malformed response")
+			}
+			if in.SuspendedAt == nil && !probe {
+				installations = append(installations, in.ID)
+			}
+		}
+		return len(*out), nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	seen := map[int64]bool{}
+	for _, inst := range installations {
+		token, err := a.installationToken(ctx, scope{installation: inst, permissions: map[string]string{"metadata": "read"}})
+		if errors.Is(err, errInstallation) {
+			// Removed or suspended since it was listed: it reaches
+			// nothing.
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		err = a.pages(ctx, "/installation/repositories", nil, bearer(token), func(req request, r *response, probe bool) (int, error) {
+			if r.status != http.StatusOK {
+				return 0, status(req, r)
+			}
+			var out struct {
+				Repositories *[]struct {
+					ID int64 `json:"id"`
+				} `json:"repositories"`
+			}
+			if err := decode(req, r, &out); err != nil {
+				return 0, err
+			}
+			if out.Repositories == nil {
+				return 0, fail(req, identity.ErrUnavailable, "malformed response")
+			}
+			for _, repo := range *out.Repositories {
+				if repo.ID <= 0 {
+					return 0, fail(req, identity.ErrUnavailable, "malformed response")
+				}
+				if !probe {
+					seen[repo.ID] = true
+				}
+			}
+			return len(*out.Repositories), nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	ids := slices.Sorted(maps.Keys(seen))
+	out := make([]string, len(ids))
+	for i, n := range ids {
+		out[i] = strconv.FormatInt(n, 10)
+	}
+	return out, nil
 }

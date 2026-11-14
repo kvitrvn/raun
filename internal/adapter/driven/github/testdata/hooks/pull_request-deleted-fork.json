@@ -1,0 +1,14 @@
+{
+  "action": "closed",
+  "number": 44,
+  "pull_request": {
+    "number": 44,
+    "state": "closed",
+    "draft": false,
+    "merged": false,
+    "head": {"ref": "patch-1", "sha": "3333333333333333333333333333333333333333", "repo": null},
+    "base": {"ref": "main", "sha": "6113728f27ae82c7b1a177c8d03f9e96e0adf246", "repo": {"id": 2001}}
+  },
+  "repository": {"id": 2001},
+  "sender": {"login": "alice", "id": 1001}
+}

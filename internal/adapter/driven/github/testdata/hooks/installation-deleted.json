@@ -1,0 +1,6 @@
+{
+  "action": "deleted",
+  "installation": {"id": 501, "account": {"login": "acme", "id": 3001}, "repository_selection": "all"},
+  "repositories": [{"id": 2001, "full_name": "acme/api"}],
+  "sender": {"login": "alice", "id": 1001}
+}

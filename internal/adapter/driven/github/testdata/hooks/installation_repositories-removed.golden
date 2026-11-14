@@ -1,0 +1,12 @@
+{
+  "Delivery": {
+    "Forge": "github",
+    "ID": "72d3162e-cc78-11e3-81ab-4c9367dc0958",
+    "Event": "installation_repositories",
+    "Action": "removed",
+    "Kind": "installation",
+    "Repository": "",
+    "Push": null,
+    "PullRequest": null
+  }
+}

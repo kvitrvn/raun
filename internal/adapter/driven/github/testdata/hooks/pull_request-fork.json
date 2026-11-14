@@ -1,0 +1,24 @@
+{
+  "action": "synchronize",
+  "number": 43,
+  "before": "1111111111111111111111111111111111111111",
+  "after": "2222222222222222222222222222222222222222",
+  "pull_request": {
+    "number": 43,
+    "state": "open",
+    "draft": true,
+    "head": {
+      "ref": "main",
+      "sha": "2222222222222222222222222222222222222222",
+      "repo": {"id": 9001, "full_name": "mallory/api", "fork": true}
+    },
+    "base": {
+      "ref": "main",
+      "sha": "6113728f27ae82c7b1a177c8d03f9e96e0adf246",
+      "repo": {"id": 2001, "full_name": "acme/api", "fork": false}
+    }
+  },
+  "repository": {"id": 2001, "full_name": "acme/api"},
+  "installation": {"id": 501},
+  "sender": {"login": "mallory", "id": 6666}
+}

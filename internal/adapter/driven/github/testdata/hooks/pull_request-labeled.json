@@ -1,0 +1,8 @@
+{
+  "action": "labeled",
+  "number": 42,
+  "label": {"name": "bug"},
+  "pull_request": {"number": 42},
+  "repository": {"id": 2001, "full_name": "acme/api"},
+  "sender": {"login": "alice", "id": 1001}
+}
