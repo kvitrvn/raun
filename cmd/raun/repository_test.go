@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -228,5 +229,56 @@ func TestPermissionOfRefusedTokens(t *testing.T) {
 	}
 	if _, err := f.Permission(ctx, "a1", "2002"); !errors.Is(err, repository.ErrRefused) {
 		t.Errorf("Permission once the tokens are gone = %v, want ErrRefused", err)
+	}
+}
+
+// TestAFailedSyncIsTriedAgain: a sync that fails is tried again, after a
+// wait that grows, without a new request; a success resets the wait.
+func TestAFailedSyncIsTriedAgain(t *testing.T) {
+	r := newReachSync()
+	r.retryFirst, r.retry = time.Millisecond, 4*time.Millisecond
+	var calls int
+	results := make(chan error, 8)
+	sync := func(context.Context) ([]string, error) {
+		calls++
+		if calls <= 3 {
+			return nil, repository.ErrUnavailable
+		}
+		return []string{"2001"}, nil
+	}
+	done := make(chan struct{})
+	defer close(done)
+	var logs syncBuffer
+	go r.run(context.Background(), newLogger(slog.LevelInfo, "json", &logs), sync, func(_ []string, err error) { results <- err }, done)
+	r.request()
+	for i := range 4 {
+		select {
+		case err := <-results:
+			if (i < 3) != (err != nil) {
+				t.Fatalf("sync %d: %v", i, err)
+			}
+		case <-time.After(wait):
+			t.Fatalf("sync %d did not run: the failure was not tried again", i)
+		}
+	}
+	select {
+	case err := <-results:
+		t.Errorf("a sync ran after the success, without a request: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if got := strings.Count(logs.String(), "trying again later"); got != 3 {
+		t.Errorf("%d failures logged, want 3", got)
+	}
+	// No reach on the forge is no failure: nothing is tried again.
+	r2 := newReachSync()
+	r2.retryFirst = time.Millisecond
+	none := make(chan error, 4)
+	go r2.run(context.Background(), newLogger(slog.LevelInfo, "json", &logs), func(context.Context) ([]string, error) { return nil, repository.ErrNoReach }, func(_ []string, err error) { none <- err }, done)
+	r2.request()
+	<-none
+	select {
+	case <-none:
+		t.Error("a forge without reach was asked again")
+	case <-time.After(20 * time.Millisecond):
 	}
 }

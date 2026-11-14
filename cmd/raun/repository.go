@@ -119,16 +119,28 @@ func newRepositories(forge identity.Forge, permissions *identity.PermissionServi
 // reachTimeout bounds one sync of the reach of the App.
 const reachTimeout = 2 * time.Minute
 
+// The waits before a failed sync is tried again: doubled after each failure
+// in a row, up to the last.
+const (
+	reachRetryFirst = 30 * time.Second
+	reachRetryMax   = 30 * time.Minute
+)
+
 // reachSync asks the forge which repositories its App reaches, one sync at
 // a time: after the answer to an installation delivery, and once at start,
 // which recovers a sync a stop cut short. A request that comes while one
 // runs makes one more run afterwards, never more: each run reads the state
-// of the forge at that moment, never a payload.
+// of the forge at that moment, never a payload. A sync that fails is tried
+// again after a wait that grows with each failure in a row, until one
+// succeeds, a request comes, or the server stops.
 type reachSync struct {
-	requests chan struct{}
+	requests          chan struct{}
+	retryFirst, retry time.Duration // the first wait, and the longest
 }
 
-func newReachSync() *reachSync { return &reachSync{requests: make(chan struct{}, 1)} }
+func newReachSync() *reachSync {
+	return &reachSync{requests: make(chan struct{}, 1), retryFirst: reachRetryFirst, retry: reachRetryMax}
+}
 
 // request asks for a sync, without waiting.
 func (r *reachSync) request() {
@@ -141,6 +153,8 @@ func (r *reachSync) request() {
 // run syncs on each request until done or the end of ctx, through sync, and
 // tells synced, when set, what each sync lost.
 func (r *reachSync) run(ctx context.Context, logger *slog.Logger, sync func(context.Context) ([]string, error), synced func([]string, error), done <-chan struct{}) {
+	var retry <-chan time.Time
+	wait := r.retryFirst
 	for {
 		select {
 		case <-done:
@@ -148,19 +162,27 @@ func (r *reachSync) run(ctx context.Context, logger *slog.Logger, sync func(cont
 		case <-ctx.Done():
 			return
 		case <-r.requests:
-			c, cancel := context.WithTimeout(ctx, reachTimeout)
-			lost, err := sync(c)
-			cancel()
-			switch {
-			case errors.Is(err, repository.ErrNoReach):
-			case err != nil:
-				logger.Warn("sync the repositories the App reaches", slog.String("error", err.Error()))
-			case len(lost) > 0:
+		case <-retry:
+		}
+		retry = nil
+		c, cancel := context.WithTimeout(ctx, reachTimeout)
+		lost, err := sync(c)
+		cancel()
+		switch {
+		case errors.Is(err, repository.ErrNoReach):
+		case err != nil && ctx.Err() == nil:
+			logger.Warn("sync the repositories the App reaches; trying again later",
+				slog.String("error", err.Error()), slog.Duration("wait", wait))
+			retry = time.After(wait)
+			wait = min(2*wait, r.retry)
+		case err == nil:
+			wait = r.retryFirst
+			if len(lost) > 0 {
 				logger.Info("repositories the App no longer reaches deactivated", slog.Int("count", len(lost)))
 			}
-			if synced != nil {
-				synced(lost, err)
-			}
+		}
+		if synced != nil {
+			synced(lost, err)
 		}
 	}
 }

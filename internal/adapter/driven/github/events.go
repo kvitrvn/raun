@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -157,8 +158,8 @@ func parseDelivery(event string, body []byte) (repository.Delivery, error) {
 	if err := dec.Decode(&p); err != nil {
 		return repository.Delivery{}, fmt.Errorf("not a JSON object: %v", err)
 	}
-	if dec.More() {
-		return repository.Delivery{}, fmt.Errorf("more than one JSON value")
+	if _, err := dec.Token(); err != io.EOF {
+		return repository.Delivery{}, fmt.Errorf("something after the JSON object")
 	}
 	d := repository.Delivery{Event: event, Action: p.Action, Kind: repository.KindIgnored}
 	if p.Repository != nil {
