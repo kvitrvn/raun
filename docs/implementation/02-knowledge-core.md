@@ -216,7 +216,7 @@ The invariant of `AGENTS.md` stands: every format read or written outside the da
 | The repository setting for the maximum citation length | Epic 8 |
 | The canonical serialization of the export | Epic 11 |
 | How the repository configuration maps an omitted documentation set to the default | Epic 8 |
-| The Git version shipped with the runner, and whether it owns its checkouts | Epic 6 |
+| The Git version shipped with the runner, and whether it owns its checkouts | Epic 6, decided ([record](06-jobs-and-runner.md#runner-and-git)): Git 2.32 or later, checked at start; one directory per run, owned and removed by the runner; shipping in epic 13 |
 | Pagination of `List` | Epic 11, with the screens that list items |
 
 ## Exit criteria

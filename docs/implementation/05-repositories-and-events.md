@@ -128,8 +128,8 @@ Choices #34 made within the decisions above, for the owner to confirm in its rev
 | --- | --- |
 | Moving a repository to another workspace | Not planned; a later epic if needed |
 | Deleting the knowledge of a repository, and the retention of events | Epic 13 |
-| The clone credential in the preconditions of activation | Epic 6 |
-| Cancelling the jobs of a deactivated repository | Epic 6, with the jobs |
+| The clone credential in the preconditions of activation | Epic 6, decided ([record](06-jobs-and-runner.md#clone-credential)), #39 |
+| Cancelling the jobs of a deactivated repository | Epic 6, decided ([record](06-jobs-and-runner.md#queue-semantics)), #37 |
 | The format and decoding of `.raun.yaml`, and its invalid state | Epic 8 |
 | What a status and a comment report, and when | Epic 7 |
 | The analysis a push triggers | Epic 10 |

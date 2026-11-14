@@ -9,6 +9,7 @@ This directory describes what Raun is and what is implemented. A page never desc
 | [threat-model.md](threat-model.md) | Assets, actors, trust boundaries and the answer to each threat |
 | [format.md](format.md) | Knowledge items, statuses and transitions, evidence states, identifiers, revisions, format versions |
 | [forge.md](forge.md) | The forge port, its capabilities, the permission mapping and the GitHub App |
+| [runner.md](runner.md) | Runners: how one is created and run, the protocol between runner and server, the clone credential and logs |
 | [administration.md](administration.md) | Administrators of the instance and the Instance settings screen |
 | [web.md](web.md) | The web interface: pinned frontend tools, components, Content Security Policy, generation, licenses |
 | [implementation/](implementation/README.md) | One record per epic with the choices of its review |
