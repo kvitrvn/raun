@@ -67,7 +67,7 @@ func scriptedApp(t *testing.T, s *scripted, waits *[]time.Duration) *App {
 	t.Helper()
 	a, err := New(Options{
 		WebURL: s.srv.URL, AppID: 42, ClientID: "Iv1", ClientSecret: "client-secret-sentinel",
-		PrivateKey: testKey(t), CallbackURL: "https://raun.example/login/callback",
+		PrivateKey: testKey(t), WebhookSecret: "webhook-secret-sentinel", CallbackURL: "https://raun.example/login/callback",
 		HTTPClient: s.srv.Client(),
 		Now:        startTime,
 		Wait: func(ctx context.Context, d time.Duration) error {

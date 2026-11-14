@@ -1,0 +1,24 @@
+{
+  "Delivery": {
+    "Forge": "github",
+    "ID": "72d3162e-cc78-11e3-81ab-4c9367dc0958",
+    "Event": "push",
+    "Action": "",
+    "Kind": "push",
+    "Repository": "2001",
+    "Push": {
+      "Ref": "refs/tags/v1.0.0",
+      "Tag": true,
+      "Before": "0000000000000000000000000000000000000000",
+      "After": "0d1a26e67d8f5eaf1f6ba5c57fc3c7d91ac0fd1c",
+      "Forced": true,
+      "Deleted": false,
+      "Head": "0d1a26e67d8f5eaf1f6ba5c57fc3c7d91ac0fd1c",
+      "Sender": {
+        "ID": "1001",
+        "Login": "alice"
+      }
+    },
+    "PullRequest": null
+  }
+}

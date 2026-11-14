@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kvitrvn/raun/internal/core/identity"
+	"github.com/kvitrvn/raun/internal/core/repository"
 )
 
 // Name is the name the server gives GitHub, the prefix of the identities of
@@ -36,6 +37,9 @@ type Options struct {
 	ClientSecret identity.Secret
 	// PrivateKey signs the JWT of the App; ParsePrivateKey reads it.
 	PrivateKey *rsa.PrivateKey
+	// WebhookSecret is the secret of the webhook of the App, one per
+	// instance, which signs every delivery.
+	WebhookSecret identity.Secret
 	// CallbackURL is where GitHub sends a person back after they approve
 	// Raun: <RAUN_PUBLIC_URL>/login/callback.
 	CallbackURL string
@@ -55,18 +59,21 @@ type App struct {
 	clientID     string
 	clientSecret identity.Secret
 	key          *rsa.PrivateKey
-	callback     string
-	web          string // without a trailing slash
-	api          string // without a trailing slash
-	client       *http.Client
-	now          func() time.Time
-	wait         func(ctx context.Context, d time.Duration) error
-	tokens       *tokenCache
+	// webhookSecret signs the deliveries of the webhook of the App.
+	webhookSecret identity.Secret
+	callback      string
+	web           string // without a trailing slash
+	api           string // without a trailing slash
+	client        *http.Client
+	now           func() time.Time
+	wait          func(ctx context.Context, d time.Duration) error
+	tokens        *tokenCache
 }
 
 var (
 	_ identity.Forge       = (*App)(nil)
 	_ identity.Memberships = (*App)(nil)
+	_ repository.Reach     = (*App)(nil)
 )
 
 // CheckWebURL checks the address of a GitHub: an absolute https URL with a
@@ -128,6 +135,9 @@ func New(opts Options) (*App, error) {
 	if opts.PrivateKey == nil {
 		errs = append(errs, errors.New("private key: missing"))
 	}
+	if opts.WebhookSecret.Reveal() == "" {
+		errs = append(errs, errors.New("webhook secret: empty"))
+	}
 	if u, err := url.Parse(opts.CallbackURL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
 		errs = append(errs, fmt.Errorf("callback URL: %q is not an http or https URL", opts.CallbackURL))
 	}
@@ -154,17 +164,18 @@ func New(opts Options) (*App, error) {
 		wait = sleep
 	}
 	return &App{
-		appID:        opts.AppID,
-		clientID:     opts.ClientID,
-		clientSecret: opts.ClientSecret,
-		key:          opts.PrivateKey,
-		callback:     opts.CallbackURL,
-		web:          web,
-		api:          api,
-		client:       client,
-		now:          now,
-		wait:         wait,
-		tokens:       newTokenCache(),
+		appID:         opts.AppID,
+		clientID:      opts.ClientID,
+		clientSecret:  opts.ClientSecret,
+		key:           opts.PrivateKey,
+		webhookSecret: opts.WebhookSecret,
+		callback:      opts.CallbackURL,
+		web:           web,
+		api:           api,
+		client:        client,
+		now:           now,
+		wait:          wait,
+		tokens:        newTokenCache(),
 	}, nil
 }
 

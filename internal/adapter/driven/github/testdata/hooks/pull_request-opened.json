@@ -1,0 +1,35 @@
+{
+  "action": "opened",
+  "number": 42,
+  "pull_request": {
+    "url": "https://api.github.com/repos/acme/api/pulls/42",
+    "id": 1800000001,
+    "number": 42,
+    "state": "open",
+    "locked": false,
+    "title": "Add the billing {{ template }} $(rm -rf /)",
+    "user": {"login": "alice", "id": 1001},
+    "body": "../../etc/passwd",
+    "draft": false,
+    "merged": false,
+    "head": {
+      "label": "acme:feature/billing",
+      "ref": "feature/billing",
+      "sha": "9c48853fa3dc5c1c3d6f1f1cd1f2743e72652840",
+      "user": {"login": "acme", "id": 3001},
+      "repo": {"id": 2001, "full_name": "acme/api", "fork": false}
+    },
+    "base": {
+      "label": "acme:main",
+      "ref": "main",
+      "sha": "6113728f27ae82c7b1a177c8d03f9e96e0adf246",
+      "user": {"login": "acme", "id": 3001},
+      "repo": {"id": 2001, "full_name": "acme/api", "fork": false}
+    },
+    "author_association": "MEMBER"
+  },
+  "repository": {"id": 2001, "full_name": "acme/api", "private": true},
+  "organization": {"login": "acme", "id": 3001},
+  "installation": {"id": 501},
+  "sender": {"login": "alice", "id": 1001}
+}

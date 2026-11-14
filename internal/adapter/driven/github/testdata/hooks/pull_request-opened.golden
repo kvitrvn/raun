@@ -1,0 +1,27 @@
+{
+  "Delivery": {
+    "Forge": "github",
+    "ID": "72d3162e-cc78-11e3-81ab-4c9367dc0958",
+    "Event": "pull_request",
+    "Action": "opened",
+    "Kind": "pull_request",
+    "Repository": "2001",
+    "Push": null,
+    "PullRequest": {
+      "Number": 42,
+      "Action": "opened",
+      "HeadRef": "feature/billing",
+      "HeadCommit": "9c48853fa3dc5c1c3d6f1f1cd1f2743e72652840",
+      "BaseRef": "main",
+      "BaseCommit": "6113728f27ae82c7b1a177c8d03f9e96e0adf246",
+      "HeadRepository": "2001",
+      "BaseRepository": "2001",
+      "Draft": false,
+      "Sender": {
+        "ID": "1001",
+        "Login": "alice"
+      }
+    }
+  },
+  "Fork": false
+}

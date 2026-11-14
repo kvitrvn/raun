@@ -1,0 +1,14 @@
+{
+  "ref": "refs/tags/v1.0.0",
+  "before": "0000000000000000000000000000000000000000",
+  "after": "0d1a26e67d8f5eaf1f6ba5c57fc3c7d91ac0fd1c",
+  "repository": {"id": 2001, "full_name": "acme/api", "private": true, "default_branch": "main"},
+  "installation": {"id": 501},
+  "sender": {"login": "alice", "id": 1001, "type": "User"},
+  "created": true,
+  "deleted": false,
+  "forced": true,
+  "base_ref": "refs/heads/main",
+  "commits": [],
+  "head_commit": {"id": "0d1a26e67d8f5eaf1f6ba5c57fc3c7d91ac0fd1c", "message": "Release"}
+}

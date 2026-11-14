@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -149,6 +150,7 @@ func newGitHub(t *testing.T, key *rsa.PrivateKey) *gitHub {
 	mux.HandleFunc("GET /api/v3/user/installations", g.userInstallations)
 	mux.HandleFunc("GET /api/v3/user/installations/{id}/repositories", g.installationRepositories)
 	mux.HandleFunc("GET /api/v3/user/memberships/orgs", g.memberships)
+	mux.HandleFunc("GET /api/v3/app/installations", g.appInstallations)
 	mux.HandleFunc("POST /api/v3/app/installations/{id}/access_tokens", g.mint)
 	mux.HandleFunc("GET /api/v3/installation/repositories", g.asInstallation)
 	g.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -178,14 +180,15 @@ func newGitHub(t *testing.T, key *rsa.PrivateKey) *gitHub {
 func (g *gitHub) app(t *testing.T, key *rsa.PrivateKey, waits *[]time.Duration) *App {
 	t.Helper()
 	a, err := New(Options{
-		WebURL:       g.srv.URL,
-		AppID:        g.appID,
-		ClientID:     g.clientID,
-		ClientSecret: identity.Secret(g.clientSecret),
-		PrivateKey:   key,
-		CallbackURL:  g.callback,
-		HTTPClient:   g.srv.Client(),
-		Now:          g.clock.Now,
+		WebURL:        g.srv.URL,
+		AppID:         g.appID,
+		ClientID:      g.clientID,
+		ClientSecret:  identity.Secret(g.clientSecret),
+		PrivateKey:    key,
+		WebhookSecret: identity.Secret(webhookSecret),
+		CallbackURL:   g.callback,
+		HTTPClient:    g.srv.Client(),
+		Now:           g.clock.Now,
 		Wait: func(_ context.Context, d time.Duration) error {
 			if waits != nil {
 				*waits = append(*waits, d)
@@ -510,5 +513,36 @@ func (g *gitHub) asInstallation(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Bad credentials"})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"total_count": 0, "repositories": []any{}})
+	var repos []map[string]any
+	for _, repo := range g.repos {
+		// The token of an installation records the installation in
+		// person.
+		if repo.installation == tok.person {
+			repos = append(repos, map[string]any{"id": repo.id, "full_name": repo.fullName})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"total_count": len(repos), "repositories": append([]map[string]any{}, page(r, repos)...)})
+}
+
+// webhookSecret is the secret of the webhook of the scripted App.
+const webhookSecret = "webhook-secret-sentinel"
+
+// appInstallations lists the installations of the App, for its JWT.
+func (g *gitHub) appInstallations(w http.ResponseWriter, r *http.Request) {
+	if err := g.checkJWT(r); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "A JSON web token could not be decoded: " + err.Error()})
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	ids := slices.Sorted(maps.Keys(g.installations))
+	out := []map[string]any{}
+	for _, id := range page(r, ids) {
+		var suspended any
+		if g.installations[id] {
+			suspended = "2026-11-01T10:00:00Z"
+		}
+		out = append(out, map[string]any{"id": id, "app_id": g.appID, "suspended_at": suspended})
+	}
+	writeJSON(w, http.StatusOK, out)
 }

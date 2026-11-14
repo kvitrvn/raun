@@ -1,0 +1,6 @@
+{
+  "action": "opened",
+  "issue": {"number": 7, "title": "Hello"},
+  "repository": {"id": 2001, "full_name": "acme/api"},
+  "sender": {"login": "alice", "id": 1001}
+}

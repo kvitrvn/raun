@@ -1,0 +1,8 @@
+{
+  "action": "removed",
+  "installation": {"id": 501},
+  "repository_selection": "selected",
+  "repositories_added": [],
+  "repositories_removed": [{"id": 2002, "full_name": "acme/web"}],
+  "sender": {"login": "alice", "id": 1001}
+}

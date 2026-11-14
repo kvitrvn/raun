@@ -1,0 +1,27 @@
+{
+  "Delivery": {
+    "Forge": "github",
+    "ID": "72d3162e-cc78-11e3-81ab-4c9367dc0958",
+    "Event": "pull_request",
+    "Action": "closed",
+    "Kind": "pull_request",
+    "Repository": "2001",
+    "Push": null,
+    "PullRequest": {
+      "Number": 44,
+      "Action": "closed",
+      "HeadRef": "patch-1",
+      "HeadCommit": "3333333333333333333333333333333333333333",
+      "BaseRef": "main",
+      "BaseCommit": "6113728f27ae82c7b1a177c8d03f9e96e0adf246",
+      "HeadRepository": "",
+      "BaseRepository": "2001",
+      "Draft": false,
+      "Sender": {
+        "ID": "1001",
+        "Login": "alice"
+      }
+    }
+  },
+  "Fork": true
+}
