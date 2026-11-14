@@ -109,6 +109,18 @@ Choices #33 made within the decisions above, for the owner to confirm in its rev
 - **Before a first read**, the page says not read yet.
 - **On GitHub**, the installation of a repository comes from `GET /repositories/{id}/installation`, and the token is minted for that repository alone, with Contents read.
 
+## Implementation of #34
+
+Choices #34 made within the decisions above, for the owner to confirm in its review:
+
+- **The contract lives in `internal/forgetest`**, two interfaces in standard types that the adapters meet without importing it, until epic 7 declares the port in the context that publishes.
+- **One operation per comment**: it finds the comment of Raun, then updates it or creates one, so the check of the author and the marker stay in each forge, never in a caller. It takes plain text and escapes it; epic 7 decides whether a report needs trusted formatting, and changes the contract then.
+- **Raun's identity on GitHub** is the bot of the App, `<slug>[bot]` of type `Bot`, the slug read from `GET /app`; a comment that names another App is not Raun's.
+- **Several comments of Raun**: the oldest is updated, the others left alone.
+- **Concurrency**: the comments of one pull request are written one at a time in a server; across servers, two could create two comments, and the oldest stays the one updated.
+- **Bounds**: a description of 140 characters, one line, refused beyond; a comment of 65,000 bytes, cut beyond, saying so. Writes are never sent again after a failure.
+- **Permissions**: Commit statuses write for a status, Pull requests write for a comment, each in a token of the repository alone; the App already asks for both.
+
 ## Deferred
 
 | Topic | Where |
@@ -137,5 +149,5 @@ Choices #33 made within the decisions above, for the owner to confirm in its rev
 - [x] A test activates a repository on the fake forge, sends a signed push webhook and gets one normalized event (#31, #32).
 - [x] A test refuses an unsigned webhook, ignores a duplicate delivery and a replayed body, and keeps a pull request closed and reopened at the same head (#32).
 - [x] A test refuses an activation by a person without write access, and keeps the knowledge of a renamed repository (#31).
-- [ ] A status and a pull request comment are published on the fake forge, and the comment is updated in place (#34).
+- [x] A status and a pull request comment are published on the fake forge, and the comment is updated in place (#34).
 - [ ] `make verify` passes (checked at the end of the epic).
