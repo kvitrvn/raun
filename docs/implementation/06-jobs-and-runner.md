@@ -123,6 +123,21 @@ Choices #37 made within the decisions above, for the owner to confirm in its rev
 - **Cancellation of a repository's jobs** happens in the transaction of `Deactivate` and of `SetReach`, which now takes the time of the change, with the reason `deactivated`.
 - **Migration 8** adds the tables `jobs` and `runs`: one open run per job at most, held by a unique index, and the queue, the coalescing key, the repository and the delivery indexed for the queries of the queue.
 
+## Implementation of #38
+
+Choices #38 made within the decisions above, for the owner to confirm in its review:
+
+- **Runners live in `internal/core/job`**: `job.Runner`, `job.NewRunner`, the port `job.RunnerStore`, its contract suite `jobtest.RunnerSuite`, and `job.Registry`, which checks the administrator role itself on every change, after the web adapter did.
+- **A claim names its runner.** `RunnerStore.ClaimFor` reads the runner, its scope and its capabilities in the transaction of the claim: a runner revoked before never gets a job, and a claim never takes its scope from the request.
+- **One rule loses a run**: the sweeper and the revocation share it, so a run lost to a revocation counts as one lost to an expired lease.
+- **The token** is 32 random bytes in hexadecimal, as a lease token is; a request finds its runner by the SHA-256 of the token, on a unique index. A token longer than 128 bytes is refused before it is hashed.
+- **One refusal.** A missing or malformed `Authorization`, an unknown, replaced or revoked token, all answer the same `401` with `WWW-Authenticate`; a store that fails answers `500`. A cookie is never read on the runner API, and the token of a runner opens no page.
+- **Until #39** every path below `/api/runner/` authenticates the runner and answers `404`.
+- **The last contact** is written once a minute at most, apart from the read that authenticates; the release stays empty until #39 reads it.
+- **A revoked runner stays**, with its name, which no other runner takes; it is never given a token again.
+- **No editing of a runner** yet: its scope and capabilities are set when it is created; changing them is left to #41 or a later need.
+- **Migration 9** adds the table `runners`, and an index on the open runs of a runner; `runs.runner` keeps no reference, as migration 8 left it.
+
 ## Deferred
 
 | Topic | Where |
@@ -153,7 +168,7 @@ Choices #37 made within the decisions above, for the owner to confirm in its rev
 - [ ] The end-to-end test starts a server, the fake forge and a runner, sends a simulated webhook, and sees a job claimed, executed and finished (#42).
 - [ ] A test kills a runner in the middle of a job and sees the lease expire (#42; the queue side by #37: `jobtest.Suite`, a lost run is retried twice, and `cmd/raun/jobs_test.go`, `TestJobsThroughTheServer`).
 - [x] Concurrent claims never return the same job, on SQLite (#37: `internal/adapter/driven/sqlite/jobs_test.go`, `TestClaimsAcrossStores`, and the contract suite).
-- [ ] A revoked runner is refused, and a runner of a workspace never claims a job of another (#38).
+- [x] A revoked runner is refused, and a runner of a workspace never claims a job of another (#38: `jobtest.RunnerSuite`, on memory and SQLite; `internal/adapter/driving/web/runners_test.go`; `cmd/raun/runners_test.go`, `TestRunnersThroughTheServer`).
 - [ ] An expired or foreign lease is refused, and a result that fails validation stores nothing (#39).
 - [ ] The clone credential is absent from the checkout, the environment of the handler and the logs (#40).
 - [ ] `make verify` passes (checked at the end of the epic).
