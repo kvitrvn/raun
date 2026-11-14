@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kvitrvn/raun/internal/core/identity"
+	"github.com/kvitrvn/raun/internal/core/identity/identitytest"
 	"github.com/kvitrvn/raun/internal/core/repository"
 	"github.com/kvitrvn/raun/internal/forgetest"
 )
@@ -160,11 +163,59 @@ func TestNoRepositoriesWithoutAForge(t *testing.T) {
 	if repositoryService(nil) != nil {
 		t.Error("a nil service is not nil for the handler")
 	}
-	if got := missingCapabilities(nil); len(got) != len(repository.Preconditions) {
+	if got := missingCapabilities(nil); len(got) != len(repository.Preconditions()) {
 		t.Errorf("missingCapabilities = %v", got)
 	}
 	f := forgetest.New("github", nil)
 	if _, ok := any(f).(repository.Reach); !ok {
 		t.Error("the fake forge cannot tell its reach")
+	}
+}
+
+// TestPermissionOfRefusedTokens: tokens the forge revoked, tokens gone and an
+// account without an identity on the forge are refusals of the tokens, which
+// the page answers with a new login; a forge that cannot answer stays one.
+func TestPermissionOfRefusedTokens(t *testing.T) {
+	ctx := context.Background()
+	fake, _ := forgetest.Scenario("github", false)
+	store := &identitytest.Memory{}
+	now := func() time.Time { return time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC) }
+	tokens := identity.NewTokenService(fake, store, now)
+	permissions := identity.NewPermissionService(fake, tokens, store, now)
+	f := repositoryForge{name: "github", permissions: permissions}
+
+	code, _, err := fake.Approve("1001", fake.AuthorizeURL("s", identity.Challenge("verifier-0123456789-0123456789-0123456789")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, tk, err := fake.Exchange(ctx, code, "verifier-0123456789-0123456789-0123456789")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PutSignup(ctx, identity.Signup{Session: "s", Identity: id, Tokens: tk, ExpiresAt: now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CompleteSignup(ctx, "s", identity.Account{ID: "a1", Name: "alice"}, now()); err != nil {
+		t.Fatal(err)
+	}
+	if p, err := f.Permission(ctx, "a1", "2001"); err != nil || p != repository.PermissionDecide {
+		t.Fatalf("Permission = %v, %v", p, err)
+	}
+	if p, err := f.Permission(ctx, "a1", "2003"); err != nil || p != repository.PermissionNone {
+		t.Errorf("Permission of a hidden repository = %v, %v; want none", p, err)
+	}
+	if _, err := f.Permission(ctx, "nobody", "2001"); !errors.Is(err, repository.ErrRefused) {
+		t.Errorf("Permission without an identity = %v, want ErrRefused", err)
+	}
+	fake.SetDown(true)
+	if _, err := f.Permission(ctx, "a1", "2002"); !errors.Is(err, repository.ErrUnavailable) {
+		t.Errorf("Permission with the forge down = %v, want ErrUnavailable", err)
+	}
+	fake.SetDown(false)
+	if err := store.RevokeTokens(ctx, id.Key()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Permission(ctx, "a1", "2002"); !errors.Is(err, repository.ErrRefused) {
+		t.Errorf("Permission once the tokens are gone = %v, want ErrRefused", err)
 	}
 }

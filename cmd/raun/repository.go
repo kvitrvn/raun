@@ -46,11 +46,12 @@ func (f repositoryForge) Repositories(ctx context.Context, account string) ([]re
 	return out, nil
 }
 
-// Permission maps the permission service: a permission it cannot establish
-// for a reason other than an unavailable forge is a refusal, none.
+// Permission maps the permission service. A forge that cannot answer, or
+// tokens it refuses, revoked or gone, are errors, as the port says; a token
+// the forge refuses for this repository alone is a refusal, none.
 func (f repositoryForge) Permission(ctx context.Context, account, id string) (repository.Permission, error) {
 	p, err := f.permissions.Permission(ctx, account, identity.Repository{Forge: f.name, ID: id})
-	if errors.Is(err, identity.ErrUnavailable) {
+	if err != nil && !errors.Is(err, identity.ErrUnauthorized) {
 		return repository.PermissionNone, forgeError(err)
 	}
 	switch p {
@@ -85,7 +86,7 @@ func (w repositoryWorkspaces) WorkspaceOf(ctx context.Context, name, account str
 // declare their operations and detect them here; until then no repository
 // can be activated, and the Repositories screen says why.
 func missingCapabilities(identity.Forge) []repository.Capability {
-	return repository.Preconditions
+	return repository.Preconditions()
 }
 
 // newRepositories returns the repository service of forge, nil without a
