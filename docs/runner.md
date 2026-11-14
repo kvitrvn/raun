@@ -12,7 +12,7 @@ An administrator of the instance (`RAUN_ADMINS`) creates a runner on the Runners
 - **a scope**: the instance, whose jobs of every workspace it takes, or one workspace, whose jobs alone it takes;
 - **capabilities**: the kinds of job it may take. `noop` exists in epic 6; `check` comes with epic 7, `agents` with epics 9 and 10. The runner cannot declare or widen them itself.
 
-The screen shows the token of the runner once. Raun keeps only its SHA-256: a lost token is regenerated, which refuses the old one at once. Revoking the runner refuses every later request and sends the jobs it was running back to the queue.
+The screen shows the token of the runner once. Raun keeps only its SHA-256: a lost token is regenerated, which refuses the old one at once; a runner still using it stops, and the jobs it was running are lost and go back to the queue. Revoking the runner refuses every later request and sends the jobs it was running back to the queue.
 
 ## Run a runner
 
@@ -55,16 +55,16 @@ Version 1. Every route is under `/api/runner/v1/`, takes and gives JSON, and nee
 | `User-Agent` | `raun-runner/<release>` |
 | `Raun-Lease` | The lease token of the run, on the routes of a run |
 
-Bodies are decoded strictly: an unknown field, a body past the bound of its route, or a value out of range is refused with `400`. An error answers `{"error": "<what went wrong>"}`, which holds no token.
+Bodies are decoded strictly: an unknown field or a value out of range is refused with `400`, a body past the bound of its route with `413`. An error answers `{"error": "<what went wrong>"}`, which holds no token.
 
 | Route | Body | Bound | Answers |
 | --- | --- | --- | --- |
 | `POST /api/runner/v1/claim` | `{}` | 1 KiB | `200` a job, `204` none after up to 30 seconds |
 | `POST /api/runner/v1/runs/{run}/heartbeat` | `{}` | 1 KiB | `200` the new end of the lease and whether the job is cancelled; `409` the run is no longer current |
-| `POST /api/runner/v1/runs/{run}/log` | `{"seq": n, "text": "..."}` | 64 KiB of text | `204`; `409` with the expected `seq`, or for a run no longer current |
+| `POST /api/runner/v1/runs/{run}/log` | `{"seq": n, "text": "..."}` | 512 KiB, and 64 KiB of decoded text | `204`; `409` with the expected `seq`, or for a run no longer current |
 | `POST /api/runner/v1/runs/{run}/result` | `{"outcome": "succeeded" \| "failed", "summary": "...", "data": {...}}` | That of the kind (`noop`: 4 KiB) | `204`; `409` for another result, or a run no longer current; `422` a result its kind refuses, which fails the job |
 
-Any route answers `401` to a token that is unknown or revoked, and `400` to a protocol the server does not speak.
+Any route answers `401` to a token that is unknown or revoked, and `400` to a protocol the server does not speak, whether the header or the path names it.
 
 ### A normal run
 
@@ -127,11 +127,11 @@ Any request: `401`. The runs it held were lost when it was revoked; the runner s
 
 ### A failed fetch
 
-The commit cannot be fetched after three tries (the credential refused, the commit gone, the forge unreachable). The runner reports `{"outcome": "failed", "summary": "the commit could not be fetched"}`, which fails the job without retry. When the server cannot mint the credential, the claim does not give the job: the job may be claimed again 30 seconds later.
+The commit cannot be fetched after three tries (the credential refused, the commit gone, the forge unreachable). The runner reports `{"outcome": "failed", "summary": "the commit could not be fetched"}`, which fails the job without retry. When the server cannot mint the credential, the claim does not give the job and goes on waiting for another; the job may be claimed again 30 seconds later, and no run is counted.
 
 ## The clone credential
 
-On GitHub, an installation token of the App for the repository of the job alone, with Contents read, which lasts one hour. The server mints it at the claim and never stores it. The runner passes it to the one `git fetch --depth 1` of the commit as an HTTP header, through the environment of that Git process alone, never on its command line, in a file or in the configuration of the checkout, and forgets it before the handler starts. It reads the whole repository for its hour: a runner is trusted with the repositories of the jobs it takes, no more. The head commit of a pull request from a fork is fetched from the base repository.
+On GitHub, an installation token of the App for the repository of the job alone, with Contents read, which lasts one hour at most. The server mints it for the run at the claim, holds it in memory only, and revokes it when the run ends. The runner passes it to the one `git fetch --depth 1` of the commit as an HTTP header, through the environment of that Git process alone, never on its command line, in a file or in the configuration of the checkout, and forgets it before the handler starts. It reads the whole repository until then: a runner is trusted with the repositories of the jobs it takes, no more. The head commit of a pull request from a fork is fetched from the base repository.
 
 ## Logs
 
