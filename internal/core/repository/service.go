@@ -33,6 +33,9 @@ type Options struct {
 	// Configurations keeps the configuration of each repository; required
 	// with Files.
 	Configurations ConfigurationStore
+	// Jobs is the policy point: the jobs a delivery creates. Nil creates
+	// none.
+	Jobs JobPolicy
 	// ReadTimeout bounds a read of a configuration; zero means
 	// ReadTimeout.
 	ReadTimeout time.Duration
@@ -54,6 +57,7 @@ type Service struct {
 	log        EventStore
 	files      Files
 	configs    ConfigurationStore
+	jobs       JobPolicy
 	// refreshing serializes the reads of the configuration of each
 	// repository, whoever asks: a later read resolves a later head, and
 	// stores last.
@@ -76,6 +80,7 @@ func New(opts Options) *Service {
 		files:       files,
 		readTimeout: cmp.Or(opts.ReadTimeout, ReadTimeout),
 		configs:     opts.Configurations,
+		jobs:        opts.Jobs,
 		forge:       opts.Forge,
 		workspaces:  opts.Workspaces,
 		store:       opts.Store,
@@ -415,7 +420,8 @@ type Receipt struct {
 // Receive verifies, parses and records a delivery of the forge, header
 // giving the headers of its request and body its raw body. It keeps the
 // keys of every delivery the forge signed and, for an active repository,
-// a row of its event log, in one operation. It changes nothing else: what
+// a row of its event log and the jobs the policy point asks for it, in one
+// operation. It changes nothing else: what
 // a delivery causes runs after it, such as asking the forge what the App
 // reaches on OutcomeInstallation. Errors: ErrNoEvents, ErrSignature,
 // ErrMalformed, and those of the store, after which nothing is kept.
@@ -436,7 +442,11 @@ func (s *Service) Receive(ctx context.Context, header func(string) string, body 
 	if err != nil {
 		return Receipt{}, err
 	}
-	logged, err := s.log.Record(ctx, k, row)
+	var requests []JobRequest
+	if s.jobs != nil && row != nil && row.Result == ResultRecorded {
+		requests = s.jobs(d)
+	}
+	logged, err := s.log.Record(ctx, k, row, requests)
 	switch {
 	case errors.Is(err, ErrDuplicate):
 		return Receipt{Outcome: OutcomeDuplicate}, nil
@@ -536,7 +546,7 @@ func (s *Service) SyncReach(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ask which repositories the App reaches: %w", err)
 	}
-	lost, err := s.store.SetReach(ctx, s.forge.Name(), reached)
+	lost, err := s.store.SetReach(ctx, s.forge.Name(), reached, s.now().UTC())
 	if err != nil {
 		return nil, fmt.Errorf("store the reach of the App: %w", err)
 	}

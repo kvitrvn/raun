@@ -220,7 +220,7 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		other := repo("2001", "other/api", beta, bob)
 		other.Forge = "gitea"
 		mustActivate(t, s, other)
-		lost, err := s.SetReach(ctx, "github", []string{"2002", "9999"})
+		lost, err := s.SetReach(ctx, "github", []string{"2002", "9999"}, t0)
 		if err != nil || strings.Join(lost, " ") != "2001 2003" {
 			t.Fatalf("SetReach = %v, %v; want 2001 2003", lost, err)
 		}
@@ -232,10 +232,10 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 			t.Errorf("a repository of another forge changed: %+v", g)
 		}
 		// Lost again: not lost twice. Reached again: reachable, not active.
-		if lost, err := s.SetReach(ctx, "github", []string{"2002"}); err != nil || len(lost) != 0 {
+		if lost, err := s.SetReach(ctx, "github", []string{"2002"}, t0); err != nil || len(lost) != 0 {
 			t.Errorf("SetReach again = %v, %v; want none lost", lost, err)
 		}
-		if lost, err := s.SetReach(ctx, "github", []string{"2001", "2002", "2003"}); err != nil || len(lost) != 0 {
+		if lost, err := s.SetReach(ctx, "github", []string{"2001", "2002", "2003"}, t0); err != nil || len(lost) != 0 {
 			t.Errorf("SetReach of all = %v, %v", lost, err)
 		}
 		got = known(t, s, "2001", "2003")
@@ -325,7 +325,7 @@ func EventSuite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 	}
 	record := func(t *testing.T, s repository.EventStore, k repository.Key, r *repository.LoggedEvent) (bool, error) {
 		t.Helper()
-		return s.Record(ctx, k, r)
+		return s.Record(ctx, k, r, nil)
 	}
 	logOf := func(t *testing.T, s repository.EventStore, repo string) []repository.LoggedEvent {
 		t.Helper()
@@ -375,7 +375,7 @@ func EventSuite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		// The keys of another forge are its own.
 		other := deliveryKey("d1", "1", t0)
 		other.Forge = "gitea"
-		if _, err := s.Record(ctx, other, nil); err != nil {
+		if _, err := s.Record(ctx, other, nil, nil); err != nil {
 			t.Errorf("the same keys on another forge: %v", err)
 		}
 	})
@@ -476,7 +476,7 @@ func EventSuite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 				if i%2 == 1 {
 					d = "d" + string(rune('2'+i))
 				}
-				_, results[i] = s.Record(ctx, deliveryKey(d, "1", t0), row("2001", d, t0, repository.ResultRecorded))
+				_, results[i] = s.Record(ctx, deliveryKey(d, "1", t0), row("2001", d, t0, repository.ResultRecorded), nil)
 			}()
 		}
 		wg.Wait()

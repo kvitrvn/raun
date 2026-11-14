@@ -161,7 +161,7 @@ func TestForgeErrorsOfTheRepositoryContext(t *testing.T) {
 // TestNoRepositoriesWithoutAForge: a server without a forge has no
 // repository service.
 func TestNoRepositoriesWithoutAForge(t *testing.T) {
-	if r := newRepositories(nil, nil, nil, nil, missingCapabilities); r != nil {
+	if r := newRepositories(nil, nil, nil, nil, missingCapabilities, nil); r != nil {
 		t.Error("a repository service without a forge")
 	}
 	if repositoryService(nil) != nil {

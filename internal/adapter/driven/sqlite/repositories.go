@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kvitrvn/raun/internal/core/job"
 	"github.com/kvitrvn/raun/internal/core/repository"
 )
 
@@ -185,6 +186,9 @@ func (s Repositories) Deactivate(ctx context.Context, workspace, forge, id, acco
 		if n == 0 {
 			return repository.ErrNotFound
 		}
+		if _, err := cancelRepositoryJobs(ctx, tx, forge, []string{id}, job.ReasonDeactivated, at.UTC()); err != nil {
+			return fmt.Errorf("deactivate repository: %w", err)
+		}
 		return nil
 	})
 }
@@ -240,7 +244,7 @@ func knownIDs(ctx context.Context, tx *sql.Tx, forge string) ([]string, error) {
 	return out, rows.Err()
 }
 
-func (s Repositories) SetReach(ctx context.Context, forge string, reached []string) ([]string, error) {
+func (s Repositories) SetReach(ctx context.Context, forge string, reached []string, at time.Time) ([]string, error) {
 	in := map[string]bool{}
 	for _, id := range reached {
 		in[id] = true
@@ -281,6 +285,9 @@ func (s Repositories) SetReach(ctx context.Context, forge string, reached []stri
 			if err != nil {
 				return fmt.Errorf("set reach: %w", err)
 			}
+		}
+		if _, err := cancelRepositoryJobs(ctx, tx, forge, lost, job.ReasonDeactivated, at.UTC()); err != nil {
+			return fmt.Errorf("set reach: %w", err)
 		}
 		return nil
 	})

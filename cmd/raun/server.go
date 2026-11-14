@@ -46,6 +46,14 @@ type serverDeps struct {
 	synced func(lost []string, err error)
 	// refreshed, when set, is told of each read of a configuration.
 	refreshed func(repository string, err error)
+	// jobs, when set, is the policy point instead of the one of
+	// production, which creates no job until epic 7 decides it.
+	jobs repository.JobPolicy
+	// sweep, when set, receives the times of the sweep of the queue
+	// instead of a ticker.
+	sweep <-chan time.Time
+	// swept, when set, is told what each sweep of the queue did.
+	swept func(n int, err error)
 }
 
 // purgeInterval is how often what has expired is deleted, after the purge
@@ -193,7 +201,8 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 	if missing == nil {
 		missing = missingCapabilities
 	}
-	repositories := newRepositories(forge, permissions, accounts, store.Repositories(), missing)
+	// The policy point (T8) creates no job in production until epic 7.
+	repositories := newRepositories(forge, permissions, accounts, store.Repositories(), missing, deps.jobs)
 	reach := newReachSync()
 	configs := newConfigRefresh()
 
@@ -262,6 +271,13 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		ticks = ticker.C
 	}
 	go purgeEvery(ctx, logger, stale, ticks, done)
+	sweeps := deps.sweep
+	if sweeps == nil {
+		ticker := time.NewTicker(sweepInterval)
+		defer ticker.Stop()
+		sweeps = ticker.C
+	}
+	go sweepEvery(ctx, logger, store.Jobs(), sweeps, deps.swept, done)
 	if repositories != nil {
 		go reach.run(ctx, logger, repositories.SyncReach, deps.synced, done)
 		// What the App reaches may have changed while the server was

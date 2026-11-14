@@ -15,7 +15,7 @@ func TestDuplicatesAfterARestart(t *testing.T) {
 	ctx := context.Background()
 	s, path := openMigrated(t)
 	k := repository.Key{Forge: "github", Delivery: "d1", Digest: strings.Repeat("a", 64), ReceivedAt: when()}
-	if _, err := s.Repositories().Record(ctx, k, nil); err != nil {
+	if _, err := s.Repositories().Record(ctx, k, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil {
@@ -27,7 +27,7 @@ func TestDuplicatesAfterARestart(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = again.Close() })
 	for _, dup := range []repository.Key{{Forge: "github", Delivery: "d1", Digest: strings.Repeat("b", 64), ReceivedAt: when()}, {Forge: "github", Delivery: "d2", Digest: k.Digest, ReceivedAt: when()}} {
-		if _, err := again.Repositories().Record(ctx, dup, nil); !errors.Is(err, repository.ErrDuplicate) {
+		if _, err := again.Repositories().Record(ctx, dup, nil, nil); !errors.Is(err, repository.ErrDuplicate) {
 			t.Errorf("after a restart, Record(%s, %s) = %v, want ErrDuplicate", dup.Delivery, dup.Digest[:4], err)
 		}
 	}

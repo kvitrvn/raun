@@ -101,7 +101,7 @@ func missingCapabilities(forge identity.Forge) []repository.Capability {
 
 // newRepositories returns the repository service of forge, nil without a
 // forge.
-func newRepositories(forge identity.Forge, permissions *identity.PermissionService, workspaces identity.WorkspaceStore, store repositoryStores, missing func(identity.Forge) []repository.Capability) *repository.Service {
+func newRepositories(forge identity.Forge, permissions *identity.PermissionService, workspaces identity.WorkspaceStore, store repositoryStores, missing func(identity.Forge) []repository.Capability, jobs repository.JobPolicy) *repository.Service {
 	if forge == nil {
 		return nil
 	}
@@ -120,6 +120,7 @@ func newRepositories(forge identity.Forge, permissions *identity.PermissionServi
 		Log:            store,
 		Files:          files,
 		Configurations: store,
+		Jobs:           jobs,
 		Missing:        missing(forge),
 		Now:            time.Now,
 	})
