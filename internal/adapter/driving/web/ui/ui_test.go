@@ -42,11 +42,11 @@ func testPage() Page {
 		Title:    "Repositories",
 		Instance: "raun.acme.dev",
 		Assets: Assets{
-			CSS:     "/assets/app.0123abcd.css",
-			ThemeJS: "/assets/theme.0123abcd.js",
-			AppJS:   "/assets/app.0123abcd.js",
-			HTMX:    "/assets/htmx.min.0123abcd.js",
-			Icon:    "/assets/favicon.0123abcd.svg",
+			CSS:     "/-/assets/app.0123abcd.css",
+			ThemeJS: "/-/assets/theme.0123abcd.js",
+			AppJS:   "/-/assets/app.0123abcd.js",
+			HTMX:    "/-/assets/htmx.min.0123abcd.js",
+			Icon:    "/-/assets/favicon.0123abcd.svg",
 		},
 		Nav: []NavItem{{Label: "Repositories", Href: "/", Current: true}},
 	}
@@ -153,6 +153,43 @@ func TestPages(t *testing.T) {
 		})},
 		{"workspace-member", WorkspacePage(switcherPage, WorkspaceProps{Name: "acme", Role: "member", Members: []MemberRow{{Name: "alice", Role: "owner"}}})},
 		{"workspace-personal", WorkspacePage(switcherPage, WorkspaceProps{Name: "alice", Personal: true, Role: "owner", Owner: true, Members: []MemberRow{{Name: "alice", Role: "owner"}}})},
+		{"workspace-repositories", WorkspacePage(switcherPage, WorkspaceProps{
+			Name: "acme", Role: "member", Members: []MemberRow{{Name: "alice", Role: "owner"}},
+			Repositories: []RepositoryLink{{FullName: "acme/api", Href: "/acme/acme/api", State: StateActive}, {FullName: hostile, Href: "/acme/" + hostile, State: StateDeactivated}},
+		})},
+		{"workspace-repositories-unshown", WorkspacePage(switcherPage, WorkspaceProps{Name: "acme", Role: "member", RepositoriesError: hostile, Members: []MemberRow{{Name: "alice", Role: "owner"}}})},
+		{"repositories", RepositoriesPage(switcherPage, RepositoriesProps{
+			Query:      hostile,
+			Workspaces: []string{"acme", "alice"},
+			Error:      hostile,
+			Rows: []RepositoryRow{
+				{ID: "2001", FullName: "acme/api", ForgeHref: "https://github.com/acme/api", Private: true, State: StateActive, Workspace: "acme", Href: "/acme/acme/api"},
+				{ID: "2002", FullName: "acme/lost", ForgeHref: "https://github.com/acme/lost", State: StateUnreachable, Workspace: "beta", Href: "/beta/acme/lost"},
+				{ID: hostile, FullName: hostile, ForgeHref: "https://github.com/" + hostile},
+			},
+		})},
+		{"repositories-missing", RepositoriesPage(switcherPage, RepositoriesProps{
+			Workspaces: []string{"alice"},
+			Missing:    []string{"files", "webhooks", "events"},
+			Rows:       []RepositoryRow{{ID: "2003", FullName: "acme/web", ForgeHref: "https://github.com/acme/web"}},
+		})},
+		{"repositories-empty", RepositoriesPage(switcherPage, RepositoriesProps{})},
+		{"repositories-no-match", RepositoriesPage(switcherPage, RepositoriesProps{Query: "nothing"})},
+		{"repository-active", RepositoryPage(switcherPage, RepositoryProps{
+			Workspace: "acme", ID: "2001", FullName: "acme/api", ForgeHref: "https://github.com/acme/api", DefaultBranch: hostile, Private: true, State: StateActive, CanDecide: true,
+		})},
+		{"repository-active-viewer", RepositoryPage(switcherPage, RepositoryProps{
+			Workspace: "acme", ID: "2001", FullName: "acme/api", ForgeHref: "https://github.com/acme/api", DefaultBranch: "main", State: StateActive,
+		})},
+		{"repository-deactivated", RepositoryPage(switcherPage, RepositoryProps{
+			Workspace: "acme", ID: "2001", FullName: "acme/api", ForgeHref: "https://github.com/acme/api", DefaultBranch: "main", State: StateDeactivated, CanDecide: true,
+		})},
+		{"repository-deactivated-missing", RepositoryPage(switcherPage, RepositoryProps{
+			Workspace: "acme", ID: "2001", FullName: "acme/api", ForgeHref: "https://github.com/acme/api", DefaultBranch: "main", State: StateDeactivated, CanDecide: true, Missing: []string{"files"},
+		})},
+		{"repository-unreachable", RepositoryPage(switcherPage, RepositoryProps{
+			Workspace: "acme", ID: "2001", FullName: "acme/api", ForgeHref: "https://github.com/acme/api", DefaultBranch: "main", State: StateUnreachable, CanDecide: true,
+		})},
 		{"error", ErrorPage(withSession, ErrorProps{Status: 403, Title: hostile, Message: hostile, BackHref: "/acme", BackLabel: "Back"})},
 		{"instance", InstancePage(adminPage, []InstanceSetting{
 			{Name: "RAUN_HTTP_ADDR", Value: ":8080"},
@@ -194,7 +231,10 @@ var (
 	styleAttribute   = regexp.MustCompile(`(?i)\sstyle=["']`)
 	handlerAttribute = regexp.MustCompile(`(?i)\son[a-z]+=["']`)
 	inlineScript     = regexp.MustCompile(`(?i)<script(\s[^>]*)?>`)
-	foreignOrigin    = regexp.MustCompile(`(?i)(src|href)="(https?:)?//`)
+	// A link to a page of the forge navigates, and is the only absolute
+	// address allowed: a source, a stylesheet, a base or the target of a
+	// form never points to another origin.
+	foreignOrigin = regexp.MustCompile(`(?i)(\s(src|action|formaction)="(https?:)?//|<(link|base|area)\s[^>]*href="(https?:)?//)`)
 )
 
 // checkMarkup refuses what the Content Security Policy forbids, and checks

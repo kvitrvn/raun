@@ -74,6 +74,16 @@ The capabilities and the webhook contract are described in [docs/forge.md](../fo
 | `internal/adapter/driven/sqlite` | Repositories and their activation, the event log, in new numbered migrations. |
 | `internal/adapter/driving/web` | The Repositories screen and the page of a repository, the webhook endpoint, the assets under `/-/assets/`. |
 
+## Implementation of #31
+
+Choices #31 made within the decisions above, for the owner to confirm in its review:
+
+- **Routes.** The Repositories screen is `/`, the home page already titled so; an activation is `POST /repositories`, with the stable identifier and a workspace of the account, which reserves `repositories`; the page is `GET /<workspace>/<owner>/<name>` and a deactivation `POST /<workspace>/<owner>/<name>/deactivate`. Activating again goes through `POST /repositories`. The snapshots of an activation come from the listing of the forge, never from the form.
+- **Who sees what.** The screen lists what the forge lists for the person; a repository Raun knows shows its state and its workspace, since the forge lets the person read it. The page shows to whoever the forge lets read the repository, member of its workspace or not; the page of a workspace lists only the repositories of the workspace the forge lists for the visitor.
+- **Full names.** A full name is unique on its forge, as on the forge itself: a listing or an activation that gives a name to a repository takes it from any other one Raun knows, whose snapshot stays empty, and its page not found, until the forge lists it again. A page answers at the full name as the forge spells it: another casing is not found, as an old name is, since no name of Raun redirects.
+- **Reach.** One optional capability of the forge, `Reach`, gives every repository the App reaches, across its installations, or an error, never a part of them; `SyncReach` makes each other repository Raun knows unreachable and not active, and one reached again reachable and still deactivated. #32 calls it on an installation delivery and adds it to the GitHub adapter; the fake forge has it.
+- **Preconditions.** No forge offers files, webhooks or events before #32 and #33, which declare their operations in this context and detect them: until then the screen names what is missing and nothing can be activated, outside tests.
+
 ## Deferred
 
 | Topic | Where |
@@ -101,6 +111,6 @@ The capabilities and the webhook contract are described in [docs/forge.md](../fo
 - [x] This page records the choices.
 - [ ] A test activates a repository on the fake forge, sends a signed push webhook and gets one normalized event (#31, #32).
 - [ ] A test refuses an unsigned webhook, ignores a duplicate delivery and a replayed body, and keeps a pull request closed and reopened at the same head (#32).
-- [ ] A test refuses an activation by a person without write access, and keeps the knowledge of a renamed repository (#31).
+- [x] A test refuses an activation by a person without write access, and keeps the knowledge of a renamed repository (#31).
 - [ ] A status and a pull request comment are published on the fake forge, and the comment is updated in place (#34).
 - [ ] `make verify` passes (checked at the end of the epic).

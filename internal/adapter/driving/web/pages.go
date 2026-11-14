@@ -82,7 +82,13 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, c te
 	_, _ = buf.WriteTo(w)
 }
 
+// home is the Repositories screen of an account, and an empty page for a
+// visitor without one or a server without a forge.
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
+	if sess, ok := sessionFrom(r.Context()); ok && sess.Account != "" && s.repositories != nil {
+		s.repositoriesPage(w, r)
+		return
+	}
 	s.render(w, r, http.StatusOK, ui.HomePage(s.page(r, "Repositories", "/")))
 }
 

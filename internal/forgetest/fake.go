@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/kvitrvn/raun/internal/core/identity"
+	"github.com/kvitrvn/raun/internal/core/repository"
 )
 
 // Lifetimes the fake gives what it issues, the ones of GitHub.
@@ -45,7 +46,7 @@ type token struct {
 	expires time.Time
 }
 
-type repository struct {
+type fakeRepo struct {
 	repo      identity.Repository
 	installed bool
 }
@@ -57,7 +58,7 @@ type Fake struct {
 	now     func() time.Time
 	offset  time.Duration // how far Advance moved the clock
 	people  map[string]Person
-	repos   map[string]repository
+	repos   map[string]fakeRepo
 	grants  map[string]map[string]identity.Permission // person -> repository -> permission
 	orgs    map[string]map[string]bool                // organization -> members
 	codes   map[string]grant
@@ -70,6 +71,7 @@ type Fake struct {
 var (
 	_ identity.Forge       = (*Fake)(nil)
 	_ identity.Memberships = (*Fake)(nil)
+	_ repository.Reach     = (*Fake)(nil)
 )
 
 // New returns an empty fake forge called name, whose clock is now, moved
@@ -79,7 +81,7 @@ func New(name string, now func() time.Time) *Fake {
 		name:    name,
 		now:     now,
 		people:  map[string]Person{},
-		repos:   map[string]repository{},
+		repos:   map[string]fakeRepo{},
 		grants:  map[string]map[string]identity.Permission{},
 		orgs:    map[string]map[string]bool{},
 		codes:   map[string]grant{},
@@ -114,7 +116,35 @@ func (f *Fake) AddRepository(r identity.Repository, installed bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	r.Forge = f.name
-	f.repos[r.ID] = repository{repo: r, installed: installed}
+	f.repos[r.ID] = fakeRepo{repo: r, installed: installed}
+}
+
+// RenameRepository gives the repository with this identifier a new full
+// name, as a rename or a transfer on the forge does; the identifier stays.
+// It reports whether the repository exists.
+func (f *Fake) RenameRepository(id, fullName string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.repos[id]
+	if ok {
+		r.repo.FullName = fullName
+		f.repos[id] = r
+	}
+	return ok
+}
+
+// SetInstalled installs the App on the repository with this identifier, or
+// removes it, as an installation removed or narrowed does. It reports
+// whether the repository exists.
+func (f *Fake) SetInstalled(id string, installed bool) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.repos[id]
+	if ok {
+		r.installed = installed
+		f.repos[id] = r
+	}
+	return ok
 }
 
 // Grant gives person the permission p on repository repo.
@@ -306,6 +336,25 @@ func (f *Fake) Permission(_ context.Context, t identity.Tokens, repo identity.Re
 		return p, nil
 	}
 	return identity.PermissionNone, nil
+}
+
+// Reached implements repository.Reach: the identifiers of every repository
+// the App is installed on, sorted, or identity.ErrUnavailable when the fake
+// is down, never a part of them.
+func (f *Fake) Reached(context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.down {
+		return nil, identity.ErrUnavailable
+	}
+	var out []string
+	for id, r := range f.repos {
+		if r.installed {
+			out = append(out, id)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
 }
 
 func (f *Fake) IsMember(_ context.Context, t identity.Tokens, org string) (bool, error) {

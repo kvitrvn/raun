@@ -610,7 +610,7 @@ func TestPages(t *testing.T) {
 				t.Errorf("headers = %v", h)
 			}
 			// Every asset the page names is served.
-			for _, m := range regexp.MustCompile(`(?:src|href)="(/assets/[^"]+)"`).FindAllStringSubmatch(body, -1) {
+			for _, m := range regexp.MustCompile(`(?:src|href)="(/-/assets/[^"]+)"`).FindAllStringSubmatch(body, -1) {
 				if r := serve(s, request(http.MethodGet, m[1], testHost, nil)); r.StatusCode != http.StatusOK {
 					t.Errorf("%s = %d", m[1], r.StatusCode)
 				}

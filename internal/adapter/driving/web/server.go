@@ -61,6 +61,12 @@ type Options struct {
 	// Permissions forgets the permissions of an account at its logout; nil
 	// without a forge.
 	Permissions PermissionCache
+	// Repositories lists, activates and opens repositories; nil means no
+	// Repositories screen and no page of a repository. It needs Login.
+	Repositories RepositoryService
+	// ForgeURL is the address of the forge on the web, for the links to a
+	// repository on it: https://github.com.
+	ForgeURL string
 	// Administrators tells the administrators of the instance; nil means
 	// no Instance settings screen.
 	Administrators AdministratorChecker
@@ -86,6 +92,8 @@ type Server struct {
 	accounts       AccountReader
 	workspaces     WorkspaceService
 	permissions    PermissionCache
+	repositories   RepositoryService
+	forgeURL       string
 	administrators AdministratorChecker
 	settings       []Setting
 	// patterns are the routes of the server, as route registered them:
@@ -126,6 +134,12 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 	if opts.Login != nil && opts.Permissions == nil {
 		return nil, errors.New("web: Options.Permissions is nil with a Login")
 	}
+	if opts.Repositories != nil && opts.Login == nil {
+		return nil, errors.New("web: Options.Repositories is set without a Login")
+	}
+	if opts.Repositories != nil && opts.ForgeURL == "" {
+		return nil, errors.New("web: Options.ForgeURL is empty with Repositories")
+	}
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -157,6 +171,8 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 		accounts:       opts.Accounts,
 		workspaces:     opts.Workspaces,
 		permissions:    opts.Permissions,
+		repositories:   opts.Repositories,
+		forgeURL:       opts.ForgeURL,
 		administrators: opts.Administrators,
 		settings:       slices.Clone(opts.Settings),
 		now:            opts.Now,
@@ -166,10 +182,12 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 		app:            http.NewServeMux(),
 	}
 	s.route(s.app, "GET /{$}", http.HandlerFunc(s.home))
-	s.route(s.app, "GET /assets/{file...}", http.HandlerFunc(s.assets.serve))
 	s.loginRoutes()
 	if s.workspaces != nil {
 		s.workspaceRoutes()
+	}
+	if s.repositories != nil {
+		s.repositoryRoutes()
 	}
 	if s.administrators != nil {
 		s.instanceRoutes()
@@ -182,6 +200,11 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 	root := http.NewServeMux()
 	s.route(root, "GET /healthz", http.HandlerFunc(s.healthz))
 	s.route(root, "GET /readyz", http.HandlerFunc(s.readyz))
+	// The assets live below /-/, which no name can take, on the root mux:
+	// their pattern never meets those of the application, such as
+	// GET /{name}/{owner}/{repo}. They keep the Host check, and need no
+	// session, origin check or CSRF token.
+	s.route(root, "GET "+assetPrefix+"{file...}", s.checkHost(http.HandlerFunc(s.assets.serve)))
 	// Every other path is the application, behind the protections in the
 	// order of the record: the public address only, a bounded body, no
 	// cross-origin state change, the session, and its CSRF token on every

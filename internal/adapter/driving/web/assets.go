@@ -14,11 +14,15 @@ import (
 	"strings"
 )
 
-// embeddedAssets are the files served under /assets/: the generated
+// embeddedAssets are the files served under /-/assets/: the generated
 // stylesheet, the scripts, HTMX, the icon and the fonts.
 //
 //go:embed assets
 var embeddedAssets embed.FS
+
+// assetPrefix is where the assets are served: below /-/, which no name of the
+// namespace can take, on the root mux (epic 5 record).
+const assetPrefix = "/-/assets/"
 
 // assetCache is the Cache-Control of an asset: its URL changes with its
 // content, so a browser keeps it as long as it likes.
@@ -82,7 +86,7 @@ func loadAssets(fsys fs.FS) (*assets, error) {
 		} else {
 			served = strings.TrimSuffix(name, ext) + "." + digest + ext
 		}
-		url := "/assets/" + served
+		url := assetPrefix + served
 		a.byURL[url] = asset{body: body, contentType: contentType}
 		a.byName[name] = url
 		return nil
@@ -114,7 +118,7 @@ func (a *assets) names() []string {
 }
 
 // serve answers GET and HEAD of an asset by its exact URL; any other path
-// below /assets/, a stale hash included, is not found. Nothing is listed.
+// below /-/assets/, a stale hash included, is not found. Nothing is listed.
 func (a *assets) serve(w http.ResponseWriter, r *http.Request) {
 	f, ok := a.byURL[r.URL.Path]
 	if !ok {

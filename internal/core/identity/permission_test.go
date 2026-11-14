@@ -501,3 +501,58 @@ func TestCountsDoNotGrow(t *testing.T) {
 		t.Errorf("the service keeps %d counts with no question in flight", n)
 	}
 }
+
+func TestRepositoriesComeFromTheForge(t *testing.T) {
+	s := newPermissionsOf(t)
+	ctx := context.Background()
+	s.forge.grant("1001", "2001", identity.PermissionDecide)
+	s.forge.grant("1001", "2002", identity.PermissionView)
+	s.forge.grant("1001", "2003", identity.PermissionNone)
+	s.forge.grant("1002", "2004", identity.PermissionView)
+	got, err := s.permissions.Repositories(ctx, "a1")
+	if err != nil || len(got) != 2 || got[0].ID != "2001" || got[1].ID != "2002" {
+		t.Fatalf("Repositories(a1) = %v, %v; want 2001 and 2002", got, err)
+	}
+	// A refused token is refreshed once, as for a permission.
+	s.forge.refuseOnce = true
+	if got, err := s.permissions.Repositories(ctx, "a1"); err != nil || len(got) != 2 {
+		t.Errorf("Repositories after a refused token = %v, %v", got, err)
+	}
+	for _, tc := range []struct {
+		name    string
+		account string
+		forge   error
+		want    error
+	}{
+		{"no account", "", nil, identity.ErrNoIdentity},
+		{"unknown account", "a9", nil, identity.ErrNoIdentity},
+		{"forge unavailable", "a1", identity.ErrUnavailable, identity.ErrUnavailable},
+		{"token refused", "a1", identity.ErrUnauthorized, identity.ErrUnauthorized},
+		{"caller gave up", "a1", context.Canceled, identity.ErrUnavailable},
+	} {
+		s.forge.setErr(tc.forge)
+		if got, err := s.permissions.Repositories(ctx, tc.account); got != nil || !errors.Is(err, tc.want) {
+			t.Errorf("%s: Repositories = %v, %v; want %v", tc.name, got, err, tc.want)
+		}
+	}
+}
+
+// TestRepositoriesOfRevokedTokens: tokens the forge revoked forget what was
+// kept of the account.
+func TestRepositoriesOfRevokedTokens(t *testing.T) {
+	s := newPermissionsOf(t)
+	ctx := context.Background()
+	s.forge.grant("1001", "2001", identity.PermissionDecide)
+	s.check(t, "a1", api(), identity.PermissionDecide, nil)
+	if err := s.store.RevokeTokens(ctx, "stub:1001"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.permissions.Repositories(ctx, "a1"); !errors.Is(err, identity.ErrNotFound) {
+		t.Fatalf("Repositories without tokens: %v, want ErrNotFound", err)
+	}
+	before := s.forge.calls()
+	s.check(t, "a1", api(), identity.PermissionNone, identity.ErrNotFound)
+	if s.forge.calls() != before {
+		t.Error("a permission kept across a revocation was not forgotten")
+	}
+}

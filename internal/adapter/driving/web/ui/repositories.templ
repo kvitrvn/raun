@@ -1,0 +1,212 @@
+package ui
+
+import "strings"
+
+// Repository states, as the pages show them.
+const (
+	StateActive      = "active"
+	StateDeactivated = "deactivated"
+	StateUnreachable = "unreachable"
+)
+
+// stateVariant is the badge of a repository state; the text names the state.
+func stateVariant(state string) BadgeVariant {
+	switch state {
+	case StateActive:
+		return BadgeSuccess
+	case StateUnreachable:
+		return BadgeWarning
+	default:
+		return BadgeDefault
+	}
+}
+
+// StateBadge shows the state of a repository.
+templ StateBadge(state string) {
+	@Badge(BadgeProps{Variant: stateVariant(state)}) {
+		{ state }
+	}
+}
+
+// RepositoryRow is a repository the forge lists for the account. State is
+// empty for a repository Raun never activated; Workspace and Href are then
+// empty too.
+type RepositoryRow struct {
+	ID        string
+	FullName  string
+	ForgeHref string
+	Private   bool
+	State     string
+	Workspace string
+	Href      string
+}
+
+// RepositoriesProps configures the Repositories screen: the search, the
+// repositories the forge lists for the account, the workspaces it can
+// activate one in, the capabilities the forge lacks to activate any, and the
+// problem of an activation.
+type RepositoriesProps struct {
+	Query      string
+	Rows       []RepositoryRow
+	Workspaces []string
+	Missing    []string
+	Error      string
+}
+
+// RepositoriesPage lists the repositories the account reaches on the forge,
+// and activates one in a workspace.
+templ RepositoriesPage(p Page, rp RepositoriesProps) {
+	@Layout(p) {
+		<div class="flex flex-wrap items-center gap-3">
+			<h1 class="text-2xl font-semibold tracking-tight">Repositories</h1>
+			<span class="flex-1"></span>
+			<form method="get" action="/" role="search" class="flex items-center gap-2">
+				<label class="sr-only" for="q">Search the repositories</label>
+				@Input(InputProps{
+					ID:         "q",
+					Name:       "q",
+					Type:       "search",
+					Value:       rp.Query,
+					Placeholder: "owner/name",
+					Attributes:  templ.Attributes{"maxlength": "200", "autocapitalize": "none", "spellcheck": "false"},
+				})
+				@Button(ButtonProps{Type: TypeSubmit, Variant: ButtonOutline}) {
+					Search
+				}
+			</form>
+		</div>
+		if len(rp.Missing) > 0 {
+			<section data-slot="missing" class="cn-card flex flex-col gap-1.5 px-6 py-4">
+				<h2 class="text-[15px] font-semibold">No repository can be activated yet</h2>
+				<p class="text-[13.5px] text-muted-foreground">The forge lacks what Raun needs to read the configuration of a repository and hear from it: <span class="font-mono">{ strings.Join(rp.Missing, ", ") }</span>.</p>
+			</section>
+		}
+		if rp.Error != "" {
+			<section data-slot="problem" role="alert" class="cn-card px-6 py-4 text-[13.5px] text-danger">{ rp.Error }</section>
+		}
+		if len(rp.Rows) == 0 {
+			if rp.Query != "" {
+				@Empty(EmptyProps{Title: "No repository matches", Description: "No repository you reach on the forge has this in its name.", Icon: IconSearch})
+			} else {
+				@Empty(EmptyProps{Title: "No repository yet", Description: "The forge lists no repository you can reach through Raun: install the App on one, or ask for access to one.", Icon: IconFolder})
+			}
+		} else {
+			<section data-slot="repositories" class="cn-card flex flex-col divide-y divide-border">
+				for _, row := range rp.Rows {
+					<div class="flex flex-wrap items-center gap-3 px-6 py-4">
+						if row.Href != "" {
+							<a class="font-mono text-[14px] font-medium text-primary-ink hover:underline" href={ templ.URL(row.Href) }>{ row.FullName }</a>
+						} else {
+							<span class="font-mono text-[14px] font-medium">{ row.FullName }</span>
+						}
+						if row.Private {
+							@Badge(BadgeProps{Variant: BadgeOutline}) {
+								private
+							}
+						}
+						if row.State != "" {
+							@StateBadge(row.State)
+						}
+						<a class="inline-flex items-center gap-1 text-[13px] text-muted-foreground hover:underline" href={ templ.URL(row.ForgeHref) } rel="noopener noreferrer">
+							On the forge
+							@Icon(IconExternal, IconProps{Class: "size-3.5"})
+						</a>
+						<span class="flex-1"></span>
+						if row.Workspace != "" {
+							<span class="text-[13px] text-muted-foreground">In <span class="font-mono">{ row.Workspace }</span></span>
+						} else if len(rp.Missing) == 0 && len(rp.Workspaces) > 0 {
+							<form method="post" action="/repositories" class="flex items-center gap-2">
+								@CSRFField(p.CSRF)
+								<input type="hidden" name="repository" value={ row.ID }/>
+								<label class="sr-only" for={ "workspace-" + row.ID }>Workspace</label>
+								<select id={ "workspace-" + row.ID } name="workspace" class="cn-input">
+									for _, ws := range rp.Workspaces {
+										<option value={ ws }>{ ws }</option>
+									}
+								</select>
+								@Button(ButtonProps{Type: TypeSubmit, Size: ButtonSmall}) {
+									Activate
+								}
+							</form>
+						}
+					</div>
+				}
+			</section>
+		}
+	}
+}
+
+// RepositoryProps configures the page of a repository: what Raun knows of
+// it, and whether the visitor may activate or deactivate it.
+type RepositoryProps struct {
+	Workspace     string
+	ID            string
+	FullName      string
+	ForgeHref     string
+	DefaultBranch string
+	Private       bool
+	State         string
+	CanDecide     bool
+	Missing       []string
+}
+
+// RepositoryPage shows a repository to a person the forge lets read it.
+// Later epics fill it with its configuration, its events, its runs and its
+// knowledge.
+templ RepositoryPage(p Page, rp RepositoryProps) {
+	@Layout(p) {
+		<div class="flex flex-wrap items-center gap-3">
+			<a class="font-mono text-[14px] text-muted-foreground hover:underline" href={ templ.URL("/" + rp.Workspace) }>{ rp.Workspace }</a>
+			<span class="text-muted-foreground">/</span>
+			<h1 class="font-mono text-2xl font-semibold tracking-tight">{ rp.FullName }</h1>
+			if rp.Private {
+				@Badge(BadgeProps{Variant: BadgeOutline}) {
+					private
+				}
+			}
+			@StateBadge(rp.State)
+			<span class="flex-1"></span>
+			<a class="inline-flex items-center gap-1 text-[13px] text-muted-foreground hover:underline" href={ templ.URL(rp.ForgeHref) } rel="noopener noreferrer">
+				On the forge
+				@Icon(IconExternal, IconProps{Class: "size-3.5"})
+			</a>
+		</div>
+		<section data-slot="activation" class="cn-card flex flex-col items-start gap-3 px-7 py-6">
+			switch rp.State {
+				case StateActive:
+					<p class="text-[13.5px]">Raun reacts to the events of this repository.</p>
+					if rp.CanDecide {
+						<form method="post" action={ templ.URL("/" + rp.Workspace + "/" + rp.FullName + "/deactivate") }>
+							@CSRFField(p.CSRF)
+							@Button(ButtonProps{Type: TypeSubmit, Variant: ButtonOutline}) {
+								Deactivate
+							}
+						</form>
+					}
+				case StateUnreachable:
+					<p class="text-[13.5px]">The App of the forge no longer reaches this repository: Raun does not react to it. What Raun knows of it stays, read-only; it can be activated again once the App reaches it.</p>
+				default:
+					<p class="text-[13.5px]">This repository is deactivated: Raun does not react to it. What Raun knows of it stays, read-only.</p>
+					if rp.CanDecide && len(rp.Missing) == 0 {
+						<form method="post" action="/repositories">
+							@CSRFField(p.CSRF)
+							<input type="hidden" name="workspace" value={ rp.Workspace }/>
+							<input type="hidden" name="repository" value={ rp.ID }/>
+							@Button(ButtonProps{Type: TypeSubmit}) {
+								Activate again
+							}
+						</form>
+					}
+			}
+			<p class="text-[12.5px] text-muted-foreground">Default branch: <span class="font-mono">{ rp.DefaultBranch }</span></p>
+		</section>
+		@Empty(EmptyProps{Title: "Nothing analyzed yet", Description: "The configuration, the events and the runs of this repository show here once Raun reads them.", Icon: IconFolder})
+	}
+}
+
+// RepositoryLink is a repository of a workspace, on its page.
+type RepositoryLink struct {
+	FullName string
+	Href     string
+	State    string
+}
