@@ -870,3 +870,46 @@ func TestTheDeadlineBoundsTheReadOnly(t *testing.T) {
 		t.Errorf("configuration = %+v", v.Configuration)
 	}
 }
+
+// TestAReadWaitsWithinItsDeadline: a read behind another read of the same
+// repository waits within its deadline and its context, then gives up
+// without reading or storing anything.
+func TestAReadWaitsWithinItsDeadline(t *testing.T) {
+	ctx := context.Background()
+	w, events := newReceiving(t)
+	files := &gatedFiles{heads: map[string]string{"2001": "c1"}, files: map[string]string{"c1": "one"},
+		open: make(chan struct{}), gated: true, reading: make(chan struct{})}
+	w.service = repository.New(repository.Options{
+		Forge: w.forge, Workspaces: w.workspaces, Store: w.store, Events: events, Log: w.store,
+		Files: files, Configurations: w.store, ReadTimeout: time.Hour, Now: func() time.Time { return w.now },
+	})
+	first := make(chan error, 1)
+	go func() { first <- w.service.RefreshConfiguration(ctx, "2001") }()
+	<-files.reading
+	// A deadline of the caller ends the wait.
+	waiting, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := w.service.RefreshConfiguration(waiting, "2001")
+	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > time.Second {
+		t.Errorf("a read behind another = %v after %v", err, time.Since(start))
+	}
+	canceled, stop := context.WithCancel(ctx)
+	stop()
+	if err := w.service.RefreshConfiguration(canceled, "2001"); !errors.Is(err, context.Canceled) {
+		t.Errorf("a canceled read behind another = %v", err)
+	}
+	close(files.open)
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	// The read that held the lock stored its result; the ones that gave up
+	// stored nothing over it.
+	if v, _ := w.service.Open(ctx, "alice", "acme", "acme/api"); v.Configuration == nil || v.Configuration.State != repository.ConfigurationConfigured {
+		t.Errorf("configuration = %+v", v.Configuration)
+	}
+	// The lock is free again.
+	if err := w.service.RefreshConfiguration(ctx, "2001"); err != nil {
+		t.Errorf("a read after the others: %v", err)
+	}
+}

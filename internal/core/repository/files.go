@@ -24,7 +24,9 @@ const MaxConfigurationSize = 64 << 10
 
 // Files is the optional capability of a forge that reads the files of a
 // repository without cloning it, with the narrowest token that reaches it.
-// Its errors wrap ErrUnavailable when the forge cannot answer now.
+// Its errors wrap ErrUnavailable when the forge cannot answer now: a forge
+// adapter answers identity.ErrUnavailable, as for its other operations, and
+// cmd/raun translates it, as it does for Forge.
 type Files interface {
 	// Head returns the commit at the head of branch in the repository with
 	// this stable identifier; ErrNoFile when there is no such branch.

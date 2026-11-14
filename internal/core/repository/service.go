@@ -331,7 +331,16 @@ func (s *Service) RefreshConfiguration(ctx context.Context, id string) error {
 	if !rows[0].Active {
 		return nil
 	}
-	unlock := s.refreshing.lock(id)
+	// The deadline bounds the wait for another read of the repository and
+	// this read, never the write of its result.
+	readCtx, cancel := context.WithTimeout(ctx, s.readTimeout)
+	defer cancel()
+	unlock, err := s.refreshing.lock(readCtx, id)
+	if err != nil {
+		// Another read held the repository all along: its result
+		// stands, and nothing is read.
+		return fmt.Errorf("wait for another read of the configuration: %w", err)
+	}
 	defer unlock()
 	// Read again under the lock: the repository may have changed while
 	// another read held it.
@@ -343,14 +352,12 @@ func (s *Service) RefreshConfiguration(ctx context.Context, id string) error {
 		return nil
 	}
 	r := rows[0]
-	readCtx, cancel := context.WithTimeout(ctx, s.readTimeout)
 	c := s.readConfiguration(readCtx, r)
 	cancel()
 	if err := ctx.Err(); err != nil && c.State == ConfigurationUnreadable {
 		// A read the caller cut short says nothing of the file.
 		return err
 	}
-	// The deadline bounds the read, never the write of its result.
 	if err := s.configs.PutConfiguration(ctx, r.Forge, r.ID, c); err != nil {
 		return fmt.Errorf("store the configuration: %w", err)
 	}
@@ -576,32 +583,42 @@ type keyedLocks struct {
 	locks map[string]*keyedLock
 }
 
+// keyedLock is held while its channel holds a value.
 type keyedLock struct {
-	sync.Mutex
+	held  chan struct{}
 	users int
 }
 
-// lock takes the lock of key, and returns what releases it.
-func (k *keyedLocks) lock(key string) func() {
+// lock takes the lock of key, waiting until ctx ends at most, and returns
+// what releases it.
+func (k *keyedLocks) lock(ctx context.Context, key string) (func(), error) {
 	k.mu.Lock()
 	if k.locks == nil {
 		k.locks = map[string]*keyedLock{}
 	}
 	l, ok := k.locks[key]
 	if !ok {
-		l = &keyedLock{}
+		l = &keyedLock{held: make(chan struct{}, 1)}
 		k.locks[key] = l
 	}
 	l.users++
 	k.mu.Unlock()
-	l.Lock()
-	return func() {
-		l.Unlock()
+	leave := func() {
 		k.mu.Lock()
 		l.users--
 		if l.users == 0 {
 			delete(k.locks, key)
 		}
 		k.mu.Unlock()
+	}
+	select {
+	case l.held <- struct{}{}:
+		return func() {
+			<-l.held
+			leave()
+		}, nil
+	case <-ctx.Done():
+		leave()
+		return nil, ctx.Err()
 	}
 }
