@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kvitrvn/raun/internal/core/identity"
+	"github.com/kvitrvn/raun/internal/core/repository"
 )
 
 // Fixture is a forge set up with the scenario of the contract suite:
@@ -28,6 +29,9 @@ type Fixture struct {
 	OtherOrg string
 	// Unreachable are the two repositories Alice must not reach.
 	Unreachable []identity.Repository
+	// Reached are the identifiers of the repositories the App reaches,
+	// sorted: acme/api, acme/web and acme/secret.
+	Reached []string
 	// Approve is Alice approving Raun at url: the code and the state the
 	// forge sends back.
 	Approve func(t *testing.T, url string) (code, state string)
@@ -92,6 +96,7 @@ func Scenario(name string, bare bool) (*Fake, Fixture) {
 		Org:         "3001",
 		OtherOrg:    "3002",
 		Unreachable: unreachable,
+		Reached:     []string{"2001", "2002", "2003"},
 		Approve: func(t *testing.T, url string) (string, string) {
 			t.Helper()
 			code, state, err := f.Approve("1001", url)
@@ -436,6 +441,23 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		after, _ := login(t, fx)
 		if after.ID != before.ID || after.Login != "alice-renamed" || after.Key() != before.Key() {
 			t.Errorf("after a rename: %+v, before %+v", after, before)
+		}
+	})
+
+	t.Run("reach, when the forge has it", func(t *testing.T) {
+		fx := newFixture(t)
+		r, ok := fx.Forge.(repository.Reach)
+		if !ok {
+			t.Skip("the forge cannot tell which repositories its App reaches")
+		}
+		got, err := r.Reached(ctx)
+		slices.Sort(got)
+		if err != nil || !slices.Equal(got, fx.Reached) {
+			t.Errorf("Reached = %v, %v; want %v", got, err, fx.Reached)
+		}
+		fx.SetDown(t, true)
+		if got, err := r.Reached(ctx); got != nil || !errors.Is(err, identity.ErrUnavailable) {
+			t.Errorf("Reached of a forge down = %v, %v; want nothing and ErrUnavailable", got, err)
 		}
 	})
 

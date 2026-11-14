@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kvitrvn/raun/internal/core/identity"
+	"github.com/kvitrvn/raun/internal/core/repository"
 )
 
 func TestFake(t *testing.T) {
@@ -25,6 +26,9 @@ func TestBare(t *testing.T) {
 	}
 	if _, ok := identity.MembershipsOf(New("x", time.Now)); !ok {
 		t.Fatal("the fake lacks the membership capability")
+	}
+	if _, ok := fx.Forge.(repository.Reach); ok {
+		t.Fatal("the bare forge has the reach capability")
 	}
 	Suite(t, func(*testing.T) Fixture {
 		_, fx := Scenario("fake", true)
@@ -137,4 +141,30 @@ func (stubReader) Read(p []byte) (int, error) {
 		p[i] = 7
 	}
 	return len(p), nil
+}
+
+func TestRenameAndInstallRepositories(t *testing.T) {
+	ctx := context.Background()
+	f, fx := Scenario("fake", false)
+	code, _ := fx.Approve(t, f.AuthorizeURL("s", identity.Challenge("verifier-0123456789-0123456789-0123456789")))
+	_, tokens, err := f.Exchange(ctx, code, "verifier-0123456789-0123456789-0123456789")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !f.RenameRepository("2001", "acme/backend") || f.RenameRepository("9999", "x/y") {
+		t.Fatal("RenameRepository told the wrong existence")
+	}
+	repos, err := f.Repositories(ctx, tokens)
+	if err != nil || len(repos) != 2 || repos[0].ID != "2001" || repos[0].FullName != "acme/backend" {
+		t.Errorf("Repositories after a rename = %+v, %v", repos, err)
+	}
+	if !f.SetInstalled("2001", false) || f.SetInstalled("9999", true) {
+		t.Fatal("SetInstalled told the wrong existence")
+	}
+	if p, err := f.Permission(ctx, tokens, identity.Repository{Forge: "fake", ID: "2001"}); err != nil || p != identity.PermissionNone {
+		t.Errorf("Permission once uninstalled = %v, %v", p, err)
+	}
+	if got, err := f.Reached(ctx); err != nil || len(got) != 2 || got[0] != "2002" || got[1] != "2003" {
+		t.Errorf("Reached once uninstalled = %v, %v; want 2002 and 2003", got, err)
+	}
 }
