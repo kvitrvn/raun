@@ -10,6 +10,10 @@ package forgetest
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"slices"
@@ -72,6 +76,7 @@ var (
 	_ identity.Forge       = (*Fake)(nil)
 	_ identity.Memberships = (*Fake)(nil)
 	_ repository.Reach     = (*Fake)(nil)
+	_ repository.Events    = (*Fake)(nil)
 )
 
 // New returns an empty fake forge called name, whose clock is now, moved
@@ -393,4 +398,59 @@ func (b bare) Repositories(ctx context.Context, t identity.Tokens) ([]identity.R
 
 func (b bare) Permission(ctx context.Context, t identity.Tokens, repo identity.Repository) (identity.Permission, error) {
 	return b.f.Permission(ctx, t, repo)
+}
+
+// Headers and secret of the deliveries of the fake: an HMAC-SHA256 of the
+// body in hexadecimal, as a forge signs its webhooks.
+const (
+	HeaderSignature = "X-Fake-Signature"
+	HeaderDelivery  = "X-Fake-Delivery"
+	webhookSecret   = "fake-webhook-secret"
+)
+
+// fakeBody is the body of a delivery of the fake: the delivery it stands
+// for, and a sequence that makes two genuine deliveries differ, as the
+// times of a forge do.
+type fakeBody struct {
+	Seq      int                 `json:"seq"`
+	Delivery repository.Delivery `json:"delivery"`
+}
+
+// Deliver is the fake sending d, signed, under the delivery identifier id:
+// the headers of the request and its body. Its body differs from any other
+// delivery's.
+func (f *Fake) Deliver(id string, d repository.Delivery) (map[string]string, []byte) {
+	f.mu.Lock()
+	f.seq++
+	seq := f.seq
+	f.mu.Unlock()
+	d.Forge, d.ID = "", ""
+	body, err := json.Marshal(fakeBody{Seq: seq, Delivery: d})
+	if err != nil {
+		panic(err)
+	}
+	return map[string]string{HeaderSignature: Sign(body), HeaderDelivery: id}, body
+}
+
+// Sign is the signature of body by the fake.
+func Sign(body []byte) string {
+	mac := hmac.New(sha256.New, []byte(webhookSecret))
+	mac.Write(body)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// Parse implements repository.Events for the deliveries of Deliver.
+func (f *Fake) Parse(header func(string) string, body []byte) (repository.Delivery, error) {
+	got, err := hex.DecodeString(header(HeaderSignature))
+	want, _ := hex.DecodeString(Sign(body))
+	if err != nil || !hmac.Equal(got, want) {
+		return repository.Delivery{}, repository.ErrSignature
+	}
+	var b fakeBody
+	if err := json.Unmarshal(body, &b); err != nil || header(HeaderDelivery) == "" {
+		return repository.Delivery{}, repository.ErrMalformed
+	}
+	d := b.Delivery
+	d.Forge, d.ID = f.name, header(HeaderDelivery)
+	return d, nil
 }

@@ -32,6 +32,10 @@ type Fixture struct {
 	// Reached are the identifiers of the repositories the App reaches,
 	// sorted: acme/api, acme/web and acme/secret.
 	Reached []string
+	// Push is the forge delivering, signed, a push to the main branch of
+	// acme/api from Alice: the headers of the request and its body; nil
+	// for a forge without the events capability.
+	Push func(t *testing.T) (map[string]string, []byte)
 	// Approve is Alice approving Raun at url: the code and the state the
 	// forge sends back.
 	Approve func(t *testing.T, url string) (code, state string)
@@ -97,6 +101,12 @@ func Scenario(name string, bare bool) (*Fake, Fixture) {
 		OtherOrg:    "3002",
 		Unreachable: unreachable,
 		Reached:     []string{"2001", "2002", "2003"},
+		Push: func(*testing.T) (map[string]string, []byte) {
+			return f.Deliver("delivery-1", repository.Delivery{
+				Event: "push", Kind: repository.KindPush, Repository: "2001",
+				Push: &repository.Push{Ref: "refs/heads/main", Before: strings.Repeat("a", 40), After: strings.Repeat("b", 40), Head: strings.Repeat("b", 40), Sender: repository.Sender{ID: "1001", Login: "alice"}},
+			})
+		},
 		Approve: func(t *testing.T, url string) (string, string) {
 			t.Helper()
 			code, state, err := f.Approve("1001", url)
@@ -458,6 +468,34 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		fx.SetDown(t, true)
 		if got, err := r.Reached(ctx); got != nil || !errors.Is(err, identity.ErrUnavailable) {
 			t.Errorf("Reached of a forge down = %v, %v; want nothing and ErrUnavailable", got, err)
+		}
+	})
+
+	t.Run("events, when the forge has them", func(t *testing.T) {
+		fx := newFixture(t)
+		e, ok := fx.Forge.(repository.Events)
+		if !ok {
+			t.Skip("the forge cannot receive events")
+		}
+		headers, body := fx.Push(t)
+		get := func(h map[string]string) func(string) string { return func(name string) string { return h[name] } }
+		d, err := e.Parse(get(headers), body)
+		if err != nil || d.Forge != fx.Forge.Name() || d.ID == "" || d.Kind != repository.KindPush || d.Repository != "2001" ||
+			d.Push == nil || d.Push.Ref != "refs/heads/main" || d.Push.Tag || d.Push.Sender.ID != fx.Alice {
+			t.Fatalf("Parse of a push = %+v, %v", d, err)
+		}
+		// A body changed after signing, and no signature at all, are
+		// refused alike.
+		tampered := append([]byte(nil), body...)
+		tampered[len(tampered)/2] ^= 1
+		for name, try := range map[string]func() error{
+			"tampered":     func() error { _, err := e.Parse(get(headers), tampered); return err },
+			"unsigned":     func() error { _, err := e.Parse(func(string) string { return "" }, body); return err },
+			"not a header": func() error { _, err := e.Parse(get(map[string]string{}), body); return err },
+		} {
+			if err := try(); err != repository.ErrSignature {
+				t.Errorf("Parse of a %s delivery = %v, want exactly ErrSignature", name, err)
+			}
 		}
 	})
 
