@@ -116,21 +116,23 @@ func TestRepositoriesThroughTheServer(t *testing.T) {
 	}
 }
 
-// TestNoActivationWithoutTheCapabilities: until a forge reads files (#33),
-// the screen says why nothing can be activated, and an activation is
-// refused.
+// TestNoActivationWithoutTheCapabilities: a forge without files, webhooks
+// and events activates nothing, and the screen says why; it has no hook.
 func TestNoActivationWithoutTheCapabilities(t *testing.T) {
 	dir := t.TempDir()
 	keyFile, _ := writeAppKey(t, dir)
 	fake, _ := forgetest.Scenario("github", false)
-	s := start(t, dir, append(app(keyFile), "RAUN_SIGNUP_USERS=github:1001"), serverDeps{forge: fake})
+	s := start(t, dir, append(app(keyFile), "RAUN_SIGNUP_USERS=github:1001"), serverDeps{forge: fake.Bare()})
 	alice := signedUp(t, s, fake, "1001", "alice")
 	_, _, home := alice.send(http.MethodGet, "/", nil)
-	if !strings.Contains(home, "No repository can be activated yet") || !strings.Contains(home, `<span class="font-mono">files</span>`) || strings.Contains(home, `action="/repositories"`) {
+	if !strings.Contains(home, "No repository can be activated yet") || !strings.Contains(home, `<span class="font-mono">files, webhooks, events</span>`) || strings.Contains(home, `action="/repositories"`) {
 		t.Fatalf("the screen: %s", home)
 	}
 	if status, _, body := alice.submit("/", "/repositories", url.Values{"workspace": {"alice"}, "repository": {"2001"}}); status != http.StatusConflict {
 		t.Errorf("activation = %d %s", status, body)
+	}
+	if got := post(t, s, map[string]string{}, []byte(`{}`)); got != http.StatusForbidden {
+		t.Errorf("a delivery to a server without a hook = %d", got)
 	}
 }
 
@@ -158,7 +160,7 @@ func TestForgeErrorsOfTheRepositoryContext(t *testing.T) {
 // TestNoRepositoriesWithoutAForge: a server without a forge has no
 // repository service.
 func TestNoRepositoriesWithoutAForge(t *testing.T) {
-	if r := newRepositories(nil, nil, nil, nil, nil, missingCapabilities); r != nil {
+	if r := newRepositories(nil, nil, nil, nil, missingCapabilities); r != nil {
 		t.Error("a repository service without a forge")
 	}
 	if repositoryService(nil) != nil {
@@ -167,16 +169,16 @@ func TestNoRepositoriesWithoutAForge(t *testing.T) {
 	if got := missingCapabilities(nil); len(got) != len(repository.Preconditions()) {
 		t.Errorf("missingCapabilities = %v", got)
 	}
-	// A forge that receives events lacks only files, before #33; one that
-	// does not lacks webhooks and events too.
+	// The fake lacks nothing; without its optional capabilities, it lacks
+	// them all.
 	f := forgetest.New("github", nil)
-	if got := missingCapabilities(f); len(got) != 1 || got[0] != repository.CapabilityFiles {
-		t.Errorf("missingCapabilities(fake) = %v, want files", got)
+	if got := missingCapabilities(f); len(got) != 0 {
+		t.Errorf("missingCapabilities(fake) = %v, want none", got)
 	}
 	if got := missingCapabilities(f.Bare()); len(got) != 3 {
 		t.Errorf("missingCapabilities(bare) = %v, want all three", got)
 	}
-	if hooks(f.Bare(), &repository.Service{}, newReachSync()) != nil || hooks(f, nil, newReachSync()) != nil {
+	if hooks(f.Bare(), &repository.Service{}, newReachSync(), newConfigRefresh()) != nil || hooks(f, nil, newReachSync(), newConfigRefresh()) != nil {
 		t.Error("a hook without a forge that receives events")
 	}
 	if _, ok := any(f).(repository.Reach); !ok {

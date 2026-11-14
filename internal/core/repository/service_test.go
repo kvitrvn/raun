@@ -561,7 +561,7 @@ func TestReceive(t *testing.T) {
 	} {
 		w.now = w.now.Add(time.Second)
 		got, err := w.service.Receive(ctx, signed(tc.delivery), []byte(tc.body))
-		if err != nil || got != tc.want {
+		if err != nil || got.Outcome != tc.want {
 			t.Errorf("Receive(%s, %q) = %v, %v; want %v", tc.delivery, tc.body, got, err, tc.want)
 		}
 	}
@@ -598,7 +598,7 @@ func TestReceiveRefusals(t *testing.T) {
 		t.Errorf("a malformed delivery = %v", err)
 	}
 	// Neither kept a key: the same delivery, signed, is recorded.
-	if got, err := w.service.Receive(ctx, signed("d1"), []byte("push api")); err != nil || got != repository.OutcomeRecorded {
+	if got, err := w.service.Receive(ctx, signed("d1"), []byte("push api")); err != nil || got.Outcome != repository.OutcomeRecorded {
 		t.Errorf("after the refusals = %v, %v", got, err)
 	}
 	none := repository.New(repository.Options{Forge: w.forge, Workspaces: w.workspaces, Store: w.store})
@@ -618,10 +618,165 @@ func TestReceiveAfterADeactivation(t *testing.T) {
 	if _, err := w.service.Deactivate(ctx, "alice", "acme", "acme/api"); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := w.service.Receive(ctx, signed("d2"), []byte("push api c0")); err != nil || got != repository.OutcomeDropped {
+	if got, err := w.service.Receive(ctx, signed("d2"), []byte("push api c0")); err != nil || got.Outcome != repository.OutcomeDropped {
 		t.Errorf("a push to a deactivated repository = %v, %v", got, err)
 	}
 	if v, err := w.service.Open(ctx, "carol", "acme", "acme/api"); err != nil || len(v.Events) != 1 {
 		t.Errorf("the log of a deactivated repository = %+v, %v", v.Events, err)
+	}
+}
+
+// stubFiles is the default branch of acme/api at heads, and its files by
+// commit; err, when set, is the answer of every call.
+type stubFiles struct {
+	heads map[string]string // repository -> head of main
+	files map[string]string // commit -> .raun.yaml
+	err   error
+	reads int
+}
+
+func (f *stubFiles) Head(_ context.Context, repo, branch string) (string, error) {
+	if f.err != nil {
+		return "", f.err
+	}
+	h, ok := f.heads[repo]
+	if !ok || branch != "main" {
+		return "", repository.ErrNoFile
+	}
+	return h, nil
+}
+
+func (f *stubFiles) Read(_ context.Context, _, commit, path string, limit int64) ([]byte, error) {
+	f.reads++
+	if f.err != nil {
+		return nil, f.err
+	}
+	content, ok := f.files[commit]
+	switch {
+	case !ok || path != repository.ConfigurationPath:
+		return nil, repository.ErrNoFile
+	case int64(len(content)) > limit:
+		return nil, repository.ErrFileTooLarge
+	}
+	return []byte(content), nil
+}
+
+func newConfigured(t *testing.T) (*world, *stubFiles, *stubEvents) {
+	t.Helper()
+	w, events := newReceiving(t)
+	files := &stubFiles{heads: map[string]string{"2001": "c1"}, files: map[string]string{"c1": "version: 1\n"}}
+	w.service = repository.New(repository.Options{
+		Forge: w.forge, Workspaces: w.workspaces, Store: w.store, Reach: w.forge, Events: events, Log: w.store,
+		Files: files, Configurations: w.store, Now: func() time.Time { return w.now },
+	})
+	return w, files, events
+}
+
+func TestRefreshConfiguration(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		change func(f *stubFiles)
+		state  repository.ConfigurationState
+		commit string
+		reason string
+	}{
+		{"configured", func(*stubFiles) {}, repository.ConfigurationConfigured, "c1", ""},
+		{"no file", func(f *stubFiles) { delete(f.files, "c1") }, repository.ConfigurationMissing, "c1", ""},
+		{"no default branch", func(f *stubFiles) { delete(f.heads, "2001") }, repository.ConfigurationMissing, "", ""},
+		{"too large", func(f *stubFiles) { f.files["c1"] = strings.Repeat("x", repository.MaxConfigurationSize+1) }, repository.ConfigurationUnreadable, "c1", repository.ReasonTooLarge},
+		{"exactly the bound", func(f *stubFiles) { f.files["c1"] = strings.Repeat("x", repository.MaxConfigurationSize) }, repository.ConfigurationConfigured, "c1", ""},
+		{"forge down", func(f *stubFiles) { f.err = repository.ErrUnavailable }, repository.ConfigurationUnreadable, "", repository.ReasonUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, files, _ := newConfigured(t)
+			tc.change(files)
+			if err := w.service.RefreshConfiguration(ctx, "2001"); err != nil {
+				t.Fatal(err)
+			}
+			v, err := w.service.Open(ctx, "alice", "acme", "acme/api")
+			if err != nil || v.Configuration == nil {
+				t.Fatalf("Open = %+v, %v", v, err)
+			}
+			c := v.Configuration
+			if c.State != tc.state || c.Commit != tc.commit || c.Reason != tc.reason || !c.ReadAt.Equal(w.now) {
+				t.Errorf("configuration = %+v", c)
+			}
+			if (c.State == repository.ConfigurationConfigured) != (len(c.Content) > 0) {
+				t.Errorf("content of %d bytes for %s", len(c.Content), c.State)
+			}
+			// Still active, whatever the file.
+			if !v.Repository.Active {
+				t.Error("the repository is not active")
+			}
+		})
+	}
+}
+
+func TestRefreshConfigurationSkips(t *testing.T) {
+	ctx := context.Background()
+	w, files, _ := newConfigured(t)
+	if err := w.service.RefreshConfiguration(ctx, "9999"); !errors.Is(err, repository.ErrNotFound) {
+		t.Errorf("an unknown repository: %v", err)
+	}
+	if _, err := w.service.Deactivate(ctx, "alice", "acme", "acme/api"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.service.RefreshConfiguration(ctx, "2001"); err != nil || files.reads != 0 {
+		t.Errorf("a deactivated repository: %v, %d reads", err, files.reads)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := w.service.Activate(ctx, "alice", "acme", "2001"); err != nil {
+		t.Fatal(err)
+	}
+	files.err = context.Canceled
+	if err := w.service.RefreshConfiguration(canceled, "2001"); !errors.Is(err, context.Canceled) {
+		t.Errorf("a read cut short: %v", err)
+	}
+	if v, _ := w.service.Open(ctx, "alice", "acme", "acme/api"); v.Configuration != nil {
+		t.Errorf("a read cut short stored %+v", v.Configuration)
+	}
+	none := repository.New(repository.Options{Forge: w.forge, Workspaces: w.workspaces, Store: w.store})
+	if err := none.RefreshConfiguration(ctx, "2001"); !errors.Is(err, repository.ErrNoFiles) {
+		t.Errorf("without files: %v", err)
+	}
+	if got, err := w.service.Active(ctx); err != nil || strings.Join(got, " ") != "2001" {
+		t.Errorf("Active = %v, %v", got, err)
+	}
+}
+
+// TestAPushRefreshes: only a recorded push of a commit to the default
+// branch of an active repository asks for its configuration again.
+func TestAPushRefreshes(t *testing.T) {
+	ctx := context.Background()
+	w, _, events := newConfigured(t)
+	branch := func(ref string, tag, deleted bool) repository.Delivery {
+		d := pushTo("2001", "c2")
+		p := *d.Push
+		p.Ref, p.Tag, p.Deleted = ref, tag, deleted
+		d.Push = &p
+		return d
+	}
+	events.deliveries["push main"] = branch("refs/heads/main", false, false)
+	events.deliveries["push feature"] = branch("refs/heads/feature", false, false)
+	events.deliveries["push tag"] = branch("refs/tags/main", true, false)
+	events.deliveries["delete main"] = branch("refs/heads/main", false, true)
+	for _, tc := range []struct {
+		delivery, body, want string
+	}{
+		{"d1", "push main", "2001"},
+		{"d1", "push main", ""}, // a duplicate
+		{"d2", "push feature", ""},
+		{"d3", "push tag", ""},
+		{"d4", "delete main", ""},
+		{"d5", "pr reopened", ""},
+		{"d6", "push web", ""}, // not active
+		{"d7", "issues", ""},
+	} {
+		got, err := w.service.Receive(ctx, signed(tc.delivery), []byte(tc.body))
+		if err != nil || got.Refresh != tc.want {
+			t.Errorf("Receive(%s, %s) = %+v, %v; want a refresh of %q", tc.delivery, tc.body, got, err, tc.want)
+		}
 	}
 }

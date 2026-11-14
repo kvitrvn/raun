@@ -182,6 +182,9 @@ type Store interface {
 	// Find returns the repository of forge with this full name in the
 	// workspace with this name; ErrNotFound if none.
 	Find(ctx context.Context, workspace, forge, fullName string) (Repository, error)
+	// Active returns the stable identifiers of the active repositories of
+	// forge, sorted.
+	Active(ctx context.Context, forge string) ([]string, error)
 	// InWorkspace returns the repositories of the workspace with this
 	// identifier, sorted by full name, then identifier.
 	InWorkspace(ctx context.Context, workspace string) ([]Repository, error)

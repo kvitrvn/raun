@@ -60,6 +60,10 @@ func (s *stubRepositories) Open(_ context.Context, _, workspace, fullName string
 	return s.view, s.ask("open "+workspace+" "+fullName, s.err)
 }
 
+func (s *stubRepositories) RefreshConfiguration(_ context.Context, id string) error {
+	return s.ask("refresh "+id, nil)
+}
+
 func (s *stubRepositories) InWorkspace(_ context.Context, _, workspace string) ([]repository.Repository, error) {
 	return nil, s.ask("in "+workspace, s.err)
 }
@@ -109,7 +113,7 @@ func TestRepositoryRequestsReachTheService(t *testing.T) {
 		t.Errorf("deactivation went to %q", got)
 	}
 	readBody(t, alice.do(http.MethodGet, "/alice", nil))
-	want := []string{"list api", "activate alice 2001", "open alice acme/api", "deactivate alice acme/api", "in alice"}
+	want := []string{"list api", "activate alice 2001", "refresh 2001", "open alice acme/api", "deactivate alice acme/api", "in alice"}
 	if got := l.repos.calls(); strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Errorf("calls = %q, want %q", got, want)
 	}

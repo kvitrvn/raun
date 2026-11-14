@@ -63,6 +63,8 @@ type Fake struct {
 	offset  time.Duration // how far Advance moved the clock
 	people  map[string]Person
 	repos   map[string]fakeRepo
+	heads   map[string]map[string]string              // repository -> branch -> commit
+	files   map[string]map[string]map[string]string   // repository -> commit -> path -> content
 	grants  map[string]map[string]identity.Permission // person -> repository -> permission
 	orgs    map[string]map[string]bool                // organization -> members
 	codes   map[string]grant
@@ -77,6 +79,7 @@ var (
 	_ identity.Memberships = (*Fake)(nil)
 	_ repository.Reach     = (*Fake)(nil)
 	_ repository.Events    = (*Fake)(nil)
+	_ repository.Files     = (*Fake)(nil)
 )
 
 // New returns an empty fake forge called name, whose clock is now, moved
@@ -87,6 +90,8 @@ func New(name string, now func() time.Time) *Fake {
 		now:     now,
 		people:  map[string]Person{},
 		repos:   map[string]fakeRepo{},
+		heads:   map[string]map[string]string{},
+		files:   map[string]map[string]map[string]string{},
 		grants:  map[string]map[string]identity.Permission{},
 		orgs:    map[string]map[string]bool{},
 		codes:   map[string]grant{},
@@ -453,4 +458,71 @@ func (f *Fake) Parse(header func(string) string, body []byte) (repository.Delive
 	d := b.Delivery
 	d.Forge, d.ID = f.name, header(HeaderDelivery)
 	return d, nil
+}
+
+// SetHead points branch of the repository with this identifier at commit.
+func (f *Fake) SetHead(repo, branch, commit string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.heads[repo] == nil {
+		f.heads[repo] = map[string]string{}
+	}
+	f.heads[repo][branch] = commit
+}
+
+// SetFile puts content at path in the repository with this identifier at
+// commit.
+func (f *Fake) SetFile(repo, commit, path, content string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.files[repo] == nil {
+		f.files[repo] = map[string]map[string]string{}
+	}
+	if f.files[repo][commit] == nil {
+		f.files[repo][commit] = map[string]string{}
+	}
+	f.files[repo][commit][path] = content
+}
+
+// reachable reports whether the App can read the repository with this
+// identifier; the caller holds the lock.
+func (f *Fake) readable(repo string) error {
+	if f.down {
+		return identity.ErrUnavailable
+	}
+	if r, ok := f.repos[repo]; !ok || !r.installed {
+		return fmt.Errorf("%w: the App does not reach the repository %s", identity.ErrUnavailable, repo)
+	}
+	return nil
+}
+
+// Head implements repository.Files.
+func (f *Fake) Head(_ context.Context, repo, branch string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.readable(repo); err != nil {
+		return "", err
+	}
+	commit, ok := f.heads[repo][branch]
+	if !ok {
+		return "", repository.ErrNoFile
+	}
+	return commit, nil
+}
+
+// Read implements repository.Files.
+func (f *Fake) Read(_ context.Context, repo, commit, path string, limit int64) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.readable(repo); err != nil {
+		return nil, err
+	}
+	content, ok := f.files[repo][commit][path]
+	switch {
+	case !ok:
+		return nil, repository.ErrNoFile
+	case int64(len(content)) > limit:
+		return nil, repository.ErrFileTooLarge
+	}
+	return []byte(content), nil
 }

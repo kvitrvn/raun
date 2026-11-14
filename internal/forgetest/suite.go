@@ -14,6 +14,9 @@ import (
 	"github.com/kvitrvn/raun/internal/core/repository"
 )
 
+// FilesHead is the head of main in acme/api in the scenario of the suite.
+const FilesHead = "cccccccccccccccccccccccccccccccccccccccc"
+
 // Fixture is a forge set up with the scenario of the contract suite:
 //
 //   - a person, Alice, who belongs to the organization Org and not to OtherOrg;
@@ -32,6 +35,10 @@ type Fixture struct {
 	// Reached are the identifiers of the repositories the App reaches,
 	// sorted: acme/api, acme/web and acme/secret.
 	Reached []string
+	// Head is the commit at the head of main in acme/api, where
+	// .raun.yaml holds "version: 1\n", big.txt 100 bytes and empty.txt
+	// nothing. The other repositories hold no file.
+	Head string
 	// Push is the forge delivering, signed, a push to the main branch of
 	// acme/api from Alice: the headers of the request and its body; nil
 	// for a forge without the events capability.
@@ -90,6 +97,12 @@ func Scenario(name string, bare bool) (*Fake, Fixture) {
 	f.AddMember("3001", "1001")
 	f.AddMember("3002", "1002")
 
+	f.SetHead("2001", "main", FilesHead)
+	f.SetHead("2002", "main", strings.Repeat("e", 40))
+	f.SetFile("2001", FilesHead, ".raun.yaml", "version: 1\n")
+	f.SetFile("2001", FilesHead, "big.txt", strings.Repeat("x", 100))
+	f.SetFile("2001", FilesHead, "empty.txt", "")
+
 	var forge identity.Forge = f
 	if bare {
 		forge = f.Bare()
@@ -101,6 +114,7 @@ func Scenario(name string, bare bool) (*Fake, Fixture) {
 		OtherOrg:    "3002",
 		Unreachable: unreachable,
 		Reached:     []string{"2001", "2002", "2003"},
+		Head:        FilesHead,
 		Push: func(*testing.T) (map[string]string, []byte) {
 			return f.Deliver("delivery-1", repository.Delivery{
 				Event: "push", Kind: repository.KindPush, Repository: "2001",
@@ -468,6 +482,54 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		fx.SetDown(t, true)
 		if got, err := r.Reached(ctx); got != nil || !errors.Is(err, identity.ErrUnavailable) {
 			t.Errorf("Reached of a forge down = %v, %v; want nothing and ErrUnavailable", got, err)
+		}
+	})
+
+	t.Run("files, when the forge has them", func(t *testing.T) {
+		fx := newFixture(t)
+		f, ok := fx.Forge.(repository.Files)
+		if !ok {
+			t.Skip("the forge cannot read files")
+		}
+		if head, err := f.Head(ctx, "2001", "main"); err != nil || head != fx.Head {
+			t.Fatalf("Head(main) = %q, %v; want %q", head, err, fx.Head)
+		}
+		if _, err := f.Head(ctx, "2001", "no-such-branch"); !errors.Is(err, repository.ErrNoFile) {
+			t.Errorf("Head of a missing branch = %v, want ErrNoFile", err)
+		}
+		read := func(repo, commit, path string, limit int64) (string, error) {
+			b, err := f.Read(ctx, repo, commit, path, limit)
+			return string(b), err
+		}
+		if got, err := read("2001", fx.Head, ".raun.yaml", 1<<16); err != nil || got != "version: 1\n" {
+			t.Errorf("Read(.raun.yaml) = %q, %v", got, err)
+		}
+		if got, err := read("2001", fx.Head, "empty.txt", 1<<16); err != nil || got != "" {
+			t.Errorf("Read of an empty file = %q, %v", got, err)
+		}
+		if got, err := read("2001", fx.Head, "big.txt", 100); err != nil || len(got) != 100 {
+			t.Errorf("Read of a file at the bound = %d bytes, %v", len(got), err)
+		}
+		if got, err := read("2001", fx.Head, "big.txt", 99); got != "" || !errors.Is(err, repository.ErrFileTooLarge) {
+			t.Errorf("Read past the bound = %d bytes, %v; want nothing and ErrFileTooLarge", len(got), err)
+		}
+		for _, tc := range []struct{ name, repo, commit, path string }{
+			{"a missing file", "2001", fx.Head, "missing.yaml"},
+			{"a directory", "2001", fx.Head, "docs"},
+			{"another commit", "2001", strings.Repeat("d", 40), ".raun.yaml"},
+			{"another repository", "2002", fx.Head, ".raun.yaml"},
+		} {
+			if got, err := read(tc.repo, tc.commit, tc.path, 1<<16); got != "" || !errors.Is(err, repository.ErrNoFile) {
+				t.Errorf("Read of %s = %q, %v; want ErrNoFile", tc.name, got, err)
+			}
+		}
+		// The App does not reach other/lib: nothing is read.
+		if got, err := read("2004", fx.Head, ".raun.yaml", 1<<16); got != "" || err == nil || errors.Is(err, repository.ErrNoFile) {
+			t.Errorf("Read of a repository the App does not reach = %q, %v", got, err)
+		}
+		fx.SetDown(t, true)
+		if _, err := read("2001", fx.Head, ".raun.yaml", 1<<16); !errors.Is(err, identity.ErrUnavailable) {
+			t.Errorf("Read of a forge down = %v, want ErrUnavailable", err)
 		}
 	})
 
