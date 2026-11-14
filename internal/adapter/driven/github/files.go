@@ -17,55 +17,74 @@ var _ repository.Files = (*App)(nil)
 
 // repositoryID is the stable identifier id as GitHub numbers it.
 func repositoryID(id string) (int64, error) {
-	n, err := strconv.ParseInt(id, 10, 64)
-	if err != nil || n <= 0 || strconv.FormatInt(n, 10) != id {
+	n, ok := parseRepositoryID(id)
+	if !ok {
 		return 0, fmt.Errorf("github: %q is not the identifier of a GitHub repository: %w", id, repository.ErrNoFile)
 	}
 	return n, nil
 }
 
-// readScope finds the installation of the App that reaches the repository
-// id, with the JWT of the App unless an earlier read found it, and returns
-// the narrowest scope that reads it: that repository alone, contents read.
+// parseRepositoryID parses the stable identifier GitHub gives a repository:
+// a positive number, written as GitHub writes it.
+func parseRepositoryID(id string) (int64, bool) {
+	n, err := strconv.ParseInt(id, 10, 64)
+	return n, err == nil && n > 0 && strconv.FormatInt(n, 10) == id
+}
+
+// readScope returns the narrowest scope that reads the repository id: that
+// repository alone, contents read.
 func (a *App) readScope(ctx context.Context, id int64) (scope, error) {
+	return a.repositoryScope(ctx, id, map[string]string{"contents": "read"})
+}
+
+// repositoryScope finds the installation of the App that reaches the
+// repository id, with the JWT of the App unless an earlier call found it,
+// and returns the scope of that repository alone with permissions, and no
+// other.
+func (a *App) repositoryScope(ctx context.Context, id int64, permissions map[string]string) (scope, error) {
+	installation, err := a.installationOf(ctx, id)
+	if err != nil {
+		return scope{}, err
+	}
+	return scope{installation: installation, repositories: []int64{id}, permissions: permissions}, nil
+}
+
+// installationOf returns the installation of the App that reaches the
+// repository id.
+func (a *App) installationOf(ctx context.Context, id int64) (int64, error) {
 	if installation, ok := a.installs.get(id); ok {
-		return readScopeOf(installation, id), nil
+		return installation, nil
 	}
 	jwt, err := a.jwt()
 	if err != nil {
-		return scope{}, fmt.Errorf("github: installation of a repository: %w: %w", identity.ErrUnavailable, err)
+		return 0, fmt.Errorf("github: installation of a repository: %w: %w", identity.ErrUnavailable, err)
 	}
 	path := "/repositories/" + strconv.FormatInt(id, 10) + "/installation"
 	req := a.apiGet(path, nil, "Bearer "+jwt)
 	r, err := a.do(ctx, req)
 	if err != nil {
-		return scope{}, err
+		return 0, err
 	}
 	switch r.status {
 	case http.StatusOK:
 	case http.StatusNotFound:
-		return scope{}, fail(req, identity.ErrUnavailable, "the App does not reach the repository")
+		return 0, fail(req, identity.ErrUnavailable, "the App does not reach the repository")
 	case http.StatusUnauthorized:
-		return scope{}, fail(req, identity.ErrUnavailable, "GitHub refuses the JWT of the App: check RAUN_GITHUB_APP_ID, the private key and the clock")
+		return 0, fail(req, identity.ErrUnavailable, "GitHub refuses the JWT of the App: check RAUN_GITHUB_APP_ID, the private key and the clock")
 	default:
-		return scope{}, status(req, r)
+		return 0, status(req, r)
 	}
 	var out struct {
 		ID int64 `json:"id"`
 	}
 	if err := decode(req, r, &out); err != nil {
-		return scope{}, err
+		return 0, err
 	}
 	if out.ID <= 0 {
-		return scope{}, fail(req, identity.ErrUnavailable, "malformed response")
+		return 0, fail(req, identity.ErrUnavailable, "malformed response")
 	}
 	a.installs.put(id, out.ID)
-	return readScopeOf(out.ID, id), nil
-}
-
-// readScopeOf is the scope that reads the repository id in installation.
-func readScopeOf(installation, id int64) scope {
-	return scope{installation: installation, repositories: []int64{id}, permissions: map[string]string{"contents": "read"}}
+	return out.ID, nil
 }
 
 // asReader sends the GET of path with a token of the narrowest scope that
