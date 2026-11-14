@@ -138,10 +138,30 @@ func sweep(ctx context.Context, tx *sql.Tx, now time.Time) (int, error) {
 	if _, err := tx.ExecContext(ctx, `UPDATE runs SET outcome = 'failed', ended_at = ? WHERE outcome IS NULL AND deadline <= ?`, at, at); err != nil {
 		return 0, err
 	}
-	// Then the lost runs: each job is queued again or fails, by how many
-	// runs it has had.
+	// Then the lost runs.
+	n, err := loseRuns(ctx, tx, `lease_expires_at <= ?`, at, now)
+	if err != nil {
+		return 0, err
+	}
+	changed += n
+	// Then the jobs queued too long.
+	res, err = tx.ExecContext(ctx, `UPDATE jobs SET state = 'failed', reason = ?, finished_at = ?
+		WHERE state = 'queued' AND created_at <= ?`, string(job.ReasonExpired), at, formatTime(now.Add(-job.QueueExpiry)))
+	if err != nil {
+		return 0, err
+	}
+	return changed + affected(res), nil
+}
+
+// loseRuns ends as lost at now the open runs of tx that where selects, a
+// condition on the columns of runs with one argument arg, and queues each
+// of their jobs again or fails it by AfterLost, from how many runs it has
+// had. It returns how many jobs changed. The sweeper and the revocation of
+// a runner share it, so a run is lost by one rule.
+func loseRuns(ctx context.Context, tx *sql.Tx, where string, arg any, now time.Time) (int, error) {
+	at := formatTime(now)
 	rows, err := tx.QueryContext(ctx, `SELECT r.job, (SELECT count(*) FROM runs c WHERE c.job = r.job)
-		FROM runs r WHERE r.outcome IS NULL AND r.lease_expires_at <= ?`, at)
+		FROM runs r WHERE r.outcome IS NULL AND r.`+where, arg)
 	if err != nil {
 		return 0, err
 	}
@@ -161,7 +181,7 @@ func sweep(ctx context.Context, tx *sql.Tx, now time.Time) (int, error) {
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return 0, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE runs SET outcome = 'lost', ended_at = ? WHERE outcome IS NULL AND lease_expires_at <= ?`, at, at); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE runs SET outcome = 'lost', ended_at = ? WHERE outcome IS NULL AND `+where, at, arg); err != nil {
 		return 0, err
 	}
 	for _, l := range all {
@@ -174,15 +194,8 @@ func sweep(ctx context.Context, tx *sql.Tx, now time.Time) (int, error) {
 			string(state), string(reason), finished, l.job); err != nil {
 			return 0, err
 		}
-		changed++
 	}
-	// Then the jobs queued too long.
-	res, err = tx.ExecContext(ctx, `UPDATE jobs SET state = 'failed', reason = ?, finished_at = ?
-		WHERE state = 'queued' AND created_at <= ?`, string(job.ReasonExpired), at, formatTime(now.Add(-job.QueueExpiry)))
-	if err != nil {
-		return 0, err
-	}
-	return changed + affected(res), nil
+	return len(all), nil
 }
 
 func affected(res sql.Result) int {
@@ -210,48 +223,9 @@ func (s Jobs) Claim(ctx context.Context, c job.Claimant, now time.Time) (job.Cla
 	var out job.Claimed
 	found := false
 	err := s.s.write(ctx, func(tx *sql.Tx) error {
-		found = false
-		if _, err := sweep(ctx, tx, now); err != nil {
-			return fmt.Errorf("claim job: %w", err)
-		}
-		kinds := job.KindsFor(c.Capabilities)
-		if len(kinds) == 0 {
-			return nil
-		}
-		query := `SELECT ` + jobColumns + ` FROM jobs WHERE state = 'queued' AND not_before <= ? AND kind IN (?` +
-			strings.Repeat(", ?", len(kinds)-1) + `)`
-		args := []any{formatTime(now)}
-		for _, k := range kinds {
-			args = append(args, string(k))
-		}
-		if c.Workspace != "" {
-			query += ` AND workspace = ?`
-			args = append(args, c.Workspace)
-		}
-		query += ` ORDER BY priority, created_at, id LIMIT 1`
-		j, err := scanJob(tx.QueryRowContext(ctx, query, args...))
-		if errors.Is(err, sql.ErrNoRows) {
-			// Nothing to claim; what the sweep ended is kept.
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("claim job: %w", err)
-		}
-		run, token, hash, err := job.Start(rand.Reader, j, c, now)
-		if err != nil {
-			return fmt.Errorf("claim job: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO runs (id, job, runner, token_hash, started_at, lease_expires_at, deadline)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`, run.ID, run.Job, run.Runner, hash,
-			formatTime(run.StartedAt), formatTime(run.LeaseExpires), formatTime(run.Deadline)); err != nil {
-			return fmt.Errorf("claim job: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE jobs SET state = 'running' WHERE id = ?`, j.ID); err != nil {
-			return fmt.Errorf("claim job: %w", err)
-		}
-		j.State = job.StateRunning
-		out, found = job.Claimed{Job: j, Run: run, Token: token}, true
-		return nil
+		var err error
+		out, found, err = claimIn(ctx, tx, c, now)
+		return err
 	})
 	if err != nil {
 		return job.Claimed{}, err
@@ -260,6 +234,51 @@ func (s Jobs) Claim(ctx context.Context, c job.Claimant, now time.Time) (job.Cla
 		return job.Claimed{}, job.ErrNoJob
 	}
 	return out, nil
+}
+
+// claimIn applies the rules of job.Store.Claim in tx: it sweeps, then
+// starts the run of the first job c may take, and reports whether there was
+// one. What the sweep ended is kept either way.
+func claimIn(ctx context.Context, tx *sql.Tx, c job.Claimant, now time.Time) (job.Claimed, bool, error) {
+	if _, err := sweep(ctx, tx, now); err != nil {
+		return job.Claimed{}, false, fmt.Errorf("claim job: %w", err)
+	}
+	kinds := job.KindsFor(c.Capabilities)
+	if len(kinds) == 0 {
+		return job.Claimed{}, false, nil
+	}
+	query := `SELECT ` + jobColumns + ` FROM jobs WHERE state = 'queued' AND not_before <= ? AND kind IN (?` +
+		strings.Repeat(", ?", len(kinds)-1) + `)`
+	args := []any{formatTime(now)}
+	for _, k := range kinds {
+		args = append(args, string(k))
+	}
+	if c.Workspace != "" {
+		query += ` AND workspace = ?`
+		args = append(args, c.Workspace)
+	}
+	query += ` ORDER BY priority, created_at, id LIMIT 1`
+	j, err := scanJob(tx.QueryRowContext(ctx, query, args...))
+	if errors.Is(err, sql.ErrNoRows) {
+		return job.Claimed{}, false, nil
+	}
+	if err != nil {
+		return job.Claimed{}, false, fmt.Errorf("claim job: %w", err)
+	}
+	run, token, hash, err := job.Start(rand.Reader, j, c, now)
+	if err != nil {
+		return job.Claimed{}, false, fmt.Errorf("claim job: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO runs (id, job, runner, token_hash, started_at, lease_expires_at, deadline)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`, run.ID, run.Job, run.Runner, hash,
+		formatTime(run.StartedAt), formatTime(run.LeaseExpires), formatTime(run.Deadline)); err != nil {
+		return job.Claimed{}, false, fmt.Errorf("claim job: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE jobs SET state = 'running' WHERE id = ?`, j.ID); err != nil {
+		return job.Claimed{}, false, fmt.Errorf("claim job: %w", err)
+	}
+	j.State = job.StateRunning
+	return job.Claimed{Job: j, Run: run, Token: token}, true, nil
 }
 
 // lookup returns the run with this identifier in tx when token is its own;

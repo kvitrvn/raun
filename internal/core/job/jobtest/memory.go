@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,15 @@ type Memory struct {
 	runs map[string]*storedRun
 	// order holds the runs of each job, oldest first.
 	order map[string][]string
+	// runners are the runners by identifier, with the hash of their
+	// token.
+	runners    map[string]*storedRunner
+	workspaces []job.Workspace
+}
+
+type storedRunner struct {
+	runner job.Runner
+	hash   string
 }
 
 type storedRun struct {
@@ -28,11 +38,25 @@ type storedRun struct {
 	hash string
 }
 
-var _ job.Store = (*Memory)(nil)
+var (
+	_ job.Store       = (*Memory)(nil)
+	_ job.RunnerStore = (*Memory)(nil)
+)
 
 func (m *Memory) init() {
 	if m.jobs == nil {
 		m.jobs, m.runs, m.order = map[string]job.Job{}, map[string]*storedRun{}, map[string][]string{}
+		m.runners = map[string]*storedRunner{}
+	}
+}
+
+// AddWorkspace makes w known, as the workspace store of the same data
+// would.
+func (m *Memory) AddWorkspace(w job.Workspace) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !slices.Contains(m.workspaces, w) {
+		m.workspaces = append(m.workspaces, w)
 	}
 }
 
@@ -62,7 +86,11 @@ func (m *Memory) Claim(_ context.Context, c job.Claimant, now time.Time) (job.Cl
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.init()
-	now = now.UTC()
+	return m.claim(c, now.UTC())
+}
+
+// claim applies the rules of Claim.
+func (m *Memory) claim(c job.Claimant, now time.Time) (job.Claimed, error) {
 	m.sweep(now)
 	var candidates []job.Job
 	for _, j := range m.jobs {
@@ -275,5 +303,144 @@ func (m *Memory) Runs(_ context.Context, id string) ([]job.Run, error) {
 		}
 		out = append(out, r)
 	}
+	return out, nil
+}
+
+func cloneRunner(r job.Runner) job.Runner {
+	r.Capabilities = slices.Clone(r.Capabilities)
+	return r
+}
+
+func (m *Memory) CreateRunner(_ context.Context, r job.Runner, hash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	if _, ok := m.runners[r.ID]; ok || r.ID == "" || len(hash) != 64 {
+		return fmt.Errorf("%w: identifier %q", job.ErrInvalidRunner, r.ID)
+	}
+	if r.Workspace != "" && !slices.ContainsFunc(m.workspaces, func(w job.Workspace) bool { return w.ID == r.Workspace }) {
+		return fmt.Errorf("%w: no workspace %q", job.ErrInvalidRunner, r.Workspace)
+	}
+	for _, o := range m.runners {
+		if o.runner.Name == r.Name {
+			return job.ErrRunnerNameTaken
+		}
+		if o.hash == hash {
+			return fmt.Errorf("%w: a token of another runner", job.ErrInvalidRunner)
+		}
+	}
+	m.runners[r.ID] = &storedRunner{runner: cloneRunner(r), hash: hash}
+	return nil
+}
+
+func (m *Memory) Runner(_ context.Context, id string) (job.Runner, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	r, ok := m.runners[id]
+	if !ok {
+		return job.Runner{}, job.ErrNoRunner
+	}
+	return cloneRunner(r.runner), nil
+}
+
+func (m *Memory) Runners(_ context.Context) ([]job.Runner, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	var out []job.Runner
+	for _, r := range m.runners {
+		out = append(out, cloneRunner(r.runner))
+	}
+	slices.SortFunc(out, func(a, b job.Runner) int { return strings.Compare(a.Name, b.Name) })
+	return out, nil
+}
+
+func (m *Memory) RotateRunner(_ context.Context, id, hash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	r, ok := m.runners[id]
+	switch {
+	case !ok:
+		return job.ErrNoRunner
+	case r.runner.Revoked():
+		return job.ErrRevoked
+	}
+	r.hash = hash
+	return nil
+}
+
+func (m *Memory) RevokeRunner(_ context.Context, id string, at time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	r, ok := m.runners[id]
+	if !ok {
+		return 0, job.ErrNoRunner
+	}
+	if r.runner.Revoked() {
+		return 0, nil
+	}
+	at = at.UTC()
+	r.runner.RevokedAt = at
+	changed := 0
+	for _, run := range m.runs {
+		if run.run.Open() && run.run.Runner == id {
+			run.run.Outcome, run.run.EndedAt = job.OutcomeLost, at
+			j := m.jobs[run.run.Job]
+			j.State, j.Reason = job.AfterLost(len(m.order[j.ID]))
+			if j.State.Final() {
+				j.FinishedAt = at
+			}
+			m.jobs[j.ID] = j
+			changed++
+		}
+	}
+	return changed, nil
+}
+
+// authenticated returns the runner whose token has hash, when it is not
+// revoked.
+func (m *Memory) authenticated(hash string) (*storedRunner, error) {
+	for _, r := range m.runners {
+		if r.hash == hash && !r.runner.Revoked() {
+			return r, nil
+		}
+	}
+	return nil, job.ErrUnauthenticated
+}
+
+func (m *Memory) Authenticate(_ context.Context, hash string, now time.Time) (job.Runner, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	r, err := m.authenticated(hash)
+	if err != nil {
+		return job.Runner{}, err
+	}
+	now = now.UTC()
+	if !now.Before(r.runner.LastContact.Add(job.ContactEvery)) {
+		r.runner.LastContact = now
+	}
+	return cloneRunner(r.runner), nil
+}
+
+func (m *Memory) ClaimFor(_ context.Context, runner string, now time.Time) (job.Claimed, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	r, ok := m.runners[runner]
+	if !ok || r.runner.Revoked() {
+		return job.Claimed{}, job.ErrUnauthenticated
+	}
+	return m.claim(r.runner.Claimant(), now.UTC())
+}
+
+func (m *Memory) Workspaces(_ context.Context) ([]job.Workspace, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := slices.Clone(m.workspaces)
+	slices.SortFunc(out, func(a, b job.Workspace) int { return strings.Compare(a.Name, b.Name) })
 	return out, nil
 }

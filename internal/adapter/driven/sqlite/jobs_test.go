@@ -35,15 +35,21 @@ func addRepository(t *testing.T, s *Store, workspace, forge, id string) {
 	}
 }
 
-func TestJobsContract(t *testing.T) {
-	jobtest.Suite(t, func(t *testing.T) jobtest.Fixture {
-		s, _ := openMigrated(t)
-		return jobtest.Fixture{
-			Store:         s.Jobs(),
-			AddRepository: func(t *testing.T, workspace, forge, id string) { addRepository(t, s, workspace, forge, id) },
-		}
-	})
+func jobFixture(t *testing.T) jobtest.Fixture {
+	s, _ := openMigrated(t)
+	return jobtest.Fixture{
+		Store:   s.Jobs(),
+		Runners: s.Runners(),
+		AddWorkspace: func(t *testing.T, w job.Workspace) {
+			addWorkspace(t, s, repository.Workspace{ID: w.ID, Name: w.Name}, strings.Repeat("0", 30)+"a1")
+		},
+		AddRepository: func(t *testing.T, workspace, forge, id string) { addRepository(t, s, workspace, forge, id) },
+	}
 }
+
+func TestJobsContract(t *testing.T) { jobtest.Suite(t, jobFixture) }
+
+func TestRunnersContract(t *testing.T) { jobtest.RunnerSuite(t, jobFixture) }
 
 func noopJob(t *testing.T, workspace, repo string, at time.Time) job.Job {
 	t.Helper()
