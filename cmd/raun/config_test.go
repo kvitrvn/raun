@@ -75,7 +75,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 	want := "RAUN_HTTP_ADDR=:8080 RAUN_PUBLIC_URL=http://localhost:8080 RAUN_TLS_CERT_FILE= RAUN_TLS_KEY_FILE= " +
 		"RAUN_DATABASE_PATH=raun.db RAUN_DATABASE_MIGRATE=false RAUN_LOG_LEVEL=info RAUN_LOG_FORMAT=json RAUN_SHUTDOWN_TIMEOUT=10s " +
 		"RAUN_GITHUB_URL=https://github.com RAUN_GITHUB_APP_ID= RAUN_GITHUB_CLIENT_ID= " +
-		"RAUN_GITHUB_CLIENT_SECRET=[redacted] RAUN_GITHUB_PRIVATE_KEY=[redacted] " +
+		"RAUN_GITHUB_CLIENT_SECRET=[redacted] RAUN_GITHUB_PRIVATE_KEY=[redacted] RAUN_GITHUB_WEBHOOK_SECRET=[redacted] " +
 		"RAUN_SECRET_KEY=[redacted] RAUN_SECRET_KEY_PREVIOUS=[redacted] RAUN_SIGNUP_USERS= RAUN_SIGNUP_ORGS= RAUN_ADMINS="
 	if got := strings.Join(names, " "); got != want {
 		t.Errorf("settings = %s\nwant       %s", got, want)
