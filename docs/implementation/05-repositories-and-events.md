@@ -56,7 +56,7 @@ The capabilities and the webhook contract are described in [docs/forge.md](../fo
 
 - **The default branch decides.** `.raun.yaml` is read at the root of the default branch: at activation, and at its head on each push to it. A pull request, from a fork or not, is analyzed with the configuration of the default branch, never with the one of its head: a pull request cannot change how it is checked (T8). The analyzed commit and the trusted configuration are two different things.
 - **States shown** on the page of the repository: configured, not configured (no file), unreadable (the forge could not give it, or it exceeds the bound of #33). From epic 8, which decodes the file, invalid, with the field named. Until then, a file present counts as configured.
-- **Reading** goes through the Files capability of #33, without cloning, with a bound on the size and a short cache keyed by repository and commit; #33 sets the bound.
+- **Reading** goes through the Files capability of #33, without cloning, with a bound on the size and a short cache keyed by repository and commit; #33 sets the bound: 64 KiB.
 
 ### Statuses and comments
 
@@ -82,7 +82,7 @@ Choices #31 made within the decisions above, for the owner to confirm in its rev
 - **Who sees what.** The screen lists what the forge lists for the person; a repository Raun knows shows its state and its workspace, since the forge lets the person read it. The page shows to whoever the forge lets read the repository, member of its workspace or not; the page of a workspace lists only the repositories of the workspace the forge lists for the visitor.
 - **Full names.** A full name is unique on its forge, as on the forge itself: a listing or an activation that gives a name to a repository takes it from any other one Raun knows, whose snapshot stays empty, and its page not found, until the forge lists it again. A page answers at the full name as the forge spells it: another casing is not found, as an old name is, since no name of Raun redirects.
 - **Reach.** One optional capability of the forge, `Reach`, gives every repository the App reaches, across its installations, or an error, never a part of them; `SyncReach` makes each other repository Raun knows unreachable and not active, and one reached again reachable and still deactivated. #32 calls it on an installation delivery and adds it to the GitHub adapter; the fake forge has it.
-- **Preconditions.** No forge offers files, webhooks or events before #32 and #33, which declare their operations in this context and detect them: until then the screen names what is missing and nothing can be activated, outside tests.
+- **Preconditions.** No forge offers files, webhooks or events before #32 and #33, which declare their operations in this context and detect them: until then the screen names what is missing and nothing can be activated, outside tests. #32 and #33 did: a repository can be activated since.
 
 ## Implementation of #32
 
@@ -95,6 +95,18 @@ Choices #32 made within the decisions above, for the owner to confirm in its rev
 - **The keys are unique per forge**, so a second forge never collides with the first. The log is written only while the repository is active, as the transaction that keeps the keys sees it, so a deactivation cannot fall in between.
 - **The sync of the reach** runs in the server, one at a time, after the answer to an installation delivery and once at start, which recovers a sync a stop cut short; requests that come during one make one more. A sync that fails is tried again after 30 seconds, then a wait doubled after each failure in a row up to 30 minutes, until one succeeds. No request is stored: a sync reads the forge, never a payload, and the jobs of epic 6 can take it over.
 - **The event log** shows the 50 newest rows, with the ref and the before and after commits (the base and head commits of a pull request), and nothing of the commits in between. A pull request whose head repository the forge no longer knows counts as from a fork, the stricter answer.
+
+## Implementation of #33
+
+Choices #33 made within the decisions above, for the owner to confirm in its review:
+
+- **The bound is 64 KiB.** A configuration is short; a larger file is unreadable, refused whole, never truncated. The context files of epic 8 get their own bounds there.
+- **The cache** keeps a file, its absence or that it is too large, by forge, repository, commit, path and bound, 5 minutes, 1024 entries at most, the oldest dropped first; a failure of the forge is never kept, nor the head of a branch, which moves.
+- **The head is resolved when the file is read**, not taken from a push: a delivery late or out of order, or a force-push, never installs an older configuration. A push records its event and asks for a read; the read takes the head of the default branch the forge gives then.
+- **The last read is stored**, state, commit, time, reason, and the file of a configured repository, untrusted, for the decoder of epic 8 (migration 7). A read that fails stores unreadable without content: an older file never stands for the current one. A deactivated repository keeps its last read.
+- **When it is read.** At activation, at once, 10 seconds at most, without ever refusing the activation; after the answer to a push of a commit to the default branch of an active repository, one read at a time, a repository asked for twice read once; and at start, for every active repository, which recovers a read a stop cut short. A pull request, a tag, another branch or a deleted branch reads nothing.
+- **Before a first read**, the page says not read yet.
+- **On GitHub**, the installation of a repository comes from `GET /repositories/{id}/installation`, and the token is minted for that repository alone, with Contents read.
 
 ## Deferred
 
