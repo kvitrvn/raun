@@ -176,10 +176,13 @@ type JobRequest struct {
 }
 
 // JobPolicy is the policy point (T8): the jobs a delivery of a repository
-// creates, deny by default. It decides from the delivery alone and must not
-// block; it is asked before the delivery is recorded, and the requests of a
-// delivery the store does not log, such as one of a repository that is not
-// active, are dropped.
+// creates, deny by default. It is a pure function of the delivery, which
+// must not block: it is asked before the delivery is recorded, so for
+// duplicates too, and the requests of a delivery the store does not log,
+// such as one of a repository that is not active, are dropped. A request
+// the job context refuses is a defect of the policy: the store refuses the
+// delivery whole, which the hook answers with 500, so it is seen and the
+// forge can deliver it again once the policy is fixed.
 type JobPolicy func(Delivery) []JobRequest
 
 // EventStore keeps the keys of every delivery and the event log of the
@@ -190,7 +193,9 @@ type EventStore interface {
 	// the repository of row is active then, in one operation: it reports
 	// whether the row was logged. When the row is logged as recorded, the
 	// store also keeps the jobs of requests, queued, in the same
-	// operation; a request the job context refuses keeps nothing.
+	// operation; a request the job context refuses keeps nothing of the
+	// delivery. The requests of a delivery not logged, or logged as
+	// ignored, are dropped.
 	// ErrDuplicate when the forge of k has a delivery with its identifier
 	// or its digest already; nothing changes then, nor on any other error.
 	Record(ctx context.Context, k Key, row *LoggedEvent, requests []JobRequest) (bool, error)

@@ -21,6 +21,10 @@ type Fixture struct {
 	// Configurations is the configuration store of the same data.
 	Configurations repository.ConfigurationStore
 	AddWorkspace   func(t *testing.T, w repository.Workspace, owner string)
+	// Requests returns the jobs the store keeps for the delivery of forge
+	// with this identifier, as the requests that asked for them, in the
+	// order asked; EventSuite needs it.
+	Requests func(t *testing.T, forge, delivery string) []repository.JobRequest
 }
 
 // Identifiers of the suite: 32 hexadecimal digits, as accounts and
@@ -335,6 +339,47 @@ func EventSuite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		}
 		return got
 	}
+
+	t.Run("the jobs of a delivery are kept with it, and only then", func(t *testing.T) {
+		f := newFixture(t)
+		f.AddWorkspace(t, acme, alice)
+		mustActivate(t, f.Store, repo("2001", "acme/api", acme, alice))
+		mustActivate(t, f.Store, repo("2002", "acme/web", acme, alice))
+		if err := f.Store.Deactivate(ctx, acme.ID, "github", "2002", alice, t0); err != nil {
+			t.Fatal(err)
+		}
+		requests := []repository.JobRequest{
+			{Kind: "noop", Commit: strings.Repeat("c", 40), Ref: "refs/heads/main", Key: "main"},
+			{Kind: "noop", Commit: strings.Repeat("d", 40), Ref: "refs/heads/main"},
+		}
+		for _, tc := range []struct {
+			delivery string
+			row      *repository.LoggedEvent
+			want     int
+		}{
+			{"d1", row("2001", "d1", t0, repository.ResultRecorded), 2},
+			{"d2", row("2001", "d2", t0, repository.ResultIgnored), 0},
+			{"d3", row("2002", "d3", t0, repository.ResultRecorded), 0}, // not active
+			{"d4", nil, 0}, // of no repository
+		} {
+			if _, err := f.Events.Record(ctx, deliveryKey(tc.delivery, tc.delivery[1:], t0), tc.row, requests); err != nil {
+				t.Fatalf("Record(%s) = %v", tc.delivery, err)
+			}
+			if got := f.Requests(t, "github", tc.delivery); len(got) != tc.want {
+				t.Errorf("%s keeps %+v, want %d jobs", tc.delivery, got, tc.want)
+			}
+		}
+		if got := f.Requests(t, "github", "d1"); len(got) != 2 || got[0] != requests[0] || got[1] != requests[1] {
+			t.Errorf("the jobs of d1 = %+v, want %+v", got, requests)
+		}
+		// A duplicate keeps nothing more.
+		if _, err := f.Events.Record(ctx, deliveryKey("d1", "9", t0), row("2001", "d1", t0, repository.ResultRecorded), requests[:1]); !errors.Is(err, repository.ErrDuplicate) {
+			t.Fatalf("a duplicate = %v", err)
+		}
+		if got := f.Requests(t, "github", "d1"); len(got) != 2 {
+			t.Errorf("a duplicate changed the jobs of d1: %+v", got)
+		}
+	})
 
 	t.Run("record and log", func(t *testing.T) {
 		_, s := setup(t)

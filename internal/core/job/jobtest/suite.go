@@ -290,6 +290,18 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		}
 	})
 
+	t.Run("an empty object is an empty object however it is written", func(t *testing.T) {
+		s := setup(t)
+		j := enqueue(t, s, acme, "2001", "", at(0))
+		c := claim(t, s, instance, at(0))
+		if err := s.Report(ctx, c.Run.ID, c.Token, job.Result{Outcome: job.OutcomeSucceeded, Data: []byte("{\n }")}, at(time.Second)); err != nil {
+			t.Fatalf("Report of a spaced empty object = %v", err)
+		}
+		if got := mustJob(t, s, j.ID); got.State != job.StateSucceeded {
+			t.Errorf("job: %+v", got)
+		}
+	})
+
 	t.Run("a reported failure is final", func(t *testing.T) {
 		s := setup(t)
 		j := enqueue(t, s, acme, "2001", "", at(0))

@@ -16,7 +16,8 @@ func TestMemory(t *testing.T) {
 func TestMemoryEvents(t *testing.T) {
 	EventSuite(t, func(*testing.T) Fixture {
 		m := &Memory{}
-		return Fixture{Store: m, Events: m, AddWorkspace: func(_ *testing.T, w repository.Workspace, _ string) { m.AddWorkspace(w) }}
+		return Fixture{Store: m, Events: m, AddWorkspace: func(_ *testing.T, w repository.Workspace, _ string) { m.AddWorkspace(w) },
+			Requests: func(_ *testing.T, forge, delivery string) []repository.JobRequest { return m.Requests(forge, delivery) }}
 	})
 }
 

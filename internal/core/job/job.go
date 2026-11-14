@@ -96,12 +96,16 @@ var kinds = map[Kind]Spec{
 	KindNoop: {Capability: CapabilityNoop, MaxDuration: 5 * time.Minute, MaxResult: 4 << 10, Priority: 0, check: noopData},
 }
 
-// noopData accepts no data, or an empty object.
+// noopData accepts no data, or an empty object however it is written.
 func noopData(data []byte) error {
-	if len(data) == 0 || string(bytes.TrimSpace(data)) == "{}" {
+	if len(data) == 0 {
 		return nil
 	}
-	return errors.New("a noop result carries no data")
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil || fields == nil || len(fields) > 0 {
+		return errors.New("a noop result carries no data, or an empty object")
+	}
+	return nil
 }
 
 // SpecOf returns what kind declares; ErrUnknownKind for no kind.
