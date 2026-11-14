@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -116,21 +117,23 @@ func TestRepositoriesThroughTheServer(t *testing.T) {
 	}
 }
 
-// TestNoActivationWithoutTheCapabilities: until a forge reads files (#33),
-// the screen says why nothing can be activated, and an activation is
-// refused.
+// TestNoActivationWithoutTheCapabilities: a forge without files, webhooks
+// and events activates nothing, and the screen says why; it has no hook.
 func TestNoActivationWithoutTheCapabilities(t *testing.T) {
 	dir := t.TempDir()
 	keyFile, _ := writeAppKey(t, dir)
 	fake, _ := forgetest.Scenario("github", false)
-	s := start(t, dir, append(app(keyFile), "RAUN_SIGNUP_USERS=github:1001"), serverDeps{forge: fake})
+	s := start(t, dir, append(app(keyFile), "RAUN_SIGNUP_USERS=github:1001"), serverDeps{forge: fake.Bare()})
 	alice := signedUp(t, s, fake, "1001", "alice")
 	_, _, home := alice.send(http.MethodGet, "/", nil)
-	if !strings.Contains(home, "No repository can be activated yet") || !strings.Contains(home, `<span class="font-mono">files</span>`) || strings.Contains(home, `action="/repositories"`) {
+	if !strings.Contains(home, "No repository can be activated yet") || !strings.Contains(home, `<span class="font-mono">files, webhooks, events</span>`) || strings.Contains(home, `action="/repositories"`) {
 		t.Fatalf("the screen: %s", home)
 	}
 	if status, _, body := alice.submit("/", "/repositories", url.Values{"workspace": {"alice"}, "repository": {"2001"}}); status != http.StatusConflict {
 		t.Errorf("activation = %d %s", status, body)
+	}
+	if got := post(t, s, map[string]string{}, []byte(`{}`)); got != http.StatusForbidden {
+		t.Errorf("a delivery to a server without a hook = %d", got)
 	}
 }
 
@@ -158,7 +161,7 @@ func TestForgeErrorsOfTheRepositoryContext(t *testing.T) {
 // TestNoRepositoriesWithoutAForge: a server without a forge has no
 // repository service.
 func TestNoRepositoriesWithoutAForge(t *testing.T) {
-	if r := newRepositories(nil, nil, nil, nil, nil, missingCapabilities); r != nil {
+	if r := newRepositories(nil, nil, nil, nil, missingCapabilities); r != nil {
 		t.Error("a repository service without a forge")
 	}
 	if repositoryService(nil) != nil {
@@ -167,16 +170,16 @@ func TestNoRepositoriesWithoutAForge(t *testing.T) {
 	if got := missingCapabilities(nil); len(got) != len(repository.Preconditions()) {
 		t.Errorf("missingCapabilities = %v", got)
 	}
-	// A forge that receives events lacks only files, before #33; one that
-	// does not lacks webhooks and events too.
+	// The fake lacks nothing; without its optional capabilities, it lacks
+	// them all.
 	f := forgetest.New("github", nil)
-	if got := missingCapabilities(f); len(got) != 1 || got[0] != repository.CapabilityFiles {
-		t.Errorf("missingCapabilities(fake) = %v, want files", got)
+	if got := missingCapabilities(f); len(got) != 0 {
+		t.Errorf("missingCapabilities(fake) = %v, want none", got)
 	}
 	if got := missingCapabilities(f.Bare()); len(got) != 3 {
 		t.Errorf("missingCapabilities(bare) = %v, want all three", got)
 	}
-	if hooks(f.Bare(), &repository.Service{}, newReachSync()) != nil || hooks(f, nil, newReachSync()) != nil {
+	if hooks(f.Bare(), &repository.Service{}, newReachSync(), newConfigRefresh()) != nil || hooks(f, nil, newReachSync(), newConfigRefresh()) != nil {
 		t.Error("a hook without a forge that receives events")
 	}
 	if _, ok := any(f).(repository.Reach); !ok {
@@ -280,5 +283,58 @@ func TestAFailedSyncIsTriedAgain(t *testing.T) {
 	case <-none:
 		t.Error("a forge without reach was asked again")
 	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+func TestFilesErrorsOfTheRepositoryContext(t *testing.T) {
+	if err := filesError(identity.ErrUnavailable); !errors.Is(err, repository.ErrUnavailable) || !errors.Is(err, identity.ErrUnavailable) {
+		t.Errorf("filesError(unavailable) = %v", err)
+	}
+	for _, err := range []error{nil, repository.ErrNoFile, repository.ErrFileTooLarge, repository.ErrUnavailable} {
+		if got := filesError(err); got != err {
+			t.Errorf("filesError(%v) = %v", err, got)
+		}
+	}
+	f, _ := forgetest.Scenario("github", false)
+	f.SetDown(true)
+	files := repositoryFiles{f}
+	if _, err := files.Head(context.Background(), "2001", "main"); !errors.Is(err, repository.ErrUnavailable) {
+		t.Errorf("Head of a forge down = %v", err)
+	}
+	if _, err := files.Read(context.Background(), "2001", "c", ".raun.yaml", 10); !errors.Is(err, repository.ErrUnavailable) {
+		t.Errorf("Read of a forge down = %v", err)
+	}
+}
+
+// TestABusyReadIsAskedAgain: a read that gave up waiting for another read
+// of its repository is asked again.
+func TestABusyReadIsAskedAgain(t *testing.T) {
+	c := newConfigRefresh()
+	calls := 0
+	results := make(chan error, 4)
+	refresh := func(context.Context, string) error {
+		calls++
+		if calls == 1 {
+			return fmt.Errorf("%w: %w", repository.ErrBusy, context.DeadlineExceeded)
+		}
+		return nil
+	}
+	done := make(chan struct{})
+	defer close(done)
+	var logs syncBuffer
+	go c.run(context.Background(), newLogger(slog.LevelInfo, "json", &logs), refresh, func(_ string, err error) { results <- err }, done)
+	c.request("2001")
+	for i := range 2 {
+		select {
+		case err := <-results:
+			if (i == 0) != errors.Is(err, repository.ErrBusy) {
+				t.Fatalf("read %d: %v", i, err)
+			}
+		case <-time.After(wait):
+			t.Fatalf("read %d did not run", i)
+		}
+	}
+	if strings.Contains(logs.String(), "read the configuration") {
+		t.Errorf("a busy read was logged as a failure: %s", logs.String())
 	}
 }

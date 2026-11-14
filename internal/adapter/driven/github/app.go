@@ -254,13 +254,46 @@ func (a *App) mintToken(ctx context.Context, s scope, key string) (identity.Secr
 	return t.token, nil
 }
 
-// forgetInstallation drops every token of installation.
+// forgetInstallation drops every token of installation, and the
+// repositories found in it.
 func (a *App) forgetInstallation(installation int64) {
 	a.tokens.mu.Lock()
-	defer a.tokens.mu.Unlock()
 	for k, t := range a.tokens.tokens {
 		if t.installation == installation {
 			delete(a.tokens.tokens, k)
+		}
+	}
+	a.tokens.mu.Unlock()
+	a.installs.forget(installation)
+}
+
+// installCache keeps the installation of the App that reaches each
+// repository, as GitHub last said; an installation GitHub no longer serves
+// is forgotten with its tokens.
+type installCache struct {
+	mu     sync.Mutex
+	byRepo map[int64]int64
+}
+
+func (c *installCache) get(repo int64) (int64, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	id, ok := c.byRepo[repo]
+	return id, ok
+}
+
+func (c *installCache) put(repo, installation int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.byRepo[repo] = installation
+}
+
+func (c *installCache) forget(installation int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for repo, id := range c.byRepo {
+		if id == installation {
+			delete(c.byRepo, repo)
 		}
 	}
 }

@@ -44,6 +44,8 @@ type serverDeps struct {
 	// synced, when set, is told what each sync of the reach of the App
 	// lost.
 	synced func(lost []string, err error)
+	// refreshed, when set, is told of each read of a configuration.
+	refreshed func(repository string, err error)
 }
 
 // purgeInterval is how often what has expired is deleted, after the purge
@@ -191,8 +193,9 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 	if missing == nil {
 		missing = missingCapabilities
 	}
-	repositories := newRepositories(forge, permissions, accounts, store.Repositories(), store.Repositories(), missing)
+	repositories := newRepositories(forge, permissions, accounts, store.Repositories(), missing)
 	reach := newReachSync()
+	configs := newConfigRefresh()
 
 	handler, err := web.New(web.Options{
 		Logger:         logger,
@@ -206,7 +209,7 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		Permissions:    permissionCache(permissions),
 		Repositories:   repositoryService(repositories),
 		ForgeURL:       cfg.github.webURL,
-		Hooks:          hooks(forge, repositories, reach),
+		Hooks:          hooks(forge, repositories, reach, configs),
 		ForgeName:      forgeNameOf(forge),
 		Administrators: administrators,
 		Settings:       cfg.shownSettings(),
@@ -264,6 +267,16 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		// What the App reaches may have changed while the server was
 		// stopped, or a sync was cut short by the stop.
 		reach.request()
+		go configs.run(ctx, logger, repositories.RefreshConfiguration, deps.refreshed, done)
+		// A push may have come while the server was stopped, or a read
+		// was cut short by the stop.
+		active, err := repositories.Active(ctx)
+		if err != nil {
+			logger.Warn("list the active repositories", slog.String("error", err.Error()))
+		}
+		for _, id := range active {
+			configs.request(id)
+		}
 	}
 
 	served := make(chan error, 1)

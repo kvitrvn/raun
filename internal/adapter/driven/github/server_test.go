@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/kvitrvn/raun/internal/core/identity"
+	"github.com/kvitrvn/raun/internal/forgetest"
 )
 
 // Lifetimes the scripted GitHub gives, the ones of github.com.
@@ -103,6 +104,9 @@ type gitHub struct {
 	access        map[string]ghToken
 	refresh       map[string]ghToken
 	installTokens map[string]ghToken // token -> installation, as person
+	tokenScopes   map[string]mintRequest
+	heads         map[int64]map[string]string            // repository -> branch -> commit
+	files         map[int64]map[string]map[string]string // repository -> commit -> path -> content
 	down          bool
 	seq           int
 	mints         []mintRequest
@@ -142,7 +146,15 @@ func newGitHub(t *testing.T, key *rsa.PrivateKey) *gitHub {
 		access:        map[string]ghToken{},
 		refresh:       map[string]ghToken{},
 		installTokens: map[string]ghToken{},
-		calls:         map[string]int{},
+		tokenScopes:   map[string]mintRequest{},
+		heads: map[int64]map[string]string{
+			2001: {"main": forgetest.FilesHead},
+			2002: {"main": strings.Repeat("e", 40)},
+		},
+		files: map[int64]map[string]map[string]string{
+			2001: {forgetest.FilesHead: {".raun.yaml": "version: 1\n", "big.txt": strings.Repeat("x", 100), "empty.txt": "", "docs/index.md": "# Docs"}},
+		},
+		calls: map[string]int{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /login/oauth/access_token", g.token)
@@ -153,6 +165,9 @@ func newGitHub(t *testing.T, key *rsa.PrivateKey) *gitHub {
 	mux.HandleFunc("GET /api/v3/app/installations", g.appInstallations)
 	mux.HandleFunc("POST /api/v3/app/installations/{id}/access_tokens", g.mint)
 	mux.HandleFunc("GET /api/v3/installation/repositories", g.asInstallation)
+	mux.HandleFunc("GET /api/v3/repositories/{id}/installation", g.repositoryInstallation)
+	mux.HandleFunc("GET /api/v3/repositories/{id}/commits/{branch}", g.commit)
+	mux.HandleFunc("GET /api/v3/repositories/{id}/contents/{path...}", g.contents)
 	g.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		g.calls[r.Method+" "+r.URL.Path]++
@@ -502,6 +517,7 @@ func (g *gitHub) mint(w http.ResponseWriter, r *http.Request) {
 	token := g.next("s")
 	expires := g.clock.Now().Add(time.Hour)
 	g.installTokens[token] = ghToken{person: id, expires: expires}
+	g.tokenScopes[token] = req
 	writeJSON(w, http.StatusCreated, map[string]any{"token": token, "expires_at": expires.Format(time.RFC3339), "permissions": req.Permissions})
 }
 
@@ -545,4 +561,88 @@ func (g *gitHub) appInstallations(w http.ResponseWriter, r *http.Request) {
 		out = append(out, map[string]any{"id": id, "app_id": g.appID, "suspended_at": suspended})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// repositoryInstallation is the installation of the App on a repository,
+// for its JWT.
+func (g *gitHub) repositoryInstallation(w http.ResponseWriter, r *http.Request) {
+	if err := g.checkJWT(r); err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "A JSON web token could not be decoded: " + err.Error()})
+		return
+	}
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for _, repo := range g.repos {
+		if _, ok := g.installations[repo.installation]; repo.id == id && repo.installation != 0 && ok {
+			writeJSON(w, http.StatusOK, map[string]any{"id": repo.installation, "app_id": g.appID})
+			return
+		}
+	}
+	writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+}
+
+// reader checks that r carries a live installation token that may read the
+// contents of the repository of its path; the caller holds the lock.
+func (g *gitHub) reader(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	tok, ok := g.installTokens[token]
+	if !ok || !g.clock.Now().Before(tok.expires) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Bad credentials"})
+		return 0, false
+	}
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	s := g.tokenScopes[token]
+	for _, repo := range g.repos {
+		if repo.id == id && repo.installation == tok.person && slices.Contains(s.Repositories, id) && s.Permissions["contents"] != "" {
+			return id, true
+		}
+	}
+	writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+	return 0, false
+}
+
+func (g *gitHub) commit(w http.ResponseWriter, r *http.Request) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	id, ok := g.reader(w, r)
+	if !ok {
+		return
+	}
+	sha, ok := g.heads[id][r.PathValue("branch")]
+	if !ok {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"message": "No commit found for SHA: " + r.PathValue("branch")})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sha": sha, "node_id": "C_x", "commit": map[string]any{"message": "m"}})
+}
+
+func (g *gitHub) contents(w http.ResponseWriter, r *http.Request) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	id, ok := g.reader(w, r)
+	if !ok {
+		return
+	}
+	commit, path := r.URL.Query().Get("ref"), r.PathValue("path")
+	files := g.files[id][commit]
+	if content, ok := files[path]; ok {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"type": "file", "encoding": "base64", "size": len(content), "name": path, "path": path,
+			"content":      base64.StdEncoding.EncodeToString([]byte(content)) + "\n",
+			"download_url": "https://raw.example/never",
+		})
+		return
+	}
+	var entries []map[string]any
+	for p := range files {
+		if strings.HasPrefix(p, path+"/") {
+			entries = append(entries, map[string]any{"type": "file", "path": p})
+		}
+	}
+	if len(entries) > 0 {
+		writeJSON(w, http.StatusOK, entries)
+		return
+	}
+	writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
 }

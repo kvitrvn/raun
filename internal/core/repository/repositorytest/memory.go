@@ -20,6 +20,7 @@ type Memory struct {
 	mu         sync.Mutex
 	workspaces map[string]string // identifier -> name
 	repos      map[key]repository.Repository
+	configs    map[key]repository.Configuration
 	deliveries map[key]time.Time // forge and delivery identifier -> received
 	digests    map[key]time.Time // forge and digest -> received
 	events     []repository.LoggedEvent
@@ -30,6 +31,8 @@ type key struct{ forge, id string }
 var (
 	_ repository.Store      = (*Memory)(nil)
 	_ repository.EventStore = (*Memory)(nil)
+
+	_ repository.ConfigurationStore = (*Memory)(nil)
 )
 
 func (m *Memory) init() {
@@ -37,6 +40,7 @@ func (m *Memory) init() {
 		m.workspaces = map[string]string{}
 		m.repos = map[key]repository.Repository{}
 		m.deliveries = map[key]time.Time{}
+		m.configs = map[key]repository.Configuration{}
 		m.digests = map[key]time.Time{}
 	}
 }
@@ -268,4 +272,61 @@ func (m *Memory) PurgeEvents(_ context.Context, before time.Time) (int, error) {
 	}
 	m.events = kept
 	return n, nil
+}
+
+func (m *Memory) Active(_ context.Context, forge string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	var out []string
+	for k, r := range m.repos {
+		if k.forge == forge && r.Active {
+			out = append(out, k.id)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+func (m *Memory) PutConfiguration(_ context.Context, forge, repo string, c repository.Configuration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	if _, ok := m.repos[key{forge, repo}]; !ok {
+		return repository.ErrNotFound
+	}
+	if err := checkConfiguration(c); err != nil {
+		return err
+	}
+	c.Content = slices.Clone(c.Content)
+	c.ReadAt = c.ReadAt.UTC()
+	m.configs[key{forge, repo}] = c
+	return nil
+}
+
+// checkConfiguration refuses what a store refuses: an unknown state, or
+// content that is not that of a configured repository within the bound.
+func checkConfiguration(c repository.Configuration) error {
+	switch c.State {
+	case repository.ConfigurationConfigured:
+		if len(c.Content) > repository.MaxConfigurationSize {
+			return fmt.Errorf("configuration of %d bytes", len(c.Content))
+		}
+	case repository.ConfigurationMissing, repository.ConfigurationUnreadable:
+		if len(c.Content) > 0 {
+			return fmt.Errorf("content of a configuration %s", c.State)
+		}
+	default:
+		return fmt.Errorf("unknown configuration state %q", c.State)
+	}
+	return nil
+}
+
+func (m *Memory) Configuration(_ context.Context, forge, repo string) (repository.Configuration, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	c, ok := m.configs[key{forge, repo}]
+	c.Content = slices.Clone(c.Content)
+	return c, ok, nil
 }

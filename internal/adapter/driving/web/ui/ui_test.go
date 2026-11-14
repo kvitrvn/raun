@@ -177,6 +177,15 @@ func TestPages(t *testing.T) {
 		{"repositories-no-match", RepositoriesPage(switcherPage, RepositoriesProps{Query: "nothing"})},
 		{"repository-active", RepositoryPage(switcherPage, RepositoryProps{
 			Workspace: "acme", ID: "2001", FullName: "acme/api", ForgeHref: "https://github.com/acme/api", DefaultBranch: hostile, Private: true, State: StateActive, CanDecide: true,
+			Configuration: ConfigurationView{State: "configured", Commit: "6113728f27ae82c7b1a177c8d03f9e96e0adf246", ReadAt: "2026-11-14 10:00:00 UTC"},
+		})},
+		{"repository-not-configured", RepositoryPage(switcherPage, RepositoryProps{
+			Workspace: "acme", ID: "2001", FullName: "acme/api", ForgeHref: "https://github.com/acme/api", DefaultBranch: "main", State: StateActive,
+			Configuration: ConfigurationView{State: "not_configured", Commit: hostile, ReadAt: "2026-11-14 10:00:00 UTC"},
+		})},
+		{"repository-unreadable", RepositoryPage(switcherPage, RepositoryProps{
+			Workspace: "acme", ID: "2001", FullName: "acme/api", ForgeHref: "https://github.com/acme/api", DefaultBranch: "main", State: StateActive,
+			Configuration: ConfigurationView{State: "unreadable", Reason: "too_large", ReadAt: "2026-11-14 10:00:00 UTC"},
 		})},
 		{"repository-events", RepositoryPage(switcherPage, RepositoryProps{
 			Workspace: "acme", ID: "2001", FullName: "acme/api", ForgeHref: "https://github.com/acme/api", DefaultBranch: "main", State: StateActive,

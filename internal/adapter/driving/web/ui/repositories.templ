@@ -148,8 +148,60 @@ type RepositoryProps struct {
 	State         string
 	CanDecide     bool
 	Missing       []string
+	// Configuration is the last read of its configuration; its State is
+	// empty when none was read yet.
+	Configuration ConfigurationView
 	// Events are the newest rows of its event log, newest first.
 	Events []EventRow
+}
+
+// ConfigurationView is what the page says of the configuration of a
+// repository.
+type ConfigurationView struct {
+	State  string
+	Commit string
+	Reason string
+	ReadAt string
+}
+
+// configurationText says what a configuration state means.
+func configurationText(c ConfigurationView) string {
+	switch c.State {
+	case "configured":
+		return "Configured: .raun.yaml is at the root of the default branch."
+	case "not_configured":
+		return "Not configured: the default branch has no .raun.yaml. Its events are logged and trigger nothing."
+	case "unreadable":
+		if c.Reason == "too_large" {
+			return "Unreadable: .raun.yaml is larger than 64 KiB."
+		}
+		return "Unreadable: the forge could not give .raun.yaml. Raun reads it again at the next push to the default branch."
+	}
+	return "Not read yet: Raun reads .raun.yaml at the next push to the default branch, or when the server starts."
+}
+
+// configurationVariant is the badge of a configuration state.
+func configurationVariant(state string) BadgeVariant {
+	switch state {
+	case "configured":
+		return BadgeSuccess
+	case "unreadable":
+		return BadgeWarning
+	}
+	return BadgeDefault
+}
+
+// configurationLabel names a configuration state.
+func configurationLabel(state string) string {
+	switch state {
+	case "configured":
+		return "configured"
+	case "not_configured":
+		return "not configured"
+	case "unreadable":
+		return "unreadable"
+	}
+	return "not read yet"
 }
 
 // EventRow is a delivery of the forge in the event log of a repository.
@@ -222,6 +274,23 @@ templ RepositoryPage(p Page, rp RepositoryProps) {
 			}
 			<p class="text-[12.5px] text-muted-foreground">Default branch: <span class="font-mono">{ rp.DefaultBranch }</span></p>
 		</section>
+		<section data-slot="configuration" class="cn-card flex flex-col items-start gap-2 px-7 py-6">
+			<div class="flex flex-wrap items-center gap-3">
+				<h2 class="text-[17px] font-semibold">Configuration</h2>
+				@Badge(BadgeProps{Variant: configurationVariant(rp.Configuration.State)}) {
+					{ configurationLabel(rp.Configuration.State) }
+				}
+			</div>
+			<p class="text-[13.5px]">{ configurationText(rp.Configuration) }</p>
+			if rp.Configuration.ReadAt != "" {
+				<p class="text-[12.5px] text-muted-foreground">
+					Read { rp.Configuration.ReadAt }
+					if rp.Configuration.Commit != "" {
+						at <span class="font-mono">{ short(rp.Configuration.Commit) }</span>
+					}
+				</p>
+			}
+		</section>
 		<section data-slot="events" class="cn-card flex flex-col gap-3 px-7 py-6">
 			<h2 class="text-[17px] font-semibold">Events</h2>
 			if len(rp.Events) == 0 {
@@ -276,7 +345,7 @@ templ RepositoryPage(p Page, rp RepositoryProps) {
 				}
 			}
 		</section>
-		@Empty(EmptyProps{Title: "Nothing analyzed yet", Description: "The configuration and the runs of this repository show here once Raun reads them.", Icon: IconFolder})
+		@Empty(EmptyProps{Title: "Nothing analyzed yet", Description: "The runs of this repository and their knowledge show here once Raun analyzes it.", Icon: IconFolder})
 	}
 }
 

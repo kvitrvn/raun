@@ -35,6 +35,7 @@ func fixture(t *testing.T, key *rsa.PrivateKey) (*gitHub, forgetest.Fixture) {
 			{Forge: Name, ID: "2004", FullName: "other/lib", DefaultBranch: "trunk"},
 		},
 		Reached: []string{"2001", "2002", "2003"},
+		Head:    forgetest.FilesHead,
 		Push: func(t *testing.T) (map[string]string, []byte) {
 			t.Helper()
 			body, err := os.ReadFile("testdata/hooks/push-branch.json")

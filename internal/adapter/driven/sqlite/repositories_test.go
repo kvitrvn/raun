@@ -38,6 +38,18 @@ func TestRepositoriesContract(t *testing.T) {
 	})
 }
 
+func TestConfigurationsContract(t *testing.T) {
+	repositorytest.ConfigurationSuite(t, func(t *testing.T) repositorytest.Fixture {
+		s, _ := openMigrated(t)
+		return repositorytest.Fixture{
+			Store:          s.Repositories(),
+			Events:         s.Repositories(),
+			Configurations: s.Repositories(),
+			AddWorkspace:   func(t *testing.T, w repository.Workspace, owner string) { addWorkspace(t, s, w, owner) },
+		}
+	})
+}
+
 func TestEventsContract(t *testing.T) {
 	repositorytest.EventSuite(t, func(t *testing.T) repositorytest.Fixture {
 		s, _ := openMigrated(t)
