@@ -791,6 +791,8 @@ type gatedFiles struct {
 	gated    bool
 	reading  chan struct{}
 	lateness bool
+	// delay is how long a read that is not gated takes.
+	delay time.Duration
 }
 
 func (f *gatedFiles) Head(_ context.Context, repo, _ string) (string, error) {
@@ -812,6 +814,13 @@ func (f *gatedFiles) Read(ctx context.Context, _, commit, _ string, _ int64) ([]
 	if late {
 		// The answer came just as the deadline passed.
 		<-ctx.Done()
+	}
+	if !gated && f.delay > 0 {
+		select {
+		case <-time.After(f.delay):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	return []byte(content), nil
 }
@@ -911,5 +920,72 @@ func TestAReadWaitsWithinItsDeadline(t *testing.T) {
 	// The lock is free again.
 	if err := w.service.RefreshConfiguration(ctx, "2001"); err != nil {
 		t.Errorf("a read after the others: %v", err)
+	}
+}
+
+// TestTheWaitKeepsTheReadItsDeadline: a read that waited for another one
+// still gets its whole deadline once it holds the repository.
+func TestTheWaitKeepsTheReadItsDeadline(t *testing.T) {
+	ctx := context.Background()
+	w, events := newReceiving(t)
+	files := &gatedFiles{heads: map[string]string{"2001": "c1"}, files: map[string]string{"c1": "one"},
+		open: make(chan struct{}), gated: true, reading: make(chan struct{}), delay: 30 * time.Millisecond}
+	w.service = repository.New(repository.Options{
+		Forge: w.forge, Workspaces: w.workspaces, Store: w.store, Events: events, Log: w.store,
+		Files: files, Configurations: w.store, ReadTimeout: 60 * time.Millisecond, Now: func() time.Time { return w.now },
+	})
+	first := make(chan error, 1)
+	go func() { first <- w.service.RefreshConfiguration(ctx, "2001") }()
+	<-files.reading
+	second := make(chan error, 1)
+	go func() { second <- w.service.RefreshConfiguration(ctx, "2001") }()
+	time.Sleep(45 * time.Millisecond) // most of the deadline, waiting
+	close(files.open)
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-second; err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := w.service.Open(ctx, "alice", "acme", "acme/api"); v.Configuration == nil || v.Configuration.State != repository.ConfigurationConfigured {
+		t.Errorf("configuration after a long wait = %+v", v.Configuration)
+	}
+}
+
+// failingKnown is a memory store whose next reads of known repositories
+// fail.
+type failingKnown struct {
+	*repositorytest.Memory
+	fail int
+}
+
+func (f *failingKnown) Known(ctx context.Context, forge string, ids []string) ([]repository.Repository, error) {
+	if f.fail > 0 {
+		f.fail--
+		return nil, errors.New("database busy")
+	}
+	return f.Memory.Known(ctx, forge, ids)
+}
+
+// TestAFailedReceiveKeepsNothing: a push whose repository cannot be read
+// keeps nothing, so the delivery sent again is recorded and asks for its
+// refresh.
+func TestAFailedReceiveKeepsNothing(t *testing.T) {
+	ctx := context.Background()
+	w, events := newReceiving(t)
+	files := &stubFiles{heads: map[string]string{"2001": "c1"}, files: map[string]string{"c1": "version: 1\n"}}
+	store := &failingKnown{Memory: w.store}
+	events.deliveries["push main"] = pushTo("2001", "c2")
+	s := repository.New(repository.Options{
+		Forge: w.forge, Workspaces: w.workspaces, Store: store, Events: events, Log: w.store,
+		Files: files, Configurations: w.store, Now: func() time.Time { return w.now },
+	})
+	store.fail = 1
+	if _, err := s.Receive(ctx, signed("d1"), []byte("push main")); err == nil {
+		t.Fatal("Receive with the store failing succeeded")
+	}
+	got, err := s.Receive(ctx, signed("d1"), []byte("push main"))
+	if err != nil || got.Outcome != repository.OutcomeRecorded || got.Refresh != "2001" {
+		t.Errorf("the delivery sent again = %+v, %v", got, err)
 	}
 }

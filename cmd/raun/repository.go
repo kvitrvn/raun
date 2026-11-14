@@ -207,7 +207,12 @@ func (c *configRefresh) run(ctx context.Context, logger *slog.Logger, refresh fu
 		}
 		for _, id := range c.take() {
 			err := refresh(ctx, id)
-			if err != nil && !errors.Is(err, repository.ErrNotFound) && ctx.Err() == nil {
+			switch {
+			case errors.Is(err, repository.ErrBusy) && ctx.Err() == nil:
+				// The read it waited for may have resolved an older
+				// head: ask again.
+				c.request(id)
+			case err != nil && !errors.Is(err, repository.ErrNotFound) && ctx.Err() == nil:
 				logger.Warn("read the configuration of a repository", slog.String("repository", id), slog.String("error", err.Error()))
 			}
 			if refreshed != nil {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -302,5 +303,38 @@ func TestFilesErrorsOfTheRepositoryContext(t *testing.T) {
 	}
 	if _, err := files.Read(context.Background(), "2001", "c", ".raun.yaml", 10); !errors.Is(err, repository.ErrUnavailable) {
 		t.Errorf("Read of a forge down = %v", err)
+	}
+}
+
+// TestABusyReadIsAskedAgain: a read that gave up waiting for another read
+// of its repository is asked again.
+func TestABusyReadIsAskedAgain(t *testing.T) {
+	c := newConfigRefresh()
+	calls := 0
+	results := make(chan error, 4)
+	refresh := func(context.Context, string) error {
+		calls++
+		if calls == 1 {
+			return fmt.Errorf("%w: %w", repository.ErrBusy, context.DeadlineExceeded)
+		}
+		return nil
+	}
+	done := make(chan struct{})
+	defer close(done)
+	var logs syncBuffer
+	go c.run(context.Background(), newLogger(slog.LevelInfo, "json", &logs), refresh, func(_ string, err error) { results <- err }, done)
+	c.request("2001")
+	for i := range 2 {
+		select {
+		case err := <-results:
+			if (i == 0) != errors.Is(err, repository.ErrBusy) {
+				t.Fatalf("read %d: %v", i, err)
+			}
+		case <-time.After(wait):
+			t.Fatalf("read %d did not run", i)
+		}
+	}
+	if strings.Contains(logs.String(), "read the configuration") {
+		t.Errorf("a busy read was logged as a failure: %s", logs.String())
 	}
 }
