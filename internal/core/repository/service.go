@@ -303,8 +303,13 @@ func (s *Service) Open(ctx context.Context, account, workspace, fullName string)
 	return View{Repository: r, Permission: p, Member: member, Events: events, Configuration: config}, nil
 }
 
-// ErrNoFiles: the forge cannot read the files of a repository.
-var ErrNoFiles = errors.New("the forge cannot read files")
+var (
+	// ErrNoFiles: the forge cannot read the files of a repository.
+	ErrNoFiles = errors.New("the forge cannot read files")
+	// ErrBusy: another read of the configuration of the repository held it
+	// past the deadline of the wait; nothing was read.
+	ErrBusy = errors.New("another read of the configuration is in progress")
+)
 
 // ReadTimeout bounds a read of the configuration of a repository.
 const ReadTimeout = 10 * time.Second
@@ -315,8 +320,8 @@ const ReadTimeout = 10 * time.Second
 // not configured, or unreadable when the forge could not give it or it is
 // larger than MaxConfigurationSize, without its content then. A
 // repository that is not active is left as it is. It returns only what
-// keeps it from storing the result: ErrNoFiles, ErrNotFound, the end of ctx
-// and the errors of the stores.
+// keeps it from storing the result: ErrNoFiles, ErrNotFound, ErrBusy, the
+// end of ctx and the errors of the stores.
 func (s *Service) RefreshConfiguration(ctx context.Context, id string) error {
 	if s.files == nil || s.configs == nil {
 		return ErrNoFiles
@@ -331,15 +336,15 @@ func (s *Service) RefreshConfiguration(ctx context.Context, id string) error {
 	if !rows[0].Active {
 		return nil
 	}
-	// The deadline bounds the wait for another read of the repository and
-	// this read, never the write of its result.
-	readCtx, cancel := context.WithTimeout(ctx, s.readTimeout)
-	defer cancel()
-	unlock, err := s.refreshing.lock(readCtx, id)
+	// The wait for another read of the repository and the read have a
+	// deadline each, never the write of the result.
+	waitCtx, cancelWait := context.WithTimeout(ctx, s.readTimeout)
+	unlock, err := s.refreshing.lock(waitCtx, id)
+	cancelWait()
 	if err != nil {
-		// Another read held the repository all along: its result
-		// stands, and nothing is read.
-		return fmt.Errorf("wait for another read of the configuration: %w", err)
+		// Another read held the repository all along: nothing is read,
+		// and the caller may ask again.
+		return fmt.Errorf("%w: %w", ErrBusy, err)
 	}
 	defer unlock()
 	// Read again under the lock: the repository may have changed while
@@ -352,6 +357,7 @@ func (s *Service) RefreshConfiguration(ctx context.Context, id string) error {
 		return nil
 	}
 	r := rows[0]
+	readCtx, cancel := context.WithTimeout(ctx, s.readTimeout)
 	c := s.readConfiguration(readCtx, r)
 	cancel()
 	if err := ctx.Err(); err != nil && c.State == ConfigurationUnreadable {
@@ -424,6 +430,12 @@ func (s *Service) Receive(ctx context.Context, header func(string) string, body 
 	sum := sha256.Sum256(body)
 	k := Key{Forge: s.forge.Name(), Delivery: d.ID, Digest: hex.EncodeToString(sum[:]), ReceivedAt: s.now().UTC()}
 	row := logRow(d, k)
+	// Decided before anything is kept: a failure keeps nothing, and the
+	// delivery sent again asks again.
+	refresh, err := s.pushesDefault(ctx, d)
+	if err != nil {
+		return Receipt{}, err
+	}
 	logged, err := s.log.Record(ctx, k, row)
 	switch {
 	case errors.Is(err, ErrDuplicate):
@@ -436,10 +448,6 @@ func (s *Service) Receive(ctx context.Context, header func(string) string, body 
 		return Receipt{Outcome: OutcomeDropped}, nil
 	case row.Result == ResultIgnored:
 		return Receipt{Outcome: OutcomeIgnored}, nil
-	}
-	refresh, err := s.pushesDefault(ctx, d)
-	if err != nil {
-		return Receipt{}, err
 	}
 	return Receipt{Outcome: OutcomeRecorded, Refresh: refresh}, nil
 }
