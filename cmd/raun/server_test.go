@@ -172,7 +172,7 @@ func TestServerServes(t *testing.T) {
 	if code != http.StatusOK || !strings.Contains(page, "<title>Repositories · Raun</title>") {
 		t.Errorf("/ = %d %q", code, page)
 	}
-	assets := regexp.MustCompile(`(?:src|href)="(/assets/[^"]+)"`).FindAllStringSubmatch(page, -1)
+	assets := regexp.MustCompile(`(?:src|href)="(/-/assets/[^"]+)"`).FindAllStringSubmatch(page, -1)
 	if len(assets) < 5 {
 		t.Errorf("the page names %d assets", len(assets))
 	}

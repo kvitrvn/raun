@@ -67,14 +67,18 @@ type MemberRow struct {
 // WorkspaceProps configures the page of a workspace: what it is, the role of
 // the visitor, its members, and for an owner the form that adds one.
 type WorkspaceProps struct {
-	Name       string
-	Personal   bool
-	Role       string
-	Members    []MemberRow
-	Owner      bool
-	Account    string
-	MemberRole string
-	Error      string
+	Name     string
+	Personal bool
+	Role     string
+	// Repositories are those of the workspace the forge lets the visitor
+	// read; RepositoriesError says why they cannot be shown.
+	Repositories      []RepositoryLink
+	RepositoriesError string
+	Members           []MemberRow
+	Owner             bool
+	Account           string
+	MemberRole        string
+	Error             string
 }
 
 // WorkspacePage shows a workspace to one of its members.
@@ -89,7 +93,26 @@ templ WorkspacePage(p Page, w WorkspaceProps) {
 			}
 			<span class="text-[13px] text-muted-foreground">You are { w.Role }.</span>
 		</div>
-		@Empty(EmptyProps{Title: "No repository yet", Icon: IconFolder})
+		if w.RepositoriesError != "" {
+			<section data-slot="repositories" role="alert" class="cn-card px-6 py-4 text-[13.5px] text-danger">{ w.RepositoriesError }</section>
+		} else if len(w.Repositories) == 0 {
+			@Empty(EmptyProps{Title: "No repository yet", Description: "Activate a repository you decide on in this workspace.", Icon: IconFolder}) {
+				@Button(ButtonProps{Href: "/", Variant: ButtonOutline}) {
+					Repositories
+				}
+			}
+		} else {
+			<section data-slot="repositories" class="cn-card flex flex-col divide-y divide-border">
+				<h2 class="px-6 py-4 text-[15px] font-semibold">Repositories</h2>
+				for _, r := range w.Repositories {
+					<div class="flex items-center gap-3 px-6 py-3">
+						<a class="font-mono text-[13.5px] font-medium text-primary-ink hover:underline" href={ templ.URL(r.Href) }>{ r.FullName }</a>
+						<span class="flex-1"></span>
+						@StateBadge(r.State)
+					</div>
+				}
+			</section>
+		}
 		<section data-slot="members" class="cn-card flex flex-col divide-y divide-border">
 			<h2 class="px-6 py-4 text-[15px] font-semibold">Members</h2>
 			for _, m := range w.Members {

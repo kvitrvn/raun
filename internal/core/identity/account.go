@@ -47,7 +47,7 @@ var (
 // first segment here.
 var reserved = []string{
 	// Routes.
-	"assets", "healthz", "instance", "login", "logout", "new", "readyz", "workspaces",
+	"assets", "healthz", "instance", "login", "logout", "new", "readyz", "repositories", "workspaces",
 	// Kept.
 	"about", "admin", "api", "help", "raun", "settings",
 	// Forges.

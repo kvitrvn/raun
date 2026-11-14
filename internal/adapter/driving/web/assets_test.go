@@ -18,7 +18,7 @@ func TestLoadAssets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	served := regexp.MustCompile(`^/assets/(fonts/)?[a-z0-9.-]+\.[0-9a-f]{8}\.[a-z0-9]+$`)
+	served := regexp.MustCompile(`^/-/assets/(fonts/)?[a-z0-9.-]+\.[0-9a-f]{8}\.[a-z0-9]+$`)
 	for _, name := range a.names() {
 		url := a.url(name)
 		if !served.MatchString(url) {
@@ -35,7 +35,7 @@ func TestLoadAssets(t *testing.T) {
 			t.Errorf("no URL for %s", name)
 		}
 	}
-	if got := a.url("htmx.min.js"); !strings.HasPrefix(got, "/assets/htmx.min.") {
+	if got := a.url("htmx.min.js"); !strings.HasPrefix(got, "/-/assets/htmx.min.") {
 		t.Errorf("htmx.min.js is served at %s", got)
 	}
 }
@@ -106,11 +106,12 @@ func TestServeAssets(t *testing.T) {
 		{"script", http.MethodGet, s.assets.url("app.js"), testHost, http.StatusOK, "text/javascript; charset=utf-8"},
 		{"font", http.MethodGet, s.assets.url("fonts/onest-latin.052df745.woff2"), testHost, http.StatusOK, "font/woff2"},
 		{"icon", http.MethodGet, s.assets.url("favicon.svg"), testHost, http.StatusOK, "image/svg+xml"},
-		{"logical name", http.MethodGet, "/assets/app.css", testHost, http.StatusNotFound, ""},
-		{"stale hash", http.MethodGet, "/assets/app.00000000.css", testHost, http.StatusNotFound, ""},
-		{"directory", http.MethodGet, "/assets/fonts/", testHost, http.StatusNotFound, ""},
+		{"logical name", http.MethodGet, "/-/assets/app.css", testHost, http.StatusNotFound, ""},
+		{"stale hash", http.MethodGet, "/-/assets/app.00000000.css", testHost, http.StatusNotFound, ""},
+		{"directory", http.MethodGet, "/-/assets/fonts/", testHost, http.StatusNotFound, ""},
+		{"old prefix", http.MethodGet, strings.Replace(css, "/-/assets/", "/assets/", 1), testHost, http.StatusNotFound, ""},
 		// ServeMux redirects a path that is not clean; the target is not an asset.
-		{"traversal", http.MethodGet, "/assets/../server.go", testHost, http.StatusTemporaryRedirect, ""},
+		{"traversal", http.MethodGet, "/-/assets/../server.go", testHost, http.StatusTemporaryRedirect, ""},
 		{"foreign host", http.MethodGet, css, "evil.example", http.StatusMisdirectedRequest, ""},
 		{"post", http.MethodPost, css, testHost, http.StatusForbidden, ""},
 	}
@@ -133,7 +134,7 @@ func TestServeAssets(t *testing.T) {
 			}
 		})
 	}
-	if !strings.Contains(logs.String(), `"route":"GET /assets/{file...}"`) {
+	if !strings.Contains(logs.String(), `"route":"GET /-/assets/{file...}"`) {
 		t.Error("the access log does not name the asset route")
 	}
 }
@@ -143,7 +144,7 @@ func TestServeAssets(t *testing.T) {
 func TestStylesheetNamesServedFonts(t *testing.T) {
 	s, _ := newTestServer(t, nil)
 	css := string(s.assets.byURL[s.assets.url("app.css")].body)
-	urls := regexp.MustCompile(`url\(["']?(/assets/[^"')]+)`).FindAllStringSubmatch(css, -1)
+	urls := regexp.MustCompile(`url\(["']?(/-/assets/[^"')]+)`).FindAllStringSubmatch(css, -1)
 	if len(urls) == 0 {
 		t.Fatal("the stylesheet loads no font")
 	}

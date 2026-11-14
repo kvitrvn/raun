@@ -20,9 +20,7 @@ type WorkspaceService interface {
 }
 
 // workspaceRoutes registers the routes of workspaces. A workspace lives at
-// /<name>, the name of the namespace; no route of the form GET /{name}/<x>
-// is added while GET /assets/{file...} exists, since neither pattern would
-// be more specific than the other for /assets/<x>.
+// /<name>, the name of the namespace.
 func (s *Server) workspaceRoutes() {
 	s.route(s.app, "GET /workspaces", s.requireAccount(http.HandlerFunc(s.workspacesPage)))
 	s.route(s.app, "POST /workspaces", s.requireAccount(http.HandlerFunc(s.workspaceCreate)))
@@ -138,15 +136,22 @@ func (s *Server) workspaceForm(w http.ResponseWriter, r *http.Request, status in
 	for _, mb := range members {
 		rows = append(rows, ui.MemberRow{Name: mb.Name, Role: string(mb.Role)})
 	}
+	repos, unshown, err := s.workspaceRepositories(r, m.Workspace.Name)
+	if err != nil {
+		s.fail(w, r, "list the repositories of a workspace", err)
+		return
+	}
 	s.render(w, r, status, ui.WorkspacePage(s.page(r, m.Workspace.Name, ""), ui.WorkspaceProps{
-		Name:       m.Workspace.Name,
-		Personal:   m.Workspace.Personal,
-		Role:       string(m.Role),
-		Members:    rows,
-		Owner:      m.Role == identity.RoleOwner,
-		Account:    member,
-		MemberRole: string(role),
-		Error:      problem,
+		Name:              m.Workspace.Name,
+		Personal:          m.Workspace.Personal,
+		Role:              string(m.Role),
+		Repositories:      repos,
+		RepositoriesError: unshown,
+		Members:           rows,
+		Owner:             m.Role == identity.RoleOwner,
+		Account:           member,
+		MemberRole:        string(role),
+		Error:             problem,
 	}))
 }
 

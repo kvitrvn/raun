@@ -31,6 +31,7 @@ type loginServer struct {
 	accounts *identitytest.Memory
 	logs     *bytes.Buffer
 	forgot   *forgotten
+	repos    *stubRepositories
 }
 
 // forgotten records the accounts whose permissions logout forgets.
@@ -54,20 +55,22 @@ func (f *forgotten) list() []string {
 func newLoginServer(t *testing.T) *loginServer {
 	t.Helper()
 	fake, _ := forgetest.Scenario("github", false)
-	l := &loginServer{forge: fake, sessions: &sessiontest.Memory{}, accounts: &identitytest.Memory{}, logs: &bytes.Buffer{}, forgot: &forgotten{}}
+	l := &loginServer{forge: fake, sessions: &sessiontest.Memory{}, accounts: &identitytest.Memory{}, logs: &bytes.Buffer{}, forgot: &forgotten{}, repos: &stubRepositories{}}
 	now := func() time.Time { return time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC) }
 	policy := identity.Policy{Users: []identity.Entry{{Forge: "github", ID: "1001"}}}
 	s, err := New(Options{
-		Logger:      slog.New(slog.NewJSONHandler(l.logs, nil)),
-		PublicHost:  testHost,
-		Scheme:      "https",
-		Ready:       func(context.Context) error { return nil },
-		Sessions:    l.sessions,
-		Login:       identity.NewLogin(fake, policy, l.accounts, rand.Reader, now),
-		Accounts:    l.accounts,
-		Workspaces:  identity.NewWorkspaces(l.accounts, rand.Reader, now),
-		Permissions: l.forgot,
-		Now:         now,
+		Logger:       slog.New(slog.NewJSONHandler(l.logs, nil)),
+		PublicHost:   testHost,
+		Scheme:       "https",
+		Ready:        func(context.Context) error { return nil },
+		Sessions:     l.sessions,
+		Login:        identity.NewLogin(fake, policy, l.accounts, rand.Reader, now),
+		Accounts:     l.accounts,
+		Workspaces:   identity.NewWorkspaces(l.accounts, rand.Reader, now),
+		Permissions:  l.forgot,
+		Repositories: l.repos,
+		ForgeURL:     "https://github.example",
+		Now:          now,
 	})
 	if err != nil {
 		t.Fatal(err)
