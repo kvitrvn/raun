@@ -68,6 +68,8 @@ type server struct {
 	stderr *syncBuffer
 	cancel context.CancelFunc
 	code   chan int
+	// dir holds its database, raun.db.
+	dir string
 }
 
 // start runs runServer on a loopback listener with a database in dir,
@@ -91,7 +93,7 @@ func start(t *testing.T, dir string, env []string, deps serverDeps) *server {
 		"RAUN_DATABASE_MIGRATE=true",
 	})
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &server{addr: ln.Addr().String(), scheme: scheme, stderr: &syncBuffer{}, cancel: cancel, code: make(chan int, 1)}
+	s := &server{addr: ln.Addr().String(), scheme: scheme, stderr: &syncBuffer{}, cancel: cancel, code: make(chan int, 1), dir: dir}
 	started := make(chan struct{})
 	deps.listener = ln
 	deps.started = func(net.Addr) { close(started) }

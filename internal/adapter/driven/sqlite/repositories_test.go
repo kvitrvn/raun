@@ -57,6 +57,9 @@ func TestEventsContract(t *testing.T) {
 			Store:        s.Repositories(),
 			Events:       s.Repositories(),
 			AddWorkspace: func(t *testing.T, w repository.Workspace, owner string) { addWorkspace(t, s, w, owner) },
+			Requests: func(t *testing.T, forge, delivery string) []repository.JobRequest {
+				return requestsOf(t, s, forge, delivery)
+			},
 		}
 	})
 }
@@ -177,4 +180,28 @@ func TestWorkspacesBeforeRepositories(t *testing.T) {
 	if rows, err := s.Repositories().InWorkspace(ctx, ws.ID); err != nil || len(rows) != 0 {
 		t.Errorf("repositories after migration 5: %+v, %v", rows, err)
 	}
+}
+
+// requestsOf returns the jobs the delivery of forge with this identifier
+// created, as the requests that asked for them, in the order asked.
+func requestsOf(t *testing.T, s *Store, forge, delivery string) []repository.JobRequest {
+	t.Helper()
+	rows, err := s.reader.QueryContext(context.Background(), `SELECT kind, commit_id, ref, coalesce_key FROM jobs
+		WHERE forge = ? AND delivery = ? ORDER BY rowid`, forge, delivery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []repository.JobRequest
+	for rows.Next() {
+		var r repository.JobRequest
+		if err := rows.Scan(&r.Kind, &r.Commit, &r.Ref, &r.Key); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return out
 }

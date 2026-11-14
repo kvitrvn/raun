@@ -30,7 +30,7 @@ func TestEventsBeforeConfigurations(t *testing.T) {
 	}
 	k := repository.Key{Forge: "github", Delivery: "d1", Digest: strings.Repeat("a", 64), ReceivedAt: when()}
 	row := &repository.LoggedEvent{Forge: "github", Repository: "2001", Delivery: "d1", Event: "push", ReceivedAt: when(), Result: repository.ResultRecorded}
-	if _, err := repos.Record(ctx, k, row); err != nil {
+	if _, err := repos.Record(ctx, k, row, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Migrate(ctx, true); err != nil {

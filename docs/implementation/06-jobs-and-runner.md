@@ -107,6 +107,22 @@ The protocol and the operation of a runner are described in [docs/runner.md](../
 | `internal/adapter/driven/runnerclient` | The client of the runner API that `raun runner` uses. |
 | `cmd/raun` | `raun runner`, its `RAUN_RUNNER_*` variables, and the policy point wired in the server. |
 
+## Implementation of #37
+
+Choices #37 made within the decisions above, for the owner to confirm in its review:
+
+- **The context** is `internal/core/job`: the kinds, states, outcomes and reasons, the rules a store applies (`New`, `Start`, `CheckResult`, `AfterLost`, `Claimant.May`, `Before`), the lease tokens, and the port `job.Store`, whose contract suite and in-memory store are in `jobtest`. Every operation takes its time from the caller.
+- **Identifiers** of jobs and runs are 32 random hexadecimal digits; a lease token is 32 random bytes in hexadecimal, kept as its SHA-256 and compared in constant time.
+- **A claim sweeps first**, inside the transaction of the claim: it ends what `Sweep` would end at its time before it selects, so an expired run never waits for the sweeper. The sweeper of the server runs every 15 seconds and logs what it changed.
+- **The deadline wins**: a run whose deadline and lease have both passed fails as timeout, without retry.
+- **A crash between a claim and its answer** is a lost lease: the run is lost after 60 seconds, and counts.
+- **Runs are counted from their rows**: a run removed by `Release` leaves none, so it is never counted.
+- **A `noop` result** carries no data, or an empty object however it is written, and 4 KiB at most; the summary of every result is one line of 1 KiB at most. A result is stored on its run.
+- **The delivery path.** `repository.EventStore.Record` takes the requests for jobs of the delivery (`repository.JobRequest`), and the SQLite adapter queues them as jobs of the job context in the transaction of the delivery, only when its row is logged as recorded; a request the job context refuses keeps nothing of the delivery, which the hook answers with `500`: such a request is a defect of the policy, seen at once, and the forge can deliver the delivery again once it is fixed. The policy point (`repository.Options.Jobs`, a `repository.JobPolicy`) is asked before the delivery is recorded, for every delivery of a repository, and the requests of a delivery not logged are dropped. `cmd/raun` gives none in production.
+- **A job keeps the identifier of its delivery** without a reference: the purge of the deliveries after 30 days leaves the jobs. The event log does not show the jobs of a delivery yet; #41 does.
+- **Cancellation of a repository's jobs** happens in the transaction of `Deactivate` and of `SetReach`, which now takes the time of the change, with the reason `deactivated`.
+- **Migration 8** adds the tables `jobs` and `runs`: one open run per job at most, held by a unique index, and the queue, the coalescing key, the repository and the delivery indexed for the queries of the queue.
+
 ## Deferred
 
 | Topic | Where |
@@ -135,8 +151,8 @@ The protocol and the operation of a runner are described in [docs/runner.md](../
 
 - [x] This page records the choices.
 - [ ] The end-to-end test starts a server, the fake forge and a runner, sends a simulated webhook, and sees a job claimed, executed and finished (#42).
-- [ ] A test kills a runner in the middle of a job and sees the lease expire (#37, #42).
-- [ ] Concurrent claims never return the same job, on SQLite (#37).
+- [ ] A test kills a runner in the middle of a job and sees the lease expire (#42; the queue side by #37: `jobtest.Suite`, a lost run is retried twice, and `cmd/raun/jobs_test.go`, `TestJobsThroughTheServer`).
+- [x] Concurrent claims never return the same job, on SQLite (#37: `internal/adapter/driven/sqlite/jobs_test.go`, `TestClaimsAcrossStores`, and the contract suite).
 - [ ] A revoked runner is refused, and a runner of a workspace never claims a job of another (#38).
 - [ ] An expired or foreign lease is refused, and a result that fails validation stores nothing (#39).
 - [ ] The clone credential is absent from the checkout, the environment of the handler and the logs (#40).

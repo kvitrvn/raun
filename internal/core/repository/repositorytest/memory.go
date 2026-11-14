@@ -24,6 +24,11 @@ type Memory struct {
 	deliveries map[key]time.Time // forge and delivery identifier -> received
 	digests    map[key]time.Time // forge and digest -> received
 	events     []repository.LoggedEvent
+	// requests are the jobs each recorded delivery asked for, by forge
+	// and delivery identifier; this store keeps no job of its own.
+	requests map[key][]repository.JobRequest
+	// cancelled are the repositories whose jobs were cancelled, in order.
+	cancelled []string
 }
 
 type key struct{ forge, id string }
@@ -142,6 +147,7 @@ func (m *Memory) Deactivate(_ context.Context, workspace, forge, id, account str
 	}
 	r.Active, r.ChangedBy, r.ChangedAt = false, account, at.UTC()
 	m.repos[k] = r
+	m.cancelled = append(m.cancelled, forge+"/"+id)
 	return nil
 }
 
@@ -162,7 +168,7 @@ func (m *Memory) Refresh(_ context.Context, listed []repository.Listed) error {
 	return nil
 }
 
-func (m *Memory) SetReach(_ context.Context, forge string, reached []string) ([]string, error) {
+func (m *Memory) SetReach(_ context.Context, forge string, reached []string, _ time.Time) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.init()
@@ -182,10 +188,13 @@ func (m *Memory) SetReach(_ context.Context, forge string, reached []string) ([]
 		m.repos[k] = r
 	}
 	slices.Sort(lost)
+	for _, id := range lost {
+		m.cancelled = append(m.cancelled, forge+"/"+id)
+	}
 	return lost, nil
 }
 
-func (m *Memory) Record(_ context.Context, k repository.Key, row *repository.LoggedEvent) (bool, error) {
+func (m *Memory) Record(_ context.Context, k repository.Key, row *repository.LoggedEvent, requests []repository.JobRequest) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.init()
@@ -209,7 +218,29 @@ func (m *Memory) Record(_ context.Context, k repository.Key, row *repository.Log
 	e := *row
 	e.ReceivedAt = e.ReceivedAt.UTC()
 	m.events = append(m.events, e)
+	if e.Result == repository.ResultRecorded && len(requests) > 0 {
+		if m.requests == nil {
+			m.requests = map[key][]repository.JobRequest{}
+		}
+		m.requests[key{k.Forge, k.Delivery}] = slices.Clone(requests)
+	}
 	return true, nil
+}
+
+// Requests returns the jobs the delivery of forge with this identifier
+// asked for when it was recorded.
+func (m *Memory) Requests(forge, delivery string) []repository.JobRequest {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return slices.Clone(m.requests[key{forge, delivery}])
+}
+
+// Cancelled returns the repositories whose jobs a deactivation or a loss of
+// reach cancelled, as forge/identifier, in order.
+func (m *Memory) Cancelled() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return slices.Clone(m.cancelled)
 }
 
 // checkKey refuses what a store refuses: a key without its parts, a row of

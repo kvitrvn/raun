@@ -1,6 +1,6 @@
 # Runners
 
-> Status: decided by the [epic 6 review](implementation/06-jobs-and-runner.md) (#36), not implemented yet. #37 adds the queue, #38 runners and their tokens, #39 the routes below and the clone credential, #40 `raun runner`, #41 the screens, #42 the end-to-end test; each updates this page as it lands. `raun runner` still answers that it is not implemented.
+> Status: decided by the [epic 6 review](implementation/06-jobs-and-runner.md) (#36), not implemented yet, but for the queue: jobs, runs, leases, retry, cancellation and coalescing exist in `internal/core/job` on SQLite since #37, and nothing creates a job in production yet. #38 adds runners and their tokens, #39 the routes below and the clone credential, #40 `raun runner`, #41 the screens, #42 the end-to-end test; each updates this page as it lands. `raun runner` still answers that it is not implemented.
 
 A runner is a `raun runner` process that pulls jobs from a Raun server over HTTP, fetches the commit of each job with a short-lived credential, runs it, and reports back. It runs where its owner wants, behind a NAT included: the server never connects to it. It holds what the server never holds, such as LLM credentials (from epic 9), and receives nothing but what its job needs. Why each rule is what it is: [the record](implementation/06-jobs-and-runner.md).
 

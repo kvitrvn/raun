@@ -161,16 +161,44 @@ type Key struct {
 	ReceivedAt time.Time
 }
 
+// JobRequest is a job a delivery asks for, in the terms of this context:
+// the job context reads it as a job of the repository of the delivery, in
+// its workspace, caused by the delivery.
+type JobRequest struct {
+	// Kind is the name of the kind of the job.
+	Kind string
+	// Commit is the commit the job works on; Ref the ref it came from.
+	Commit string
+	Ref    string
+	// Key is the coalescing key: the job replaces the queued jobs of the
+	// workspace with the same key. Empty for none.
+	Key string
+}
+
+// JobPolicy is the policy point (T8): the jobs a delivery of a repository
+// creates, deny by default. It is a pure function of the delivery, which
+// must not block: it is asked before the delivery is recorded, so for
+// duplicates too, and the requests of a delivery the store does not log,
+// such as one of a repository that is not active, are dropped. A request
+// the job context refuses is a defect of the policy: the store refuses the
+// delivery whole, which the hook answers with 500, so it is seen and the
+// forge can deliver it again once the policy is fixed.
+type JobPolicy func(Delivery) []JobRequest
+
 // EventStore keeps the keys of every delivery and the event log of the
 // repositories. Every store passes the contract suite of package
 // repositorytest.
 type EventStore interface {
 	// Record keeps k and, when row is not nil, row in the event log when
 	// the repository of row is active then, in one operation: it reports
-	// whether the row was logged. ErrDuplicate when the forge of k has a
-	// delivery with its identifier or its digest already; nothing changes
-	// then, nor on any other error.
-	Record(ctx context.Context, k Key, row *LoggedEvent) (bool, error)
+	// whether the row was logged. When the row is logged as recorded, the
+	// store also keeps the jobs of requests, queued, in the same
+	// operation; a request the job context refuses keeps nothing of the
+	// delivery. The requests of a delivery not logged, or logged as
+	// ignored, are dropped.
+	// ErrDuplicate when the forge of k has a delivery with its identifier
+	// or its digest already; nothing changes then, nor on any other error.
+	Record(ctx context.Context, k Key, row *LoggedEvent, requests []JobRequest) (bool, error)
 	// Log returns the newest rows of the event log of the repository of
 	// forge with this identifier, newest first, limit at most.
 	Log(ctx context.Context, forge, repository string, limit int) ([]LoggedEvent, error)

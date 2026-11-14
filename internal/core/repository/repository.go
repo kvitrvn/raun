@@ -196,7 +196,8 @@ type Store interface {
 	// another workspace; nothing changes then.
 	Activate(ctx context.Context, r Repository) error
 	// Deactivate makes the repository of forge with this identifier, in
-	// the workspace with this identifier, not active, by account at at.
+	// the workspace with this identifier, not active, by account at at,
+	// and cancels its queued and running jobs at at, in one operation.
 	// ErrNotFound when the workspace holds no such repository.
 	Deactivate(ctx context.Context, workspace, forge, id, account string, at time.Time) error
 	// Refresh stores the snapshots of the listed repositories Raun knows,
@@ -205,8 +206,9 @@ type Store interface {
 	// name to the listed one since.
 	Refresh(ctx context.Context, listed []Listed) error
 	// SetReach makes the repositories of forge whose identifier is in
-	// reached reachable, and every other one unreachable and not active, in
-	// one operation. It returns the identifiers of the repositories that
-	// became unreachable, sorted.
-	SetReach(ctx context.Context, forge string, reached []string) ([]string, error)
+	// reached reachable, and every other one unreachable and not active,
+	// cancelling at at the queued and running jobs of those that became
+	// unreachable, in one operation. It returns the identifiers of the
+	// repositories that became unreachable, sorted.
+	SetReach(ctx context.Context, forge string, reached []string, at time.Time) ([]string, error)
 }

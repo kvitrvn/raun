@@ -2,16 +2,18 @@ package sqlite
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"fmt"
 	"time"
 
+	"github.com/kvitrvn/raun/internal/core/job"
 	"github.com/kvitrvn/raun/internal/core/repository"
 )
 
 var _ repository.EventStore = Repositories{}
 
-func (s Repositories) Record(ctx context.Context, k repository.Key, row *repository.LoggedEvent) (bool, error) {
+func (s Repositories) Record(ctx context.Context, k repository.Key, row *repository.LoggedEvent, requests []repository.JobRequest) (bool, error) {
 	logged := false
 	err := s.s.write(ctx, func(tx *sql.Tx) error {
 		logged = false
@@ -51,12 +53,45 @@ func (s Repositories) Record(ctx context.Context, k repository.Key, row *reposit
 			return fmt.Errorf("record delivery: %w", err)
 		}
 		logged = n == 1
+		if !logged || row.Result != repository.ResultRecorded {
+			return nil
+		}
+		if err := enqueueRequests(ctx, tx, k, row, requests); err != nil {
+			return fmt.Errorf("record delivery: %w", err)
+		}
 		return nil
 	})
 	if err != nil {
 		return false, err
 	}
 	return logged, nil
+}
+
+// enqueueRequests queues in tx the jobs a delivery asked for, as jobs of
+// the job context: of the repository of row in its workspace, caused by the
+// delivery of k at the time it was received.
+func enqueueRequests(ctx context.Context, tx *sql.Tx, k repository.Key, row *repository.LoggedEvent, requests []repository.JobRequest) error {
+	if len(requests) == 0 {
+		return nil
+	}
+	var workspace string
+	if err := tx.QueryRowContext(ctx, `SELECT workspace FROM repositories WHERE forge = ? AND forge_id = ?`,
+		row.Forge, row.Repository).Scan(&workspace); err != nil {
+		return err
+	}
+	for _, r := range requests {
+		j, err := job.New(rand.Reader, job.Request{
+			Kind: job.Kind(r.Kind), Workspace: workspace, Forge: row.Forge, Repository: row.Repository,
+			Commit: r.Commit, Ref: r.Ref, Delivery: k.Delivery, Key: r.Key,
+		}, k.ReceivedAt)
+		if err != nil {
+			return err
+		}
+		if err := insertJob(ctx, tx, j); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s Repositories) Log(ctx context.Context, forge, repo string, limit int) ([]repository.LoggedEvent, error) {

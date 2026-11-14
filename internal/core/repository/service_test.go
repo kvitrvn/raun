@@ -989,3 +989,74 @@ func TestAFailedReceiveKeepsNothing(t *testing.T) {
 		t.Errorf("the delivery sent again = %+v, %v", got, err)
 	}
 }
+
+// TestTheJobsOfADelivery: the policy point is asked, before the delivery is
+// recorded, for every delivery of a repository that is not ignored, a
+// dropped one and a duplicate included; the store keeps the requests only
+// of a delivery it logs as recorded.
+func TestTheJobsOfADelivery(t *testing.T) {
+	ctx := context.Background()
+	w, events := newReceiving(t)
+	var asked []string
+	w.service = repository.New(repository.Options{
+		Forge: w.forge, Workspaces: w.workspaces, Store: w.store, Reach: w.forge,
+		Events: events, Log: w.store, Now: func() time.Time { return w.now },
+		Jobs: func(d repository.Delivery) []repository.JobRequest {
+			asked = append(asked, d.ID)
+			if d.Push == nil {
+				return nil
+			}
+			return []repository.JobRequest{{Kind: "noop", Commit: d.Push.After, Ref: d.Push.Ref}}
+		},
+	})
+	for _, tc := range []struct {
+		delivery, body string
+		want           int
+	}{
+		{"d1", "push api", 1},
+		{"d2", "push api c0", 1},
+		{"d3", "pr closed", 0}, // the policy creates nothing for it
+		{"d4", "issues", 0},    // ignored: the policy is not asked
+		{"d5", "push web", 0},  // never activated: the store drops its requests
+	} {
+		if _, err := w.service.Receive(ctx, signed(tc.delivery), []byte(tc.body)); err != nil {
+			t.Fatal(err)
+		}
+		if got := w.store.Requests("github", tc.delivery); len(got) != tc.want {
+			t.Errorf("%s asked for %v", tc.delivery, got)
+		}
+	}
+	if got := w.store.Requests("github", "d1"); len(got) != 1 || got[0] != (repository.JobRequest{Kind: "noop", Commit: "c1", Ref: "refs/heads/main"}) {
+		t.Errorf("the requests of d1 = %+v", got)
+	}
+	if strings.Join(asked, " ") != "d1 d2 d3 d5" {
+		t.Errorf("the policy was asked for %v", asked)
+	}
+	// Sent again: a duplicate. The policy is asked again, before the
+	// store finds the duplicate, and nothing more is kept.
+	if got, err := w.service.Receive(ctx, signed("d1"), []byte("push api")); err != nil || got.Outcome != repository.OutcomeDuplicate {
+		t.Errorf("a duplicate = %v, %v", got, err)
+	}
+	if strings.Join(asked, " ") != "d1 d2 d3 d5 d1" {
+		t.Errorf("the policy was asked for %v", asked)
+	}
+	if got := w.store.Requests("github", "d1"); len(got) != 1 {
+		t.Errorf("a duplicate changed the requests: %+v", got)
+	}
+}
+
+// TestDeactivationCancelsTheJobs: a deactivation and a loss of reach
+// cancel the jobs of the repository, through its store.
+func TestDeactivationCancelsTheJobs(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t)
+	if _, err := w.service.Activate(ctx, "alice", "acme", "2001"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.service.Deactivate(ctx, "alice", "acme", "acme/api"); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.store.Cancelled(); strings.Join(got, " ") != "github/2001" {
+		t.Errorf("cancelled after a deactivation: %v", got)
+	}
+}
