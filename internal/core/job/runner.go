@@ -178,8 +178,10 @@ type RunnerStore interface {
 	RevokeRunner(ctx context.Context, id string, at time.Time) (int, error)
 	// Authenticate returns the runner whose token has hash, and writes now
 	// as its last contact when the one stored is ContactEvery old or more;
-	// that write is advisory, and failing it fails nothing.
-	// ErrUnauthenticated for no runner, or a revoked one.
+	// that write is advisory, and failing it fails nothing. The last
+	// contact it returns may lag behind the stored one, written by a
+	// concurrent request. ErrUnauthenticated for no runner, or a revoked
+	// one.
 	Authenticate(ctx context.Context, hash string, now time.Time) (Runner, error)
 	// ClaimFor claims for the runner with this identifier as Store.Claim
 	// does, with the scope and the capabilities the store holds for it,
