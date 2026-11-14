@@ -168,3 +168,49 @@ func TestRenameAndInstallRepositories(t *testing.T) {
 		t.Errorf("Reached once uninstalled = %v, %v; want 2002 and 2003", got, err)
 	}
 }
+
+func TestFakeCommentsKeepTheOldest(t *testing.T) {
+	ctx := context.Background()
+	f, _ := Scenario("fake", false)
+	first, _ := f.PublishComment(ctx, "2001", 1, "a")
+	// A second comment of Raun, as a crash between a listing and a write
+	// could leave: the oldest is the one updated, the other left alone.
+	f.mu.Lock()
+	f.comments["2001#1"] = append(f.comments["2001#1"], PublishedComment{ID: "late", Raun: true, Body: Marker + "\nb"})
+	f.mu.Unlock()
+	if id, _ := f.PublishComment(ctx, "2001", 1, "c"); id != first {
+		t.Errorf("updated %q, want the oldest %q", id, first)
+	}
+	if got := f.Comments("2001", 1); got[1].Body != Marker+"\nb" {
+		t.Errorf("the later comment changed: %+v", got)
+	}
+	// The marker on another line is no marker.
+	f.mu.Lock()
+	f.comments["2001#2"] = []PublishedComment{{ID: "x", Raun: true, Body: "text\n" + Marker}}
+	f.mu.Unlock()
+	if id, _ := f.PublishComment(ctx, "2001", 2, "c"); id == "x" {
+		t.Error("a comment with the marker on its second line was updated")
+	}
+	if _, ok := f.Bare().(Statuses); ok {
+		t.Error("the bare forge publishes statuses")
+	}
+	if _, ok := f.Bare().(Comments); ok {
+		t.Error("the bare forge publishes comments")
+	}
+}
+
+func TestEscapeText(t *testing.T) {
+	for in, want := range map[string]string{
+		"plain words":           "plain words",
+		"a\nb":                  "a\nb",
+		"<b>&</b>":              "&lt;b&gt;&amp;&lt;/b&gt;",
+		"@alice":                "&#64;alice",
+		"#1 *x* _y_ `z` [a](b)": `\#1 \*x\* \_y\_ \` + "`" + `z\` + "`" + ` \[a\]\(b\)`,
+		"1. item":               `1\. item`,
+		"a\r\nb":                "a\nb",
+	} {
+		if got := EscapeText(in); got != want {
+			t.Errorf("EscapeText(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

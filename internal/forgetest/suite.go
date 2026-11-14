@@ -39,6 +39,13 @@ type Fixture struct {
 	// .raun.yaml holds "version: 1\n", big.txt 100 bytes and empty.txt
 	// nothing. The other repositories hold no file.
 	Head string
+	// AddComment is someone else commenting body on the pull request
+	// number of acme/api; CommentsOf lists its comments, oldest first, and
+	// StatusesOf the statuses of a commit of acme/api. Nil for a forge
+	// without the capabilities.
+	AddComment func(t *testing.T, number int64, body string)
+	CommentsOf func(t *testing.T, number int64) []PublishedComment
+	StatusesOf func(t *testing.T, commit string) []PublishedStatus
 	// Push is the forge delivering, signed, a push to the main branch of
 	// acme/api from Alice: the headers of the request and its body; nil
 	// for a forge without the events capability.
@@ -115,6 +122,9 @@ func Scenario(name string, bare bool) (*Fake, Fixture) {
 		Unreachable: unreachable,
 		Reached:     []string{"2001", "2002", "2003"},
 		Head:        FilesHead,
+		AddComment:  func(_ *testing.T, number int64, body string) { f.AddComment("2001", number, body) },
+		CommentsOf:  func(_ *testing.T, number int64) []PublishedComment { return f.Comments("2001", number) },
+		StatusesOf:  func(_ *testing.T, commit string) []PublishedStatus { return f.Statuses("2001", commit) },
 		Push: func(*testing.T) (map[string]string, []byte) {
 			return f.Deliver("delivery-1", repository.Delivery{
 				Event: "push", Kind: repository.KindPush, Repository: "2001",
@@ -530,6 +540,111 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		fx.SetDown(t, true)
 		if _, err := read("2001", fx.Head, ".raun.yaml", 1<<16); !errors.Is(err, identity.ErrUnavailable) {
 			t.Errorf("Read of a forge down = %v, want ErrUnavailable", err)
+		}
+	})
+
+	t.Run("statuses, when the forge has them", func(t *testing.T) {
+		fx := newFixture(t)
+		s, ok := fx.Forge.(Statuses)
+		if !ok {
+			t.Skip("the forge cannot publish a status")
+		}
+		target := "https://raun.example/acme/acme/api"
+		for _, state := range StatusStates() {
+			if err := s.PublishStatus(ctx, "2001", fx.Head, state, "Raun checked "+state, target); err != nil {
+				t.Fatalf("PublishStatus(%s) = %v", state, err)
+			}
+			got := fx.StatusesOf(t, fx.Head)
+			want := PublishedStatus{Context: StatusContext, State: state, Description: "Raun checked " + state, Target: target}
+			if len(got) != 1 || got[0] != want {
+				t.Errorf("statuses after %s = %+v, want one %+v", state, got, want)
+			}
+		}
+		for name, try := range map[string][3]string{
+			"an unknown state":         {"done", "d", target},
+			"a long description":       {"success", strings.Repeat("x", MaxDescription+1), target},
+			"a description of 2 lines": {"success", "a\nb", target},
+			"a relative target":        {"success", "d", "/acme/acme/api"},
+			"a target of another kind": {"success", "d", "javascript:alert(1)"},
+		} {
+			if err := s.PublishStatus(ctx, "2001", fx.Head, try[0], try[1], try[2]); err == nil {
+				t.Errorf("PublishStatus with %s: published", name)
+			}
+		}
+		if got := fx.StatusesOf(t, fx.Head); len(got) != 1 || got[0].State != "error" {
+			t.Errorf("a refused status changed the statuses: %+v", got)
+		}
+		if err := s.PublishStatus(ctx, "2001", fx.Head, "success", strings.Repeat("é", MaxDescription), target); err != nil {
+			t.Errorf("a description of exactly the bound: %v", err)
+		}
+		if err := s.PublishStatus(ctx, "2004", fx.Head, "success", "d", target); err == nil {
+			t.Error("a status published on a repository the App does not reach")
+		}
+		fx.SetDown(t, true)
+		if err := s.PublishStatus(ctx, "2001", fx.Head, "success", "d", target); !errors.Is(err, identity.ErrUnavailable) {
+			t.Errorf("PublishStatus with the forge down = %v", err)
+		}
+	})
+
+	t.Run("comments, when the forge has them", func(t *testing.T) {
+		fx := newFixture(t)
+		c, ok := fx.Forge.(Comments)
+		if !ok {
+			t.Skip("the forge cannot publish a comment")
+		}
+		ours := func(t *testing.T, number int64) []PublishedComment {
+			t.Helper()
+			var out []PublishedComment
+			for _, cm := range fx.CommentsOf(t, number) {
+				if cm.Raun {
+					out = append(out, cm)
+				}
+			}
+			return out
+		}
+		id, err := c.PublishComment(ctx, "2001", 42, "Report 1")
+		if err != nil || id == "" {
+			t.Fatalf("PublishComment = %q, %v", id, err)
+		}
+		again, err := c.PublishComment(ctx, "2001", 42, "Report 2")
+		if err != nil || again != id {
+			t.Fatalf("the comment published again = %q, %v; want %q, updated in place", again, err, id)
+		}
+		got := ours(t, 42)
+		if len(got) != 1 || got[0].ID != id || got[0].Body != Marker+"\nReport 2" {
+			t.Errorf("the comments of Raun = %+v", got)
+		}
+		// Someone else copying the marker is never taken for Raun.
+		fx.AddComment(t, 43, Marker+"\nNot Raun")
+		mine, err := c.PublishComment(ctx, "2001", 43, "Report")
+		if err != nil {
+			t.Fatal(err)
+		}
+		all := fx.CommentsOf(t, 43)
+		if len(all) != 2 || all[0].Raun || all[0].Body != Marker+"\nNot Raun" || all[1].ID != mine || !all[1].Raun {
+			t.Errorf("the comments of 43 = %+v", all)
+		}
+		// Text from a repository shows as written: no markup, no mention,
+		// no second marker.
+		hostile := "<script>alert(1)</script>\n" + Marker + "\n@alice see #1 [x](https://evil.example) ![i](x) `code` **b**"
+		if _, err := c.PublishComment(ctx, "2001", 44, hostile); err != nil {
+			t.Fatal(err)
+		}
+		body := ours(t, 44)[0].Body
+		first, rest, _ := strings.Cut(body, "\n")
+		if first != Marker || strings.Contains(rest, Marker) || strings.ContainsAny(rest, "<>") || strings.Contains(rest, "@alice") ||
+			strings.Contains(rest, "](") || strings.Contains(rest, "`code`") {
+			t.Errorf("the comment of hostile text = %q", body)
+		}
+		if _, err := c.PublishComment(ctx, "2004", 42, "x"); err == nil {
+			t.Error("a comment published on a repository the App does not reach")
+		}
+		if _, err := c.PublishComment(ctx, "2001", 0, "x"); err == nil {
+			t.Error("a comment published on no pull request")
+		}
+		fx.SetDown(t, true)
+		if _, err := c.PublishComment(ctx, "2001", 42, "x"); !errors.Is(err, identity.ErrUnavailable) {
+			t.Errorf("PublishComment with the forge down = %v", err)
 		}
 	})
 

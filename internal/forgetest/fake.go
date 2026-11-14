@@ -72,6 +72,10 @@ type Fake struct {
 	refresh map[string]token
 	down    bool
 	seq     int
+	// statuses are by repository and commit, then context; comments by
+	// repository and pull request, oldest first.
+	statuses map[string]map[string]PublishedStatus
+	comments map[string][]PublishedComment
 }
 
 var (
@@ -86,17 +90,19 @@ var (
 // forward by Advance.
 func New(name string, now func() time.Time) *Fake {
 	return &Fake{
-		name:    name,
-		now:     now,
-		people:  map[string]Person{},
-		repos:   map[string]fakeRepo{},
-		heads:   map[string]map[string]string{},
-		files:   map[string]map[string]map[string]string{},
-		grants:  map[string]map[string]identity.Permission{},
-		orgs:    map[string]map[string]bool{},
-		codes:   map[string]grant{},
-		access:  map[string]token{},
-		refresh: map[string]token{},
+		name:     name,
+		now:      now,
+		people:   map[string]Person{},
+		repos:    map[string]fakeRepo{},
+		heads:    map[string]map[string]string{},
+		statuses: map[string]map[string]PublishedStatus{},
+		comments: map[string][]PublishedComment{},
+		files:    map[string]map[string]map[string]string{},
+		grants:   map[string]map[string]identity.Permission{},
+		orgs:     map[string]map[string]bool{},
+		codes:    map[string]grant{},
+		access:   map[string]token{},
+		refresh:  map[string]token{},
 	}
 }
 
