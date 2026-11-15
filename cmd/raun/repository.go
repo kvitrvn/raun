@@ -12,6 +12,7 @@ import (
 
 	"github.com/kvitrvn/raun/internal/adapter/driving/web"
 	"github.com/kvitrvn/raun/internal/core/identity"
+	"github.com/kvitrvn/raun/internal/core/job"
 	"github.com/kvitrvn/raun/internal/core/repository"
 )
 
@@ -95,6 +96,9 @@ func missingCapabilities(forge identity.Forge) []repository.Capability {
 	}
 	if _, ok := forge.(repository.Events); !ok {
 		missing = append(missing, repository.CapabilityWebhooks, repository.CapabilityEvents)
+	}
+	if _, ok := forge.(job.Clone); !ok {
+		missing = append(missing, repository.CapabilityClone)
 	}
 	return missing
 }

@@ -34,8 +34,8 @@ var (
 // Capability is an optional capability of the forge that activation needs.
 type Capability string
 
-// The capabilities activation needs (epic 5 record, Preconditions); the
-// clone credential joins them in epic 6.
+// The capabilities activation needs (epic 5 record, Preconditions), and the
+// clone credential of epic 6.
 const (
 	// CapabilityFiles reads the configuration of the repository (#33).
 	CapabilityFiles Capability = "files"
@@ -43,12 +43,15 @@ const (
 	CapabilityWebhooks Capability = "webhooks"
 	// CapabilityEvents verifies and parses a delivery (#32).
 	CapabilityEvents Capability = "events"
+	// CapabilityClone mints the credential a runner fetches a commit with
+	// (#39).
+	CapabilityClone Capability = "clone"
 )
 
 // Preconditions returns the capabilities activation needs, in the order
 // they are named.
 func Preconditions() []Capability {
-	return []Capability{CapabilityFiles, CapabilityWebhooks, CapabilityEvents}
+	return []Capability{CapabilityFiles, CapabilityWebhooks, CapabilityEvents, CapabilityClone}
 }
 
 // MissingError names the capabilities the forge lacks; it wraps

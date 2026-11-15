@@ -117,8 +117,8 @@ func TestRepositoriesThroughTheServer(t *testing.T) {
 	}
 }
 
-// TestNoActivationWithoutTheCapabilities: a forge without files, webhooks
-// and events activates nothing, and the screen says why; it has no hook.
+// TestNoActivationWithoutTheCapabilities: a forge without files, webhooks,
+// events and clone credentials activates nothing, and the screen says why; it has no hook.
 func TestNoActivationWithoutTheCapabilities(t *testing.T) {
 	dir := t.TempDir()
 	keyFile, _ := writeAppKey(t, dir)
@@ -126,7 +126,7 @@ func TestNoActivationWithoutTheCapabilities(t *testing.T) {
 	s := start(t, dir, append(app(keyFile), "RAUN_SIGNUP_USERS=github:1001"), serverDeps{forge: fake.Bare()})
 	alice := signedUp(t, s, fake, "1001", "alice")
 	_, _, home := alice.send(http.MethodGet, "/", nil)
-	if !strings.Contains(home, "No repository can be activated yet") || !strings.Contains(home, `<span class="font-mono">files, webhooks, events</span>`) || strings.Contains(home, `action="/repositories"`) {
+	if !strings.Contains(home, "No repository can be activated yet") || !strings.Contains(home, `<span class="font-mono">files, webhooks, events, clone</span>`) || strings.Contains(home, `action="/repositories"`) {
 		t.Fatalf("the screen: %s", home)
 	}
 	if status, _, body := alice.submit("/", "/repositories", url.Values{"workspace": {"alice"}, "repository": {"2001"}}); status != http.StatusConflict {
@@ -176,8 +176,8 @@ func TestNoRepositoriesWithoutAForge(t *testing.T) {
 	if got := missingCapabilities(f); len(got) != 0 {
 		t.Errorf("missingCapabilities(fake) = %v, want none", got)
 	}
-	if got := missingCapabilities(f.Bare()); len(got) != 3 {
-		t.Errorf("missingCapabilities(bare) = %v, want all three", got)
+	if got := missingCapabilities(f.Bare()); len(got) != len(repository.Preconditions()) {
+		t.Errorf("missingCapabilities(bare) = %v, want all of them", got)
 	}
 	if hooks(f.Bare(), &repository.Service{}, newReachSync(), newConfigRefresh()) != nil || hooks(f, nil, newReachSync(), newConfigRefresh()) != nil {
 		t.Error("a hook without a forge that receives events")

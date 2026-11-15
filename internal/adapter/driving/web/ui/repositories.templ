@@ -78,7 +78,7 @@ templ RepositoriesPage(p Page, rp RepositoriesProps) {
 		if len(rp.Missing) > 0 {
 			<section data-slot="missing" class="cn-card flex flex-col gap-1.5 px-6 py-4">
 				<h2 class="text-[15px] font-semibold">No repository can be activated yet</h2>
-				<p class="text-[13.5px] text-muted-foreground">The forge lacks what Raun needs to read the configuration of a repository and hear from it: <span class="font-mono">{ strings.Join(rp.Missing, ", ") }</span>.</p>
+				<p class="text-[13.5px] text-muted-foreground">The forge lacks what Raun needs to read the configuration of a repository, hear from it and let a runner fetch it: <span class="font-mono">{ strings.Join(rp.Missing, ", ") }</span>.</p>
 			</section>
 		}
 		if rp.Error != "" {

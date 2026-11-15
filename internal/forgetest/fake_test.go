@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kvitrvn/raun/internal/core/identity"
+	"github.com/kvitrvn/raun/internal/core/job"
 	"github.com/kvitrvn/raun/internal/core/repository"
 )
 
@@ -29,6 +30,9 @@ func TestBare(t *testing.T) {
 	}
 	if _, ok := fx.Forge.(repository.Reach); ok {
 		t.Fatal("the bare forge has the reach capability")
+	}
+	if _, ok := fx.Forge.(job.Clone); ok {
+		t.Fatal("the bare forge has the clone capability")
 	}
 	Suite(t, func(*testing.T) Fixture {
 		_, fx := Scenario("fake", true)
