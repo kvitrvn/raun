@@ -1,5 +1,7 @@
 package ui
 
+import "slices"
+
 // InstanceSetting is a variable of the configuration, as the Instance
 // settings screen shows it.
 type InstanceSetting struct {
@@ -8,10 +10,19 @@ type InstanceSetting struct {
 }
 
 // InstancePage shows administrators the effective configuration of the
-// instance, read-only, secrets redacted.
-templ InstancePage(p Page, settings []InstanceSetting) {
+// instance, read-only, secrets redacted, and the link to its runners when
+// it has them.
+templ InstancePage(p Page, settings []InstanceSetting, runners bool) {
 	@Layout(p) {
-		<h1 class="text-2xl font-semibold tracking-tight">Instance settings</h1>
+		<div class="flex flex-wrap items-center gap-3">
+			<h1 class="text-2xl font-semibold tracking-tight">Instance settings</h1>
+			<span class="flex-1"></span>
+			if runners {
+				@Button(ButtonProps{Href: "/instance/runners", Variant: ButtonOutline}) {
+					Runners
+				}
+			}
+		</div>
 		<p class="max-w-3xl text-[13.5px] text-muted-foreground">
 			The effective configuration of this instance, from its <span class="font-mono">RAUN_*</span> variables. It is read-only: changing a value means changing the variable and restarting the server. Every secret shows as <span class="font-mono">[redacted]</span>, whether it is set or not.
 		</p>
@@ -43,6 +54,182 @@ templ InstancePage(p Page, settings []InstanceSetting) {
 						}
 					}
 				}
+			}
+		</section>
+	}
+}
+
+// RunnerRow is a runner of the Runners screen.
+type RunnerRow struct {
+	ID           string
+	Name         string
+	Scope        string
+	Capabilities []string
+	LastContact  string
+	Revoked      bool
+}
+
+// RunnerForm is the form that creates a runner: the values sent, the
+// workspaces and capabilities it offers, and the problem with the values.
+type RunnerForm struct {
+	Name         string
+	Workspace    string
+	Capabilities []string
+	Workspaces   []string
+	Known        []string
+	Error        string
+}
+
+// RunnersProps configures the Runners screen.
+type RunnersProps struct {
+	Rows []RunnerRow
+	Form RunnerForm
+}
+
+// RunnersPage lists the runners of the instance to an administrator, and
+// offers to create, rotate and revoke them.
+templ RunnersPage(p Page, rp RunnersProps) {
+	@Layout(p) {
+		<h1 class="text-2xl font-semibold tracking-tight">Runners</h1>
+		<p class="max-w-3xl text-[13.5px] text-muted-foreground">
+			A runner takes the jobs of its scope, the instance or one workspace, that its capabilities allow. Its token reaches the runner API only. A new token refuses the old one at once: a runner still using it stops, and the jobs it runs go back to the queue when their leases expire. A revocation refuses the runner and sends its jobs back to the queue at once.
+		</p>
+		if len(rp.Rows) == 0 {
+			@Empty(EmptyProps{Title: "No runner yet", Description: "Create a runner, then start raun runner with its token.", Icon: IconFolder})
+		} else {
+			<section data-slot="runners" class="cn-card overflow-x-auto">
+				@Table(TableProps{Label: "Runners"}) {
+					@TableHeader() {
+						@TableRow() {
+							@TableHead() {
+								Name
+							}
+							@TableHead() {
+								Scope
+							}
+							@TableHead() {
+								Capabilities
+							}
+							@TableHead() {
+								Last contact
+							}
+							@TableHead() {
+								<span class="sr-only">Actions</span>
+							}
+						}
+					}
+					@TableBody() {
+						for _, row := range rp.Rows {
+							@TableRow() {
+								@TableCell(TableCellProps{Class: "font-mono whitespace-nowrap"}) {
+									{ row.Name }
+								}
+								@TableCell() {
+									{ row.Scope }
+								}
+								@TableCell(TableCellProps{Class: "font-mono"}) {
+									for i, c := range row.Capabilities {
+										if i > 0 {
+											{ ", " }
+										}
+										{ c }
+									}
+								}
+								@TableCell() {
+									if row.Revoked {
+										@Badge() {
+											revoked
+										}
+									} else {
+										{ row.LastContact }
+									}
+								}
+								@TableCell(TableCellProps{Class: "whitespace-nowrap"}) {
+									if !row.Revoked {
+										<form method="post" action={ templ.URL("/instance/runners/" + row.ID + "/rotate") } class="inline">
+											@CSRFField(p.CSRF)
+											@Button(ButtonProps{Type: TypeSubmit, Variant: ButtonOutline, Size: ButtonSmall}) {
+												New token
+											}
+										</form>
+										<form method="post" action={ templ.URL("/instance/runners/" + row.ID + "/revoke") } class="inline">
+											@CSRFField(p.CSRF)
+											@Button(ButtonProps{Type: TypeSubmit, Variant: ButtonDanger, Size: ButtonSmall}) {
+												Revoke
+											}
+										</form>
+									}
+								}
+							}
+						}
+					}
+				}
+			</section>
+		}
+		<section data-slot="create-runner" class="cn-card flex max-w-xl flex-col gap-4 px-7 py-6">
+			<h2 class="text-[17px] font-semibold">Create a runner</h2>
+			<form method="post" action="/instance/runners" class="flex flex-col items-start gap-4">
+				@CSRFField(p.CSRF)
+				@Field(FieldProps{For: "name", Label: "Name", Error: rp.Form.Error, Class: "w-full"}) {
+					@Input(InputProps{
+						ID:         "name",
+						Name:       "name",
+						Value:      rp.Form.Name,
+						Required:   true,
+						Invalid:    rp.Form.Error != "",
+						Attributes: templ.Attributes{"maxlength": "64", "autocapitalize": "none", "spellcheck": "false"},
+					})
+				}
+				<div data-slot="field" class="cn-field">
+					<label class="cn-field-label" for="workspace">Scope</label>
+					<select id="workspace" name="workspace" class="cn-input">
+						<option value="" selected?={ rp.Form.Workspace == "" }>the instance: every workspace</option>
+						for _, w := range rp.Form.Workspaces {
+							<option value={ w } selected?={ rp.Form.Workspace == w }>workspace { w }</option>
+						}
+					</select>
+				</div>
+				<fieldset class="flex flex-col gap-2">
+					<legend class="cn-field-label">Capabilities</legend>
+					for _, c := range rp.Form.Known {
+						<label class="flex items-center gap-2 font-mono text-[13.5px]">
+							<input type="checkbox" name="capability" value={ c } checked?={ slices.Contains(rp.Form.Capabilities, c) }/>
+							{ c }
+						</label>
+					}
+				</fieldset>
+				@Button(ButtonProps{Type: TypeSubmit}) {
+					Create the runner
+				}
+			</form>
+		</section>
+	}
+}
+
+// RunnerTokenProps configures the page that shows the token of a runner.
+type RunnerTokenProps struct {
+	Name    string
+	Token   string
+	Created bool
+}
+
+// RunnerTokenPage shows the token of a runner, once: it is never shown
+// again.
+templ RunnerTokenPage(p Page, t RunnerTokenProps) {
+	@Layout(p) {
+		<h1 class="text-2xl font-semibold tracking-tight">
+			if t.Created {
+				Runner created
+			} else {
+				New token
+			}
+		</h1>
+		<section data-slot="runner-token" class="cn-card flex max-w-3xl flex-col gap-4 px-7 py-6">
+			<p class="text-[13.5px]">The token of <span class="font-mono">{ t.Name }</span>, shown this once: Raun keeps only its hash.</p>
+			<code data-slot="token" class="block break-all rounded-md bg-muted px-3 py-2 font-mono text-[13px]">{ t.Token }</code>
+			<p class="text-[13px] text-muted-foreground">Give it to the runner in <span class="font-mono">RAUN_RUNNER_TOKEN</span>, or in the file that <span class="font-mono">RAUN_RUNNER_TOKEN_FILE</span> names. If it is lost, give the runner a new token.</p>
+			@Button(ButtonProps{Href: "/instance/runners", Variant: ButtonOutline}) {
+				Back to the runners
 			}
 		</section>
 	}

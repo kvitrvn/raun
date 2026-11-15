@@ -1,9 +1,20 @@
 package jobtest
 
-import "testing"
+import (
+	"testing"
 
-func TestMemory(t *testing.T) {
-	Suite(t, func(t *testing.T) Fixture {
-		return Fixture{Store: &Memory{}, AddRepository: func(*testing.T, string, string, string) {}}
-	})
+	"github.com/kvitrvn/raun/internal/core/job"
+)
+
+func memoryFixture(*testing.T) Fixture {
+	m := &Memory{}
+	return Fixture{
+		Store: m, Runners: m,
+		AddWorkspace:  func(_ *testing.T, w job.Workspace) { m.AddWorkspace(w) },
+		AddRepository: func(*testing.T, string, string, string) {},
+	}
 }
+
+func TestMemory(t *testing.T) { Suite(t, memoryFixture) }
+
+func TestMemoryRunners(t *testing.T) { RunnerSuite(t, memoryFixture) }

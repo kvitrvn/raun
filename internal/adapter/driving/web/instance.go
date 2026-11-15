@@ -51,6 +51,9 @@ func (s *Server) administrator(r *http.Request) (bool, error) {
 // instanceRoutes registers the administration screens.
 func (s *Server) instanceRoutes() {
 	s.route(s.app, "GET /instance", s.requireAccount(http.HandlerFunc(s.instancePage)))
+	if s.runners != nil {
+		s.runnerRoutes()
+	}
 }
 
 // instancePage shows the effective configuration to an administrator. The
@@ -74,7 +77,7 @@ func (s *Server) instancePage(w http.ResponseWriter, r *http.Request) {
 	for _, st := range s.settings {
 		rows = append(rows, ui.InstanceSetting{Name: st.Name, Value: st.Value})
 	}
-	s.render(w, r, http.StatusOK, ui.InstancePage(s.page(r, "Instance settings", "/instance"), rows))
+	s.render(w, r, http.StatusOK, ui.InstancePage(s.page(r, "Instance settings", "/instance"), rows, s.runners != nil))
 }
 
 // isAdministrator reports whether the session of r belongs to an

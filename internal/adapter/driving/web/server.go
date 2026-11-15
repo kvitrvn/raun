@@ -79,6 +79,9 @@ type Options struct {
 	// Settings are the effective configuration, every secret already
 	// redacted, for the Instance settings screen.
 	Settings []Setting
+	// Runners manages the runners and authenticates the runner API; nil
+	// means no runner API and no Runners screen. It needs Administrators.
+	Runners RunnerRegistry
 	// Now gives the time of a request; nil means time.Now.
 	Now func() time.Time
 	// Random is the source of session identifiers and CSRF tokens; nil
@@ -103,6 +106,7 @@ type Server struct {
 	hooks          HookReceiver
 	forgeName      string
 	administrators AdministratorChecker
+	runners        RunnerRegistry
 	settings       []Setting
 	// patterns are the routes of the server, as route registered them:
 	// their first segments are names of the namespace kept for Raun.
@@ -151,6 +155,9 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 	if opts.Hooks != nil && !forgeName.MatchString(opts.ForgeName) {
 		return nil, fmt.Errorf("web: Options.ForgeName %q is not the name of a forge, with Hooks", opts.ForgeName)
 	}
+	if opts.Runners != nil && (opts.Administrators == nil || opts.Login == nil) {
+		return nil, errors.New("web: Options.Runners is set without Administrators and a Login")
+	}
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -188,6 +195,7 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 		forgeName:      opts.ForgeName,
 		administrators: opts.Administrators,
 		settings:       slices.Clone(opts.Settings),
+		runners:        opts.Runners,
 		now:            opts.Now,
 		random:         opts.Random,
 		bypass:         skip,
@@ -220,6 +228,9 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 	s.route(root, "GET "+assetPrefix+"{file...}", s.checkHost(http.HandlerFunc(s.assets.serve)))
 	if s.hooks != nil {
 		s.hookRoute(root)
+	}
+	if s.runners != nil {
+		s.runnerRoute(root)
 	}
 	// Every other path is the application, behind the protections in the
 	// order of the record: the public address only, a bounded body, no

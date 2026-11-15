@@ -12,11 +12,14 @@ import (
 	"github.com/kvitrvn/raun/internal/core/job"
 )
 
-// Fixture is a job store under test, empty, and a way to create in the data
-// it reads the repository of forge with this identifier in the workspace
-// with this identifier, which a job names.
+// Fixture is a job store under test, empty, and ways to create in the data
+// it reads a workspace, and the repository of forge with this identifier in
+// the workspace with this identifier, which a job names.
 type Fixture struct {
-	Store         job.Store
+	Store job.Store
+	// Runners is the runner store of the same data.
+	Runners       job.RunnerStore
+	AddWorkspace  func(t *testing.T, w job.Workspace)
 	AddRepository func(t *testing.T, workspace, forge, repository string)
 }
 
@@ -24,8 +27,8 @@ type Fixture struct {
 func id32(n string) string { return strings.Repeat("0", 32-len(n)) + n }
 
 var (
-	acme = id32("w1")
-	beta = id32("w2")
+	acme = id32("a1")
+	beta = id32("b2")
 	t0   = time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC)
 	// commit is the commit the jobs of the suite work on.
 	commit = strings.Repeat("c", 40)
@@ -44,6 +47,8 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 	setup := func(t *testing.T) job.Store {
 		t.Helper()
 		f := newFixture(t)
+		f.AddWorkspace(t, job.Workspace{ID: acme, Name: "acme"})
+		f.AddWorkspace(t, job.Workspace{ID: beta, Name: "beta"})
 		f.AddRepository(t, acme, "github", "2001")
 		f.AddRepository(t, acme, "github", "2002")
 		f.AddRepository(t, beta, "github", "3001")

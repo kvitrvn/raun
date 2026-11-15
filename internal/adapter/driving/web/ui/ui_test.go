@@ -212,7 +212,16 @@ func TestPages(t *testing.T) {
 			{Name: "RAUN_TLS_CERT_FILE", Value: ""},
 			{Name: "RAUN_SECRET_KEY", Value: "[redacted]"},
 			{Name: "RAUN_ADMINS", Value: hostile},
+		}, true)},
+		{"runners", RunnersPage(adminPage, RunnersProps{
+			Rows: []RunnerRow{
+				{ID: "0123456789abcdef0123456789abcdef", Name: hostile, Scope: "workspace acme", Capabilities: []string{"noop"}, LastContact: "seen recently"},
+				{ID: "fedcba9876543210fedcba9876543210", Name: "old", Scope: "instance", Capabilities: []string{"noop"}, Revoked: true},
+			},
+			Form: RunnerForm{Name: hostile, Workspace: "acme", Capabilities: []string{"noop"}, Workspaces: []string{"acme", "beta"}, Known: []string{"noop"}, Error: hostile},
 		})},
+		{"runners-empty", RunnersPage(adminPage, RunnersProps{Form: RunnerForm{Known: []string{"noop"}}})},
+		{"runner-token", RunnerTokenPage(adminPage, RunnerTokenProps{Name: hostile, Token: "token-sentinel", Created: true})},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
