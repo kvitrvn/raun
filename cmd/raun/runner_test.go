@@ -317,7 +317,13 @@ func TestTheRunnerStopsWhenRevoked(t *testing.T) {
 	go func() {
 		exited <- runRunner(env, &runnerLog, runnerDeps{signals: make(chan os.Signal), release: "0.3.0", started: func() { close(started) }})
 	}()
-	<-started
+	select {
+	case <-started:
+	case code := <-exited:
+		t.Fatalf("the runner exited with %d before it started:\n%s", code, runnerLog.String())
+	case <-time.After(10 * time.Second):
+		t.Fatal("the runner did not start")
+	}
 	time.Sleep(100 * time.Millisecond)
 	_, _, list := alice.send(http.MethodGet, "/instance/runners", nil)
 	ids := regexp.MustCompile(`action="/instance/runners/([0-9a-f]{32})/rotate"`).FindStringSubmatch(list)
@@ -366,5 +372,36 @@ func TestAWorkDirServesOneRunner(t *testing.T) {
 		t.Errorf("the lock after its release: %v", err)
 	} else {
 		again()
+	}
+}
+
+// TestAWorkDirIsTheRunnersOwn: a directory other users may enter is closed
+// to them, and a link is not taken.
+func TestAWorkDirIsTheRunnersOwn(t *testing.T) {
+	open := filepath.Join(t.TempDir(), "open")
+	if err := os.Mkdir(open, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(open, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := lockWorkDir(open)
+	if err != nil {
+		t.Fatalf("a directory of the user open to others = %v", err)
+	}
+	unlock()
+	if info, _ := os.Stat(open); info.Mode().Perm() != 0o700 {
+		t.Errorf("the work directory was left %v", info.Mode().Perm())
+	}
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lockWorkDir(link); err == nil {
+		t.Error("a link was taken")
+	}
+	if entries, _ := os.ReadDir(target); len(entries) != 0 {
+		t.Errorf("the target of the link holds %v", entries)
 	}
 }
