@@ -19,6 +19,7 @@ import (
 // repository; the handlers check the permission of the forge first.
 type RunsBoard interface {
 	Jobs(ctx context.Context, forge, repository string) ([]job.JobView, error)
+	Deliveries(ctx context.Context, forge, repository string) (int, map[string]int, error)
 	Job(ctx context.Context, forge, repository, id string) (job.JobView, error)
 	Log(ctx context.Context, forge, repository, jobID, run string, offset int, shownCut bool) (job.LogPart, error)
 	Cancel(ctx context.Context, forge, repository, id string) (job.Job, error)

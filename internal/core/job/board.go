@@ -152,6 +152,23 @@ func (b *Board) Jobs(ctx context.Context, forge, repository string) ([]JobView, 
 	return out, nil
 }
 
+// Deliveries returns how many of the newest jobs of the repository, MaxListed
+// at most, there are, and how many of them each delivery created, without
+// reading the runners.
+func (b *Board) Deliveries(ctx context.Context, forge, repository string) (int, map[string]int, error) {
+	jobs, err := b.reads.JobsOf(ctx, forge, repository, MaxListed)
+	if err != nil {
+		return 0, nil, fmt.Errorf("list the jobs: %w", err)
+	}
+	per := map[string]int{}
+	for _, j := range jobs {
+		if j.Job.Delivery != "" {
+			per[j.Job.Delivery]++
+		}
+	}
+	return len(jobs), per, nil
+}
+
 // Job returns the job with this identifier, of the repository of forge with
 // this stable identifier, with its runs and why it waits. ErrNotFound for
 // no such job of that repository.

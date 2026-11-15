@@ -9,7 +9,6 @@ import (
 
 	"github.com/kvitrvn/raun/internal/adapter/driving/web/ui"
 	"github.com/kvitrvn/raun/internal/core/identity"
-	"github.com/kvitrvn/raun/internal/core/job"
 	"github.com/kvitrvn/raun/internal/core/repository"
 )
 
@@ -198,17 +197,11 @@ func (s *Server) repositoryPage(w http.ResponseWriter, r *http.Request) {
 		}
 		rp := v.Repository
 		// The jobs of each delivery, among the newest of the repository.
-		var jobs []job.JobView
+		jobs, perDelivery := 0, map[string]int{}
 		if s.runs != nil {
-			if jobs, err = s.runs.Jobs(r.Context(), rp.Forge, rp.ID); err != nil {
+			if jobs, perDelivery, err = s.runs.Deliveries(r.Context(), rp.Forge, rp.ID); err != nil {
 				s.fail(w, r, "list the jobs", err)
 				return
-			}
-		}
-		perDelivery := map[string]int{}
-		for _, jv := range jobs {
-			if jv.Job.Delivery != "" {
-				perDelivery[jv.Job.Delivery]++
 			}
 		}
 		var events []ui.EventRow
@@ -240,7 +233,7 @@ func (s *Server) repositoryPage(w http.ResponseWriter, r *http.Request) {
 			CanDecide:     v.CanDecide(),
 			Missing:       missingNames(s.repositories.Missing()),
 			RunsHref:      runsHref,
-			Jobs:          len(jobs),
+			Jobs:          jobs,
 		}))
 	})).ServeHTTP(w, r)
 }

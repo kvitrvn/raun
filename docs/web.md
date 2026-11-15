@@ -87,6 +87,7 @@ Below the page of a repository, for whoever the forge lets read it, as the page 
 - `POST /<workspace>/<owner>/<name>/runs/<job>/cancel`, with the CSRF token of the session, cancels a queued or running job for a person the forge lets decide on the repository, and goes back to the job; anyone else who reads it gets `403`, and the button is not shown. A job that has ended meanwhile is left as it is.
 
 The Runners screen of the instance shows, for each runner, its last contact, dated, with `seen` when it was in the last two minutes, the release it last said, and how many runs it holds now: a count, never their repositories, which an administrator may not read on the forge.
+
 ## Content Security Policy
 
 The policy is in the [epic 3 record](implementation/03-server-foundation.md#request-protections); #20 sends it. The templates are written for it, and the tests of `ui` check every rendered page and component:

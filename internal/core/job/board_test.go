@@ -172,6 +172,9 @@ func TestBoardJobsAndCancel(t *testing.T) {
 	if err != nil || len(views) != 2 || views[0].Job.ID != queued.ID || views[0].Wait != job.WaitNoRunner || len(views[1].Runs) != 1 || views[1].Wait != job.WaitNone {
 		t.Fatalf("Jobs = %+v, %v", views, err)
 	}
+	if n, per, err := w.board.Deliveries(ctx, "github", "2001"); err != nil || n != 2 || len(per) != 0 {
+		t.Errorf("Deliveries = %d, %v, %v", n, per, err)
+	}
 	if views, _ := w.board.Jobs(ctx, "github", "2002"); len(views) != 0 {
 		t.Errorf("Jobs of another repository = %+v", views)
 	}

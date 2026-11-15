@@ -683,10 +683,16 @@ func (s Jobs) JobsOf(ctx context.Context, forge, repository string, limit int) (
 			if err != nil {
 				return fmt.Errorf("list runs: %w", err)
 			}
-			i := index[r.Job]
+			i, ok := index[r.Job]
+			if !ok {
+				continue
+			}
 			out[i].Runs = append(out[i].Runs, r)
 		}
-		return runs.Err()
+		if err := runs.Err(); err != nil {
+			return fmt.Errorf("list runs: %w", err)
+		}
+		return nil
 	})
 	return out, err
 }
