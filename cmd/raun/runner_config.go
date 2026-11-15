@@ -43,7 +43,20 @@ var runnerVariables = []runnerVariable{
 	{name: "RAUN_RUNNER_SERVER", required: true, parse: parseRunnerServer},
 	{name: "RAUN_RUNNER_TOKEN", required: true, secret: true, parse: parseRunnerToken},
 	{name: "RAUN_RUNNER_CAPACITY", def: "1", parse: parseRunnerCapacity},
-	{name: "RAUN_RUNNER_WORKDIR", def: filepath.Join(os.TempDir(), "raun-runner"), parse: parseRunnerWorkDir},
+	{name: "RAUN_RUNNER_WORKDIR", def: defaultWorkDir(), parse: parseRunnerWorkDir},
+}
+
+// workDirLock is the file of the work directory a runner holds the lock of.
+const workDirLock = ".lock"
+
+// defaultWorkDir is the work directory of a runner when none is set:
+// raun-runner-<uid> in the temporary directory, one per user, raun-runner
+// where the system has no user identifier.
+func defaultWorkDir() string {
+	if uid := os.Getuid(); uid >= 0 {
+		return filepath.Join(os.TempDir(), "raun-runner-"+strconv.Itoa(uid))
+	}
+	return filepath.Join(os.TempDir(), "raun-runner")
 }
 
 // loadRunnerConfig reads the configuration of the runner from environ, in

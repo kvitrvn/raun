@@ -33,7 +33,7 @@ func TestLoadRunnerConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.server != "https://raun.example.com" || c.token.Reveal() != strings.Repeat("a", 64) || c.capacity != 1 ||
-		c.workDir != filepath.Join(os.TempDir(), "raun-runner") {
+		c.workDir != filepath.Join(os.TempDir(), fmt.Sprintf("raun-runner-%d", os.Getuid())) {
 		t.Errorf("defaults: %+v", c)
 	}
 	c, err = loadRunnerConfig([]string{"RAUN_RUNNER_SERVER=http://127.0.0.1:8080", "RAUN_RUNNER_TOKEN=t0ken", "RAUN_RUNNER_CAPACITY=64",
@@ -288,7 +288,7 @@ func TestTheRunnerRunsAJob(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("the runner did not stop")
 	}
-	if entries, _ := os.ReadDir(workDir); len(entries) != 0 {
+	if entries, _ := os.ReadDir(workDir); len(entries) != 1 || entries[0].Name() != workDirLock {
 		t.Errorf("the work directory holds %v", entries)
 	}
 	runner, err := store.Runners().Runners(ctx)
@@ -338,5 +338,33 @@ func TestTheRunnerStopsWhenRevoked(t *testing.T) {
 	}
 	if strings.Contains(runnerLog.String(), m[1]) {
 		t.Error("the runner logged its token")
+	}
+}
+
+// TestAWorkDirServesOneRunner: a second runner on the work directory of a
+// runner that runs refuses to start, and removes nothing.
+func TestAWorkDirServesOneRunner(t *testing.T) {
+	dir := t.TempDir()
+	unlock, err := lockWorkDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := filepath.Join(dir, job.RunPrefix+"in-progress")
+	if err := os.Mkdir(live, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var stderr syncBuffer
+	env := []string{"RAUN_RUNNER_SERVER=http://127.0.0.1:1", "RAUN_RUNNER_TOKEN=s3cret-token", "RAUN_RUNNER_WORKDIR=" + dir}
+	if code := runRunner(env, &stderr, runnerDeps{release: "0.3.0"}); code != exitFailure || !strings.Contains(stderr.String(), "another runner") {
+		t.Errorf("a second runner = %d %s", code, stderr.String())
+	}
+	if _, err := os.Stat(live); err != nil {
+		t.Error("the second runner removed the run of the first")
+	}
+	unlock()
+	if again, err := lockWorkDir(dir); err != nil {
+		t.Errorf("the lock after its release: %v", err)
+	} else {
+		again()
 	}
 }

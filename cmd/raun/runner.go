@@ -51,6 +51,12 @@ func runRunner(environ []string, stderr io.Writer, deps runnerDeps) int {
 		return exitFailure
 	}
 	logger.Info("git", slog.String("version", version))
+	unlock, err := lockWorkDir(cfg.workDir)
+	if err != nil {
+		logger.Error("take the work directory (RAUN_RUNNER_WORKDIR)", slog.String("error", err.Error()))
+		return exitFailure
+	}
+	defer unlock()
 	left, err := job.CleanWorkDir(cfg.workDir)
 	if err != nil {
 		logger.Error("prepare the work directory (RAUN_RUNNER_WORKDIR)", slog.String("error", err.Error()))
