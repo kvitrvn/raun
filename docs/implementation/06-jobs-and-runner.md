@@ -138,6 +138,22 @@ Choices #38 made within the decisions above, for the owner to confirm in its rev
 - **No editing of a runner** yet: its scope and capabilities are set when it is created; changing them is left to #41 or a later need.
 - **Migration 9** adds the table `runners`, and an index on the open runs of a runner; `runs.runner` keeps no reference, as migration 8 left it.
 
+## Implementation of #39
+
+Choices #39 made within the decisions above, for the owner to confirm in its review:
+
+- **The dispatcher.** `job.Dispatcher` serves the protocol: the long poll, the clone credential of each run, and the operations of a run. A claim takes the wake-up channel of a `job.Notifier` before it tries, so a job queued in between still wakes it; it holds no transaction while it waits, and every wake-up claims again.
+- **What wakes a claim.** The SQLite store tells the notifier after a commit that may have made a job claimable (`sqlite.Options.Queued`): an enqueue, the jobs of a delivery, a sweep or the sweep of a claim that changed a job, a revocation that sent runs back. A release wakes nobody, since its job waits 30 seconds; a wake-up that finds nothing costs one claim.
+- **The Clone port** is `job.Clone`, declared by the job context: `MintClone` of a repository by its stable identifier, `RevokeClone`, and `job.Credential`, whose password is a `job.Secret` that prints as `[redacted]` everywhere, as `identity.Secret` does. `cmd/raun` detects it on the forge by type assertion; `repository.CapabilityClone` joins the activation preconditions.
+- **On GitHub**, the mint is the one of the cached tokens without the cache: each run gets a token of its own, which never enters the cache, so revoking it leaves the reads of the server. GitHub lists the repositories a token covers; one that does not cover the repository of the job alone is refused and revoked at once. The clone URL is the web address of GitHub and the full name GitHub gives, which the answer to a claim carries too. A revocation that GitHub answers `401` was already refused, and counts as done.
+- **Credentials are held by run**, in memory, in the dispatcher. One is revoked at once for a result, accepted or refused, and for a heartbeat, a log or a result that finds the run cancelled or not current; the sweeper revokes, after each sweep, those of the runs that ended otherwise. The revocation is sent whatever the clock of the server says of the expiry, which the forge decides; a revocation that fails is tried again at each sweep until the credential expires by the clock of the server. A server that restarts loses them; they expire within the hour, as decided.
+- **A failed mint** releases the run (`Store.Release`, the job claimable again 30 seconds later), is logged without a secret, and the claim goes on waiting. A job cancelled while its credential is minted is not given, and the credential is revoked.
+- **A run is its runner's.** `Store.Run` reads a run; every operation of a run checks that it belongs to the runner of the token, and answers the same `409` as a foreign lease otherwise.
+- **Logs.** `job.Log.Append` holds the rules every store applies: a chunk below the next number is ignored, one above it is a `job.SequenceError` with the expected number, the text past 1 MiB is cut at a character and ends with the line `(truncated)`, after which later numbers are still taken and their text dropped; text that is not UTF-8, or past 64 KiB, is refused. Migration 10 adds `run_logs`, one row per run that sent a chunk, deleted with its run. `Store.PurgeLogs` deletes, in the hourly purge, the logs of the runs that ended 30 days ago (`job.LogRetention`).
+- **Protocol.** `internal/adapter/runnerapi` holds the version, the headers, the bounds and the messages. The version in the path and in the header must both be spoken and agree; a path whose first segment is not a version, and a `User-Agent` that is not `raun-runner/<release>`, are refused with `400`. Every answer is JSON, `401` included. A heartbeat of a cancelled job answers `200` `{"cancel": true}`, without the end of a lease. The body of a result is bounded by the data bound of its kind plus 8 KiB for the outcome and the summary; a result sent again is the same when its bytes are. The parameters of a `noop` job are `{}`.
+- **The release** a runner says in its `User-Agent` is recorded by `RunnerStore.Authenticate`, which now takes it: written with the last contact, and at once when it changes.
+- **Shutdown.** `BeginShutdown` ends the claims that wait with `204`, so the stop of the server does not wait 30 seconds for them.
+
 ## Deferred
 
 | Topic | Where |
@@ -169,6 +185,6 @@ Choices #38 made within the decisions above, for the owner to confirm in its rev
 - [ ] A test kills a runner in the middle of a job and sees the lease expire (#42; the queue side by #37: `jobtest.Suite`, a lost run is retried twice, and `cmd/raun/jobs_test.go`, `TestJobsThroughTheServer`).
 - [x] Concurrent claims never return the same job, on SQLite (#37: `internal/adapter/driven/sqlite/jobs_test.go`, `TestClaimsAcrossStores`, and the contract suite).
 - [x] A revoked runner is refused, and a runner of a workspace never claims a job of another (#38: `jobtest.RunnerSuite`, on memory and SQLite; `internal/adapter/driving/web/runners_test.go`; `cmd/raun/runners_test.go`, `TestRunnersThroughTheServer`).
-- [ ] An expired or foreign lease is refused, and a result that fails validation stores nothing (#39).
+- [x] An expired or foreign lease is refused, and a result that fails validation stores nothing (#39: `internal/adapter/driving/web/runnerapi_test.go`, `TestTheRoutesOfARun`, `TestAnExpiredLeaseIsRefused`, `TestAResultItsKindRefusesFailsTheJob`; `cmd/raun/runners_test.go`, `TestTheRunnerProtocolThroughTheServer`).
 - [ ] The clone credential is absent from the checkout, the environment of the handler and the logs (#40).
 - [ ] `make verify` passes (checked at the end of the epic).
