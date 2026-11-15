@@ -30,13 +30,24 @@
 //
 // What this package does not do:
 //   - write to the repository: no checkout, no index, no lock, no reference;
-//   - fetch, clone or reach the network;
+//   - fetch, clone or reach the network, but Fetch, below;
 //   - follow a link or enter a submodule: both are reported by kind only;
 //   - relax safe.directory: a repository owned by another user is refused, as
 //     Git refuses it;
 //   - read a file above the size bound (8 MiB by default), reported as
 //     TooLarge, or list a tree above the entry bound (one million by
 //     default), refused with knowledge.ErrTreeTooLarge.
+//
+// Fetch, for raun runner, fetches the one commit of a job into an empty
+// directory, as a bare repository with that commit alone, then opens a Reader
+// of it. It runs Git as the Reader does, but for one difference: it may reach
+// the address it is given, in https, or in http on a loopback address only.
+// The clone credential reaches Git through the environment of that process
+// alone, as the configuration http.extraHeader, never on its command line, in
+// a file or in the configuration of the repository; templates, credential
+// helpers, redirects and submodules are off, and the objects received are
+// checked. CheckVersion checks the git binary on its own, as a runner does at
+// start.
 //
 // It needs Git 2.32 or later, checked by Open.
 package git

@@ -155,6 +155,19 @@ Choices #39 made within the decisions above, for the owner to confirm in its rev
 - **The release** a runner says in its `User-Agent` is recorded by `RunnerStore.Authenticate`, which now takes it: written with the last contact, and at once when it changes.
 - **Shutdown.** `BeginShutdown` ends the claims that wait with `204`, so the stop of the server does not wait 30 seconds for them.
 
+## Implementation of #40
+
+Choices #40 made within the decisions above, for the owner to confirm in its review:
+
+- **The loop** is `job.Loop` in the job context, with its ports: `job.Remote` (the runner API), `job.Checkout` (the fetch of one commit into a directory) and `job.Handler`, per kind, given a `job.Task` that holds the job, its run and its commit (`job.Snapshot`), never a credential. `job.Work` is a job as a runner gets it. The job context imports no other: the snapshot of the Git checkout is also the commit reader of the knowledge context, which the handlers of epic 7 read it through.
+- **The fetch** is in `internal/adapter/driven/git`, next to the commit reader, so one package owns the environment Git runs in: `git.Fetch` and `git.Fetcher`, the checkout of the runner. It initialises an empty bare repository, with no template, in a directory of its own for each try, and runs `git fetch --depth 1 --no-tags --no-recurse-submodules --no-write-fetch-head <url> <commit>` with the protocol of the address alone allowed, protocol 2, no redirect, no credential helper, the objects checked, and the Basic header given by `GIT_CONFIG_COUNT` in its environment. A clone address is `https`, or `http` on a loopback address, the rule of the address of the server; the commit is fetched by its hash. The Reader still denies every protocol.
+- **Timings.** Three fetch tries, 1 then 2 seconds apart; a result sent again after 1 second, the wait doubled up to 10 seconds, while the lease the server last gave and the deadline hold; a claim that failed for want of a server tried again after 1 second, doubled up to 30 seconds; the log sent every 2 seconds and before the result. A heartbeat without an answer is tried again at the next beat until the lease passes.
+- **Refusals.** A `401`, and any `400`, from any route stop the runner with exit status 1, its jobs abandoned; a `409` or a cancellation stops the one job, and nothing more is sent for it. An invalid configuration and a Git older than 2.32 exit with 1 too; a signal, after the stop, with 0.
+- **Logs.** The log of a run holds the steps of the runner and what the handler writes, the clone credential and its Basic form redacted, even across two writes, and the start of one at the cut or at the end of the run, its bound counted on the redacted text; what Git says and what a handler's error says stay in the log of the runner. A chunk, once taken, is frozen until the server took it, so it is sent again the same; a `409` naming a later chunk means the server took it and the answer was lost. The heartbeats and the sends of the log run apart, and the last chunks get three tries before they are dropped, so a log route that fails never costs the lease or the result.
+- **Results** are checked by their kind (`job.CheckResult`) before they are sent: one the server would refuse, or that cannot be written, fails the job with a fixed summary.
+- **The work directory** belongs to one runner: its default is `raun-runner-<uid>` in the temporary directory, one per user, the runner refuses one that is a link or belongs to another user, closes it to other users, and holds the lock (`flock`) of its file `.lock` while it runs, so a second runner on it refuses to start instead of removing the runs of the first; outside Unix, nothing detects it. The directories of runs start with `run-`, and only those are removed at start, a link never followed.
+- **Configuration.** The runner reads the four `RAUN_RUNNER_*` variables of the record only, and refuses another `RAUN_RUNNER_*` one; it logs in JSON at the level info. Its release is the module version of the build when it is one, `dev` otherwise.
+
 ## Deferred
 
 | Topic | Where |
@@ -187,5 +200,5 @@ Choices #39 made within the decisions above, for the owner to confirm in its rev
 - [x] Concurrent claims never return the same job, on SQLite (#37: `internal/adapter/driven/sqlite/jobs_test.go`, `TestClaimsAcrossStores`, and the contract suite).
 - [x] A revoked runner is refused, and a runner of a workspace never claims a job of another (#38: `jobtest.RunnerSuite`, on memory and SQLite; `internal/adapter/driving/web/runners_test.go`; `cmd/raun/runners_test.go`, `TestRunnersThroughTheServer`).
 - [x] An expired or foreign lease is refused, and a result that fails validation stores nothing (#39: `internal/adapter/driving/web/runnerapi_test.go`, `TestTheRoutesOfARun`, `TestAnExpiredLeaseIsRefused`, `TestAResultItsKindRefusesFailsTheJob`; `cmd/raun/runners_test.go`, `TestTheRunnerProtocolThroughTheServer`).
-- [ ] The clone credential is absent from the checkout, the environment of the handler and the logs (#40).
+- [x] The clone credential is absent from the checkout, the environment of the handler and the logs (#40: `cmd/raun/runner_test.go`, `TestTheRunnerRunsAJob`; `internal/adapter/driven/git/checkout_test.go`, `TestFetchOneCommit`).
 - [ ] `make verify` passes (checked at the end of the epic).

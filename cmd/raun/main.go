@@ -14,10 +14,9 @@ import (
 
 // Exit codes of run.
 const (
-	exitOK             = 0
-	exitFailure        = 1
-	exitUsage          = 2
-	exitNotImplemented = exitFailure
+	exitOK      = 0
+	exitFailure = 1
+	exitUsage   = 2
 )
 
 const usage = `Raun builds an evidence-backed knowledge base of a software project.
@@ -27,7 +26,7 @@ Usage:
 
 Commands:
   server    Run the Raun server, configured by RAUN_* variables (see README.md)
-  runner    Run a Raun runner (not implemented yet)
+  runner    Run a Raun runner, configured by RAUN_RUNNER_* variables (see docs/runner.md)
   version   Print the version
   help      Print this help
 `
@@ -59,8 +58,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		defer stop()
 		return runServer(ctx, os.Environ(), stderr, serverDeps{})
 	case "runner":
-		fmt.Fprintf(stderr, "raun %s: not implemented yet\n", args[0])
-		return exitNotImplemented
+		if len(args) > 1 {
+			fmt.Fprintf(stderr, "raun runner: takes no arguments; it reads RAUN_RUNNER_* variables\n\n%s", usage)
+			return exitUsage
+		}
+		return runRunner(os.Environ(), stderr, runnerDeps{})
 	default:
 		fmt.Fprintf(stderr, "raun: unknown command %q\n\n%s", args[0], usage)
 		return exitUsage
