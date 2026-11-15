@@ -85,3 +85,38 @@ func TestRunLogIsBounded(t *testing.T) {
 		t.Error("text was taken after the cut")
 	}
 }
+
+// TestARunLogChunkIsFrozenUntilTaken: a chunk whose answer was lost is sent
+// again the same, under the same number, whatever was written since; what
+// was written goes to the next chunk.
+func TestARunLogChunkIsFrozenUntilTaken(t *testing.T) {
+	l := newRunLog()
+	_, _ = l.Write([]byte("fetching\n"))
+	seq, first, ok := l.take(false)
+	if !ok || seq != 0 || first != "fetching\n" {
+		t.Fatalf("take = %d %q %v", seq, first, ok)
+	}
+	// The answer is lost; the handler writes more.
+	_, _ = l.Write([]byte("running noop\n"))
+	if seq, again, _ := l.take(false); seq != 0 || again != first {
+		t.Fatalf("the chunk sent again = %d %q, want 0 %q", seq, again, first)
+	}
+	l.ack(0)
+	if seq, next, _ := l.take(true); seq != 1 || next != "running noop\n" {
+		t.Errorf("the next chunk = %d %q", seq, next)
+	}
+}
+
+// TestRunLogBoundCountsRedactedText: a secret shorter than [redacted] does
+// not make the log pass its bound.
+func TestRunLogBoundCountsRedactedText(t *testing.T) {
+	l := newRunLog("abc")
+	line := strings.Repeat("abc ", 250) + "\n"
+	for range MaxLog/len(line) + 10 {
+		_, _ = l.Write([]byte(line))
+	}
+	got, _ := drain(l)
+	if len(got) > MaxLog || strings.Count(got, Truncated) != 1 || strings.Contains(got, "abc") {
+		t.Errorf("a redacted log past its bound: %d bytes, %d markers", len(got), strings.Count(got, Truncated))
+	}
+}
