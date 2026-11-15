@@ -495,16 +495,35 @@ func (r *Reader) output(ctx context.Context, dir string, extraEnv []string, args
 // and the options before the subcommand override what the configuration of
 // the repository could make Git run or fetch.
 func (r *Reader) command(ctx context.Context, dir string, extraEnv []string, args ...string) *exec.Cmd {
+	cmd := hardened(ctx, r.git, dir, []string{"-c", "protocol.allow=never"}, args...)
+	// An empty allowlist denies every protocol, over any
+	// protocol.<name>.allow of the repository, which protocol.allow does
+	// not override. It holds on every supported Git, where
+	// GIT_NO_LAZY_FETCH needs 2.44.
+	cmd.Env = append(cmd.Env, "GIT_ALLOW_PROTOCOL=")
+	if r.gitDir != "" {
+		cmd.Env = append(cmd.Env, "GIT_DIR="+r.gitDir)
+	}
+	cmd.Env = append(cmd.Env, extraEnv...)
+	return cmd
+}
+
+// hardened builds a git process with an environment made from nothing and
+// the options that keep hooks, the file system monitor, the pager and
+// replacement objects out, then options, then args. What reaches the
+// network is left to the caller: the Reader denies every protocol, a fetch
+// allows its own.
+func hardened(ctx context.Context, git, dir string, options []string, args ...string) *exec.Cmd {
 	full := []string{
 		"--no-optional-locks",
 		"--no-replace-objects",
 		"-c", "core.hooksPath=" + os.DevNull,
 		"-c", "core.fsmonitor=false",
 		"-c", "core.pager=cat",
-		"-c", "protocol.allow=never",
 	}
+	full = append(full, options...)
 	full = append(full, args...)
-	cmd := exec.CommandContext(ctx, r.git, full...)
+	cmd := exec.CommandContext(ctx, git, full...)
 	cmd.Dir = dir
 	cmd.Env = []string{
 		"GIT_CONFIG_NOSYSTEM=1",
@@ -513,11 +532,6 @@ func (r *Reader) command(ctx context.Context, dir string, extraEnv []string, arg
 		"GIT_ATTR_NOSYSTEM=1",
 		"GIT_NO_REPLACE_OBJECTS=1",
 		"GIT_NO_LAZY_FETCH=1",
-		// An empty allowlist denies every protocol, over any
-		// protocol.<name>.allow of the repository, which protocol.allow
-		// does not override. It holds on every supported Git, where
-		// GIT_NO_LAZY_FETCH needs 2.44.
-		"GIT_ALLOW_PROTOCOL=",
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_OPTIONAL_LOCKS=0",
 		"GIT_LITERAL_PATHSPECS=1",
@@ -526,10 +540,6 @@ func (r *Reader) command(ctx context.Context, dir string, extraEnv []string, arg
 		"XDG_CONFIG_HOME=" + os.DevNull,
 		"LC_ALL=C",
 	}
-	if r.gitDir != "" {
-		cmd.Env = append(cmd.Env, "GIT_DIR="+r.gitDir)
-	}
-	cmd.Env = append(cmd.Env, extraEnv...)
 	return cmd
 }
 

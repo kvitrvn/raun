@@ -10,7 +10,8 @@
 // What this package does not do:
 //   - read or touch any repository other than the fixture;
 //   - clone, fetch or reach the network: a submodule is recorded as a bare
-//     reference to a commit, never populated;
+//     reference to a commit, never populated; Serve serves a fixture on a
+//     loopback address, through git http-backend, for the tests of a fetch;
 //   - serve core tests: a core package builds its inputs in memory, and make
 //     architecture refuses an import of this package from the core.
 //
