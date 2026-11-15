@@ -1,6 +1,6 @@
 # Runners
 
-> Status: decided by the [epic 6 review](implementation/06-jobs-and-runner.md) (#36). Jobs, runs, leases, retry, cancellation and coalescing exist in `internal/core/job` on SQLite since #37, and nothing creates a job in production yet; runners, their tokens and the authentication of `/api/runner/` since #38; the protocol below, the clone credential and the logs since #39: the routes in `internal/adapter/driving/web`, the messages in `internal/adapter/runnerapi`, the long poll and the credentials in `job.Dispatcher`. #40 brings `raun runner`, #41 the screens, #42 the end-to-end test; each updates this page as it lands. `raun runner` still answers that it is not implemented.
+> Status: decided by the [epic 6 review](implementation/06-jobs-and-runner.md) (#36). Jobs, runs, leases, retry, cancellation and coalescing exist in `internal/core/job` on SQLite since #37, and nothing creates a job in production yet; runners, their tokens and the authentication of `/api/runner/` since #38; the protocol below, the clone credential and the logs since #39: the routes in `internal/adapter/driving/web`, the messages in `internal/adapter/runnerapi`, the long poll and the credentials in `job.Dispatcher`; `raun runner` since #40: its loop in `job.Loop`, the client of the protocol in `internal/adapter/driven/runnerclient`, the fetch of a commit in `internal/adapter/driven/git`. #41 brings the screens, #42 the end-to-end test; each updates this page as it lands.
 
 A runner is a `raun runner` process that pulls jobs from a Raun server over HTTP, fetches the commit of each job with a short-lived credential, runs it, and reports back. It runs where its owner wants, behind a NAT included: the server never connects to it. It holds what the server never holds, such as LLM credentials (from epic 9), and receives nothing but what its job needs. Why each rule is what it is: [the record](implementation/06-jobs-and-runner.md).
 
@@ -16,7 +16,10 @@ The screen shows the token of the runner once. Raun keeps only its SHA-256: a lo
 
 ## Run a runner
 
+`raun runner` is the same binary as the server (`make build` gives `bin/raun`). It needs Git 2.32 or later, with `git` in its `PATH`, and checks it at start. Put the token the Runners screen showed in a file only the user of the runner reads:
+
 ```sh
+install -m 0600 /dev/null /etc/raun/runner-token   # then write the token into it
 RAUN_RUNNER_SERVER=https://raun.example.com \
 RAUN_RUNNER_TOKEN_FILE=/etc/raun/runner-token \
 raun runner
@@ -29,18 +32,22 @@ raun runner
 | `RAUN_RUNNER_CAPACITY` | `1` | Jobs at a time, 1 to 64 |
 | `RAUN_RUNNER_WORKDIR` | `raun-runner` in the temporary directory of the system | Where the directory of each run is created and removed; created if missing |
 
-The server ignores every `RAUN_RUNNER_*` variable, so one environment can hold both. The runner needs Git 2.32 or later and stops at start otherwise.
+The server ignores every `RAUN_RUNNER_*` variable, and the runner every other one, so one environment can hold both; a `RAUN_RUNNER_*` variable the runner does not know stops it at start, named without its value. The runner logs one JSON record per line on standard error, its configuration first, the token as `[redacted]`.
 
-On `SIGINT` or `SIGTERM` the runner stops claiming and finishes its current jobs, each within its deadline; a second signal stops it at once, and the leases of its jobs expire.
+The work directory belongs to one runner. At start, the runner creates it if it is missing, and removes the directories of runs a killed runner left there, those whose name starts with `run-`, and nothing else; a link is removed, never followed.
+
+On `SIGINT` or `SIGTERM` the runner stops claiming and finishes its current jobs, each within its deadline; a second signal stops it at once, and the leases of its jobs expire. It then exits with `0`. It exits with `1` when its configuration is invalid, when Git is missing or older than 2.32, and when the server refuses it: an unknown or revoked token (`401`), or a protocol the server does not speak (`400`), which stops it at once, its jobs abandoned.
 
 ## A job
 
-1. The runner claims a job; the answer gives the run, its lease token, its deadline, the job and a clone credential.
-2. It creates an empty directory for the run, fetches the one commit of the job with the credential, and forgets the credential.
-3. It runs the handler of the kind, and sends a heartbeat every 15 seconds and the log as it comes.
-4. It sends the result, then removes the directory, whatever the outcome.
+1. The runner claims a job when a slot is free; the answer gives the run, its lease token, its deadline, the job and a clone credential. A claim that fails for want of a server is tried again after 1 second, then a wait doubled each time, up to 30 seconds.
+2. It creates an empty directory for the run, fetches the one commit of the job with the credential, three tries 1 then 2 seconds apart, and forgets the credential: the handler never sees it. Three failed tries fail the job: `the commit could not be fetched`.
+3. It runs the handler of the kind, and sends a heartbeat every 15 seconds, from the claim on, the fetch included, and the log every 2 seconds.
+4. It sends the rest of the log, then the result, and removes the directory, whatever the outcome. A result that gets no answer is sent again, the same, 1 second later, then a wait doubled each time up to 10 seconds, while the lease and the deadline hold: a failure of the server or the network does not lose it.
 
-A heartbeat answered `409`, or that says the job is cancelled, stops the job at once: its result would be refused. A job still running at its deadline is stopped and fails.
+A job of a kind the runner has no handler for fails; a handler that fails or panics fails its job with `the handler failed`, and what it said stays in the log of the runner, never in the log of the run. `noop` succeeds with `nothing to do`.
+
+A heartbeat answered `409`, or that says the job is cancelled, stops the job at once, and nothing more is sent for it: its result would be refused. A heartbeat that gets no answer is tried again at the next beat, until the lease the server last gave has passed, which stops the job too. A job still running at its deadline is stopped, and the server fails it.
 
 The lease lasts 60 seconds. A run whose lease expires is lost, and its job goes back to the queue, three runs at most; a failure the runner reports is final. A job no runner takes fails after 24 hours in the queue.
 
@@ -133,8 +140,8 @@ The commit cannot be fetched after three tries (the credential refused, the comm
 
 ## The clone credential
 
-On GitHub, an installation token of the App for the repository of the job alone, with Contents read, which lasts one hour at most. The server mints it for the run at the claim, apart from the tokens it keeps for its own reads, holds it in memory only, and revokes it when the run ends: at once for a result, accepted or refused, and for a heartbeat, a log or a result that finds the run cancelled or no longer current; within 15 seconds, at the next pass of the reaper, for a run ended otherwise, by its lease, its deadline, a cancellation, the revocation of its runner or the deactivation of its repository. A revocation that fails is tried again at each pass until the credential expires. A job cancelled while its credential is minted is not given, and the credential is revoked at once. The runner passes it to the one `git fetch --depth 1` of the commit as an HTTP header, through the environment of that Git process alone, never on its command line, in a file or in the configuration of the checkout, and forgets it before the handler starts. It reads the whole repository until then: a runner is trusted with the repositories of the jobs it takes, no more. The head commit of a pull request from a fork is fetched from the base repository.
+On GitHub, an installation token of the App for the repository of the job alone, with Contents read, which lasts one hour at most. The server mints it for the run at the claim, apart from the tokens it keeps for its own reads, holds it in memory only, and revokes it when the run ends: at once for a result, accepted or refused, and for a heartbeat, a log or a result that finds the run cancelled or no longer current; within 15 seconds, at the next pass of the reaper, for a run ended otherwise, by its lease, its deadline, a cancellation, the revocation of its runner or the deactivation of its repository. A revocation that fails is tried again at each pass until the credential expires. A job cancelled while its credential is minted is not given, and the credential is revoked at once. The runner passes it to the one `git fetch --depth 1` of the commit as an HTTP Basic header, through the environment of that Git process alone (`GIT_CONFIG_COUNT`, `http.extraHeader`), never on its command line, in a file or in the configuration of the checkout, and forgets it before the handler starts. The checkout is a bare repository holding that commit, fetched by its hash: the forge must let a reachable commit be fetched by its hash, as GitHub does. Git runs with no user or system configuration, no hook, no template, no credential helper, no redirect and no submodule, the objects received checked, and nothing it writes reaches the log of the run. It reads the whole repository until then: a runner is trusted with the repositories of the jobs it takes, no more. The head commit of a pull request from a fork is fetched from the base repository.
 
 ## Logs
 
-A log is lines of text: the steps of the runner and what the handler of the job writes. It never holds a credential, a URL holding one, the environment, a declared secret or the content of the repository; the runner redacts the clone credential and the secrets it knows. A run keeps 1 MiB of log, cut at a character and ending with a line `(truncated)` beyond; the numbers of later chunks are still taken, their text dropped. Text that is not UTF-8 is refused with `400`. The page of a run shows it as escaped text to whoever the forge lets read the repository, polled every 2 seconds while the run lasts (#41), and keeps it 30 days after the run ended, purged hourly with the events.
+A log is lines of text: the steps of the runner and what the handler of the job writes. It never holds a credential, a URL holding one, the environment, a declared secret or the content of the repository; the runner redacts the clone credential and the secrets it knows, in every form a header shows them and across two writes. The steps the runner writes are `fetching <commit>`, `fetched` or `the commit could not be fetched, try n of 3`, `running <kind>`, and `<outcome>: <summary>`. It sends the log in chunks of 64 KiB at most, each kept until the server took it. A run keeps 1 MiB of log, cut at a character and ending with a line `(truncated)` beyond; the numbers of later chunks are still taken, their text dropped. Text that is not UTF-8 is refused with `400`. The page of a run shows it as escaped text to whoever the forge lets read the repository, polled every 2 seconds while the run lasts (#41), and keeps it 30 days after the run ended, purged hourly with the events.
