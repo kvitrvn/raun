@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,8 +38,18 @@ func addRepository(t *testing.T, s *Store, workspace, forge, id string) {
 }
 
 func jobFixture(t *testing.T) jobtest.Fixture {
-	s, _ := openMigrated(t)
+	var queued atomic.Int64
+	path := filepath.Join(t.TempDir(), "raun.db")
+	s, err := Open(context.Background(), path, Options{Queued: func() { queued.Add(1) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	if err := s.Migrate(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
 	return jobtest.Fixture{
+		Queued:  func() int { return int(queued.Load()) },
 		Store:   s.Jobs(),
 		Runners: s.Runners(),
 		AddWorkspace: func(t *testing.T, w job.Workspace) {
@@ -247,6 +259,43 @@ func TestADeliveryRecordsItsJobs(t *testing.T) {
 	}
 	if got := jobsOf(t, s, "d1"); len(got) != 1 {
 		t.Errorf("the purge deleted the jobs: %+v", got)
+	}
+}
+
+// TestDeliveryJobsWakeTheClaims: the jobs a delivery queues in its own
+// transaction tell the notifier once committed; a delivery that queues
+// none, or fails, does not.
+func TestDeliveryJobsWakeTheClaims(t *testing.T) {
+	ctx := context.Background()
+	var queued atomic.Int64
+	s, err := Open(ctx, filepath.Join(t.TempDir(), "raun.db"), Options{Queued: func() { queued.Add(1) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	if err := s.Migrate(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	ws := strings.Repeat("0", 30) + "w1"
+	addRepository(t, s, ws, "github", "2001")
+	request := repository.JobRequest{Kind: "noop", Commit: strings.Repeat("c", 40), Ref: "refs/heads/main"}
+	for _, tt := range []struct {
+		delivery string
+		result   repository.Result
+		requests []repository.JobRequest
+		want     int64
+	}{
+		{"d1", repository.ResultRecorded, []repository.JobRequest{{Kind: "check", Commit: request.Commit}}, 0},
+		{"d2", repository.ResultRecorded, nil, 0},
+		{"d3", repository.ResultIgnored, []repository.JobRequest{request}, 0},
+		{"d4", repository.ResultRecorded, []repository.JobRequest{request}, 1},
+	} {
+		before := queued.Load()
+		k, row := deliveryRow(tt.delivery, "2001", tt.result)
+		_, _ = s.Repositories().Record(ctx, k, row, tt.requests)
+		if got := queued.Load() - before; got != tt.want {
+			t.Errorf("%s told %d times, want %d", tt.delivery, got, tt.want)
+		}
 	}
 }
 

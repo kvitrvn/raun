@@ -115,12 +115,14 @@ func insertJob(ctx context.Context, tx *sql.Tx, j job.Job) error {
 }
 
 func (s Jobs) Enqueue(ctx context.Context, j job.Job) error {
-	return s.s.write(ctx, func(tx *sql.Tx) error {
+	err := s.s.write(ctx, func(tx *sql.Tx) error {
 		if err := insertJob(ctx, tx, j); err != nil {
 			return fmt.Errorf("enqueue job: %w", err)
 		}
 		return nil
 	})
+	s.s.tellQueued(err == nil)
+	return err
 }
 
 // sweep applies the rules of job.Store.Sweep in tx at now.
@@ -215,21 +217,23 @@ func (s Jobs) Sweep(ctx context.Context, now time.Time) (int, error) {
 		}
 		return nil
 	})
+	s.s.tellQueued(err == nil && n > 0)
 	return n, err
 }
 
 func (s Jobs) Claim(ctx context.Context, c job.Claimant, now time.Time) (job.Claimed, error) {
 	now = now.UTC()
 	var out job.Claimed
-	found := false
+	found, swept := false, 0
 	err := s.s.write(ctx, func(tx *sql.Tx) error {
 		var err error
-		out, found, err = claimIn(ctx, tx, c, now)
+		out, found, swept, err = claimIn(ctx, tx, c, now)
 		return err
 	})
 	if err != nil {
 		return job.Claimed{}, err
 	}
+	s.s.tellQueued(swept > 0)
 	if !found {
 		return job.Claimed{}, job.ErrNoJob
 	}
@@ -238,14 +242,16 @@ func (s Jobs) Claim(ctx context.Context, c job.Claimant, now time.Time) (job.Cla
 
 // claimIn applies the rules of job.Store.Claim in tx: it sweeps, then
 // starts the run of the first job c may take, and reports whether there was
-// one. What the sweep ended is kept either way.
-func claimIn(ctx context.Context, tx *sql.Tx, c job.Claimant, now time.Time) (job.Claimed, bool, error) {
-	if _, err := sweep(ctx, tx, now); err != nil {
-		return job.Claimed{}, false, fmt.Errorf("claim job: %w", err)
+// one, and how many jobs the sweep changed. What the sweep ended is kept
+// either way.
+func claimIn(ctx context.Context, tx *sql.Tx, c job.Claimant, now time.Time) (job.Claimed, bool, int, error) {
+	swept, err := sweep(ctx, tx, now)
+	if err != nil {
+		return job.Claimed{}, false, 0, fmt.Errorf("claim job: %w", err)
 	}
 	kinds := job.KindsFor(c.Capabilities)
 	if len(kinds) == 0 {
-		return job.Claimed{}, false, nil
+		return job.Claimed{}, false, swept, nil
 	}
 	query := `SELECT ` + jobColumns + ` FROM jobs WHERE state = 'queued' AND not_before <= ? AND kind IN (?` +
 		strings.Repeat(", ?", len(kinds)-1) + `)`
@@ -260,25 +266,25 @@ func claimIn(ctx context.Context, tx *sql.Tx, c job.Claimant, now time.Time) (jo
 	query += ` ORDER BY priority, created_at, id LIMIT 1`
 	j, err := scanJob(tx.QueryRowContext(ctx, query, args...))
 	if errors.Is(err, sql.ErrNoRows) {
-		return job.Claimed{}, false, nil
+		return job.Claimed{}, false, swept, nil
 	}
 	if err != nil {
-		return job.Claimed{}, false, fmt.Errorf("claim job: %w", err)
+		return job.Claimed{}, false, swept, fmt.Errorf("claim job: %w", err)
 	}
 	run, token, hash, err := job.Start(rand.Reader, j, c, now)
 	if err != nil {
-		return job.Claimed{}, false, fmt.Errorf("claim job: %w", err)
+		return job.Claimed{}, false, swept, fmt.Errorf("claim job: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO runs (id, job, runner, token_hash, started_at, lease_expires_at, deadline)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`, run.ID, run.Job, run.Runner, hash,
 		formatTime(run.StartedAt), formatTime(run.LeaseExpires), formatTime(run.Deadline)); err != nil {
-		return job.Claimed{}, false, fmt.Errorf("claim job: %w", err)
+		return job.Claimed{}, false, swept, fmt.Errorf("claim job: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE jobs SET state = 'running' WHERE id = ?`, j.ID); err != nil {
-		return job.Claimed{}, false, fmt.Errorf("claim job: %w", err)
+		return job.Claimed{}, false, swept, fmt.Errorf("claim job: %w", err)
 	}
 	j.State = job.StateRunning
-	return job.Claimed{Job: j, Run: run, Token: token}, true, nil
+	return job.Claimed{Job: j, Run: run, Token: token}, true, swept, nil
 }
 
 // lookup returns the run with this identifier in tx when token is its own;
@@ -400,6 +406,7 @@ func (s Jobs) Release(ctx context.Context, run, token string, now time.Time) err
 		if !r.Open() {
 			return job.ErrStaleLease
 		}
+		// Its log, if any, goes with it (ON DELETE CASCADE).
 		if _, err := tx.ExecContext(ctx, `DELETE FROM runs WHERE id = ?`, r.ID); err != nil {
 			return fmt.Errorf("release run: %w", err)
 		}
@@ -515,4 +522,96 @@ func (s Jobs) Runs(ctx context.Context, id string) ([]job.Run, error) {
 		return rows.Err()
 	})
 	return out, err
+}
+
+func (s Jobs) Run(ctx context.Context, id string) (job.Run, error) {
+	var out job.Run
+	err := s.s.read(ctx, func(tx *sql.Tx) error {
+		r, err := scanRun(tx.QueryRowContext(ctx, `SELECT `+runColumns+` FROM runs WHERE id = ?`, id))
+		if errors.Is(err, sql.ErrNoRows) {
+			return job.ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("read run: %w", err)
+		}
+		out = r
+		return nil
+	})
+	return out, err
+}
+
+// logIn returns the log of the run with this identifier in tx.
+func logIn(ctx context.Context, tx *sql.Tx, run string) (job.Log, error) {
+	var l job.Log
+	var cut int
+	err := tx.QueryRowContext(ctx, `SELECT next_seq, cut, text FROM run_logs WHERE run = ?`, run).Scan(&l.Next, &cut, &l.Text)
+	if errors.Is(err, sql.ErrNoRows) {
+		return job.Log{}, nil
+	}
+	if err != nil {
+		return job.Log{}, err
+	}
+	l.Cut = cut == 1
+	return l, nil
+}
+
+func (s Jobs) AppendLog(ctx context.Context, run, token string, seq int, text string, now time.Time) error {
+	// Refused before the write lock is taken.
+	if err := job.CheckChunk(seq, text); err != nil {
+		return err
+	}
+	now = now.UTC()
+	return s.s.write(ctx, func(tx *sql.Tx) error {
+		r, err := lookup(ctx, tx, run, token)
+		if err != nil {
+			return err
+		}
+		if !r.Holds(now) {
+			return job.ErrStaleLease
+		}
+		l, err := logIn(ctx, tx, run)
+		if err != nil {
+			return fmt.Errorf("append log: %w", err)
+		}
+		next, err := l.Append(seq, text)
+		if err != nil || next.Next == l.Next {
+			return err
+		}
+		cut := 0
+		if next.Cut {
+			cut = 1
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO run_logs (run, next_seq, cut, text) VALUES (?, ?, ?, ?)
+			ON CONFLICT (run) DO UPDATE SET next_seq = excluded.next_seq, cut = excluded.cut, text = excluded.text`,
+			run, next.Next, cut, next.Text); err != nil {
+			return fmt.Errorf("append log: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s Jobs) Log(ctx context.Context, run string) (job.Log, error) {
+	var out job.Log
+	err := s.s.read(ctx, func(tx *sql.Tx) error {
+		var err error
+		if out, err = logIn(ctx, tx, run); err != nil {
+			return fmt.Errorf("read log: %w", err)
+		}
+		return nil
+	})
+	return out, err
+}
+
+func (s Jobs) PurgeLogs(ctx context.Context, before time.Time) (int, error) {
+	n := 0
+	err := s.s.write(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `DELETE FROM run_logs WHERE run IN
+			(SELECT id FROM runs WHERE ended_at IS NOT NULL AND ended_at < ?)`, formatTime(before.UTC()))
+		if err != nil {
+			return fmt.Errorf("purge logs: %w", err)
+		}
+		n = affected(res)
+		return nil
+	})
+	return n, err
 }

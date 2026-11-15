@@ -56,4 +56,19 @@ type Store interface {
 	// Runs returns the runs of the job with this identifier, oldest
 	// first; none for an unknown job.
 	Runs(ctx context.Context, job string) ([]Run, error)
+	// Run returns the run with this identifier; ErrNotFound if none, such
+	// as a run removed by Release.
+	Run(ctx context.Context, id string) (Run, error)
+	// AppendLog appends to the log of the run with this identifier, whose
+	// lease token is token, the chunk numbered seq holding text, by the
+	// rules of Log.Append, while the run holds its lease at now. ErrInvalidLog
+	// and a SequenceError as Log.Append; ErrCancelled and ErrStaleLease as
+	// for Heartbeat. Nothing changes on an error.
+	AppendLog(ctx context.Context, run, token string, seq int, text string, now time.Time) error
+	// Log returns the log of the run with this identifier; an empty one
+	// for a run that sent none, or an unknown run.
+	Log(ctx context.Context, run string) (Log, error)
+	// PurgeLogs deletes the logs of the runs that ended before before, and
+	// returns how many it deleted.
+	PurgeLogs(ctx context.Context, before time.Time) (int, error)
 }

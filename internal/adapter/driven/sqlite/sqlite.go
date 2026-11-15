@@ -27,6 +27,11 @@ type Options struct {
 	// ReadConns is the number of connections reads run on, in parallel with
 	// the one writer.
 	ReadConns int
+	// Queued, when set, is told after each commit that may have made a job
+	// claimable: a job queued, by itself or with a delivery, or sent back
+	// to the queue by a sweep or the revocation of its runner. The server
+	// gives the notifier that wakes the claims waiting for a job.
+	Queued func()
 }
 
 // Store is the knowledge store on one SQLite database file. It holds two
@@ -36,6 +41,8 @@ type Store struct {
 	reader *sql.DB
 	// latest is the version of the last embedded migration.
 	latest int
+	// queued is Options.Queued; nil tells nobody.
+	queued func()
 }
 
 var _ knowledge.Store = (*Store)(nil)
@@ -84,7 +91,7 @@ func Open(ctx context.Context, path string, opts Options) (*Store, error) {
 		_ = writer.Close()
 		return nil, fmt.Errorf("open database %s: readers: %w", path, err)
 	}
-	return &Store{writer: writer, reader: reader, latest: migrations[len(migrations)-1].version}, nil
+	return &Store{writer: writer, reader: reader, latest: migrations[len(migrations)-1].version, queued: opts.Queued}, nil
 }
 
 // CheckPath reports whether path is a database path Open accepts: a plain,
@@ -145,6 +152,14 @@ func (s *Store) write(ctx context.Context, fn func(*sql.Tx) error) (err error) {
 		return fmt.Errorf("commit: %w", err)
 	}
 	return nil
+}
+
+// tellQueued tells Options.Queued, after a commit, when changed: a job may
+// have become claimable.
+func (s *Store) tellQueued(changed bool) {
+	if changed && s.queued != nil {
+		s.queued()
+	}
 }
 
 // read runs fn in a read transaction on the read pool, so that every query of

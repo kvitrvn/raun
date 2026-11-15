@@ -66,22 +66,44 @@ func RunnerSuite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 	t.Run("authenticate by the hash of the token", func(t *testing.T) {
 		_, rs := setup(t)
 		r, _, hash := createRunner(t, rs, "builder", "", at(0))
-		got, err := rs.Authenticate(ctx, hash, at(time.Minute))
+		got, err := rs.Authenticate(ctx, hash, "", at(time.Minute))
 		if err != nil || got.ID != r.ID || !got.LastContact.Equal(at(time.Minute)) {
 			t.Fatalf("Authenticate = %+v, %v", got, err)
 		}
 		// Within ContactEvery the last contact stays; past it, it moves.
-		if got, _ := rs.Authenticate(ctx, hash, at(time.Minute+job.ContactEvery-time.Second)); !got.LastContact.Equal(at(time.Minute)) {
+		if got, _ := rs.Authenticate(ctx, hash, "", at(time.Minute+job.ContactEvery-time.Second)); !got.LastContact.Equal(at(time.Minute)) {
 			t.Errorf("the last contact moved within ContactEvery: %s", got.LastContact)
 		}
-		if got, _ := rs.Authenticate(ctx, hash, at(time.Minute+job.ContactEvery)); !got.LastContact.Equal(at(time.Minute + job.ContactEvery)) {
+		if got, _ := rs.Authenticate(ctx, hash, "", at(time.Minute+job.ContactEvery)); !got.LastContact.Equal(at(time.Minute + job.ContactEvery)) {
 			t.Errorf("the last contact did not move: %s", got.LastContact)
 		}
 		if stored, _ := rs.Runner(ctx, r.ID); !stored.LastContact.Equal(at(time.Minute + job.ContactEvery)) {
 			t.Errorf("the stored last contact: %s", stored.LastContact)
 		}
-		if _, err := rs.Authenticate(ctx, job.HashToken("another"), at(time.Minute)); !errors.Is(err, job.ErrUnauthenticated) {
+		if _, err := rs.Authenticate(ctx, job.HashToken("another"), "", at(time.Minute)); !errors.Is(err, job.ErrUnauthenticated) {
 			t.Errorf("an unknown token = %v", err)
+		}
+	})
+
+	t.Run("authenticate records the release the runner says", func(t *testing.T) {
+		_, rs := setup(t)
+		r, _, hash := createRunner(t, rs, "builder", "", at(0))
+		if _, err := rs.Authenticate(ctx, hash, "1.2.0", at(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		if stored, _ := rs.Runner(ctx, r.ID); stored.Release != "1.2.0" || !stored.LastContact.Equal(at(time.Minute)) {
+			t.Errorf("after the first request: release %q, last contact %s", stored.Release, stored.LastContact)
+		}
+		// Another release is recorded at once, within ContactEvery; no
+		// release keeps the one stored.
+		if _, err := rs.Authenticate(ctx, hash, "1.3.0", at(time.Minute+time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := rs.Authenticate(ctx, hash, "", at(time.Minute+job.ContactEvery+time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if stored, _ := rs.Runner(ctx, r.ID); stored.Release != "1.3.0" || !stored.LastContact.Equal(at(time.Minute+job.ContactEvery+time.Second)) {
+			t.Errorf("after an upgrade: release %q, last contact %s", stored.Release, stored.LastContact)
 		}
 	})
 
@@ -100,10 +122,10 @@ func RunnerSuite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		if err := rs.RotateRunner(ctx, r.ID, hash); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := rs.Authenticate(ctx, old, at(time.Second)); !errors.Is(err, job.ErrUnauthenticated) {
+		if _, err := rs.Authenticate(ctx, old, "", at(time.Second)); !errors.Is(err, job.ErrUnauthenticated) {
 			t.Errorf("the old token after a rotation = %v", err)
 		}
-		if _, err := rs.Authenticate(ctx, hash, at(time.Second)); err != nil {
+		if _, err := rs.Authenticate(ctx, hash, "", at(time.Second)); err != nil {
 			t.Errorf("the new token = %v", err)
 		}
 		if _, err := s.Heartbeat(ctx, c.Run.ID, c.Token, at(time.Second)); err != nil {
@@ -143,7 +165,7 @@ func RunnerSuite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		if got, _ := rs.Runner(ctx, r.ID); !got.Revoked() || !got.RevokedAt.Equal(at(5*time.Second)) {
 			t.Errorf("the revoked runner: %+v", got)
 		}
-		if _, err := rs.Authenticate(ctx, hash, at(6*time.Second)); !errors.Is(err, job.ErrUnauthenticated) {
+		if _, err := rs.Authenticate(ctx, hash, "", at(6*time.Second)); !errors.Is(err, job.ErrUnauthenticated) {
 			t.Errorf("Authenticate of a revoked runner = %v", err)
 		}
 		if _, err := rs.ClaimFor(ctx, r.ID, at(6*time.Second)); !errors.Is(err, job.ErrUnauthenticated) {

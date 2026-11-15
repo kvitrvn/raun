@@ -14,9 +14,9 @@ import (
 var _ repository.EventStore = Repositories{}
 
 func (s Repositories) Record(ctx context.Context, k repository.Key, row *repository.LoggedEvent, requests []repository.JobRequest) (bool, error) {
-	logged := false
+	logged, queued := false, false
 	err := s.s.write(ctx, func(tx *sql.Tx) error {
-		logged = false
+		logged, queued = false, false
 		// The write transaction holds the write lock: what the check sees
 		// stays true until the insert, and the unique keys hold anyway.
 		var known int
@@ -59,11 +59,13 @@ func (s Repositories) Record(ctx context.Context, k repository.Key, row *reposit
 		if err := enqueueRequests(ctx, tx, k, row, requests); err != nil {
 			return fmt.Errorf("record delivery: %w", err)
 		}
+		queued = len(requests) > 0
 		return nil
 	})
 	if err != nil {
 		return false, err
 	}
+	s.s.tellQueued(queued)
 	return logged, nil
 }
 

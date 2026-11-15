@@ -57,8 +57,8 @@ type Runner struct {
 	// LastContact is when it last authenticated, written every
 	// ContactEvery at most; zero until then.
 	LastContact time.Time
-	// Release is the release it last said it runs; empty until the
-	// protocol reads it.
+	// Release is the release it last said it runs, in the User-Agent of
+	// its requests; empty until it said one.
 	Release string
 	// RevokedAt is when it was revoked; zero while it is not.
 	RevokedAt time.Time
@@ -177,12 +177,13 @@ type RunnerStore interface {
 	// runner revoked already is left as it is. ErrNoRunner.
 	RevokeRunner(ctx context.Context, id string, at time.Time) (int, error)
 	// Authenticate returns the runner whose token has hash, and writes now
-	// as its last contact when the one stored is ContactEvery old or more;
-	// that write is advisory, and failing it fails nothing. The last
-	// contact it returns may lag behind the stored one, written by a
-	// concurrent request. ErrUnauthenticated for no runner, or a revoked
-	// one.
-	Authenticate(ctx context.Context, hash string, now time.Time) (Runner, error)
+	// as its last contact, with release when it is not empty, when the
+	// contact stored is ContactEvery old or more or the release stored is
+	// another one; that write is advisory, and failing it fails nothing.
+	// The last contact and the release it returns may lag behind the
+	// stored ones, written by a concurrent request. ErrUnauthenticated for
+	// no runner, or a revoked one.
+	Authenticate(ctx context.Context, hash, release string, now time.Time) (Runner, error)
 	// ClaimFor claims for the runner with this identifier as Store.Claim
 	// does, with the scope and the capabilities the store holds for it,
 	// read in the same operation: a runner revoked or narrowed before
@@ -337,11 +338,32 @@ func (g *Registry) Revoke(ctx context.Context, actor, id string) (Runner, int, e
 // hexadecimal digits, and anything longer is refused before it is hashed.
 const MaxToken = 128
 
-// Authenticate returns the runner whose token is token.
+// MaxRelease bounds the release a runner says it runs, in bytes.
+const MaxRelease = 64
+
+// ValidRelease reports whether release is one a runner may say it runs:
+// 1 to MaxRelease letters, digits and the characters . + - _.
+func ValidRelease(release string) bool {
+	if release == "" || len(release) > MaxRelease {
+		return false
+	}
+	for _, r := range release {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '.' && r != '+' && r != '-' && r != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+// Authenticate returns the runner whose token is token, recording release,
+// the release it says it runs, unless it is not a ValidRelease.
 // ErrUnauthenticated, the same whatever the reason.
-func (g *Registry) Authenticate(ctx context.Context, token string) (Runner, error) {
+func (g *Registry) Authenticate(ctx context.Context, token, release string) (Runner, error) {
 	if token == "" || len(token) > MaxToken {
 		return Runner{}, ErrUnauthenticated
 	}
-	return g.store.Authenticate(ctx, HashToken(token), g.now())
+	if !ValidRelease(release) {
+		release = ""
+	}
+	return g.store.Authenticate(ctx, HashToken(token), release, g.now())
 }

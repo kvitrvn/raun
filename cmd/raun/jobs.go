@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/kvitrvn/raun/internal/adapter/driving/web"
 	"github.com/kvitrvn/raun/internal/core/job"
 )
 
@@ -14,11 +15,35 @@ type sweeper interface {
 	Sweep(ctx context.Context, now time.Time) (int, error)
 }
 
-// sweepEvery sweeps the queue on each tick until done, telling swept, when
-// set, what each sweep did. A failure is logged and the next tick tries
-// again; the stop of the server cancels ctx, and with it a sweep in
-// progress.
-func sweepEvery(ctx context.Context, logger *slog.Logger, s sweeper, ticks <-chan time.Time, swept func(int, error), done <-chan struct{}) {
+// credentialReaper revokes the clone credentials of the runs that ended:
+// job.Dispatcher.Reap.
+type credentialReaper interface {
+	Reap(ctx context.Context) int
+}
+
+// reaper is d as sweepEvery takes it: nil without a dispatcher, and not an
+// interface holding a nil pointer.
+func reaper(d *job.Dispatcher) credentialReaper {
+	if d == nil {
+		return nil
+	}
+	return d
+}
+
+// runnerDispatcher is d as the web handler takes it: nil without one.
+func runnerDispatcher(d *job.Dispatcher) web.RunnerDispatcher {
+	if d == nil {
+		return nil
+	}
+	return d
+}
+
+// sweepEvery sweeps the queue on each tick until done, then revokes the
+// clone credentials of the runs that ended, with reap when set, telling
+// swept, when set, what each sweep did. A failure is logged and the next
+// tick tries again; the stop of the server cancels ctx, and with it a sweep
+// in progress.
+func sweepEvery(ctx context.Context, logger *slog.Logger, s sweeper, reap credentialReaper, ticks <-chan time.Time, swept func(int, error), done <-chan struct{}) {
 	for {
 		select {
 		case <-done:
@@ -32,6 +57,11 @@ func sweepEvery(ctx context.Context, logger *slog.Logger, s sweeper, ticks <-cha
 				logger.Warn("sweep the queue of jobs", slog.String("error", err.Error()))
 			case n > 0:
 				logger.Info("jobs ended or sent back to the queue", slog.Int("jobs", n))
+			}
+			if reap != nil {
+				if r := reap.Reap(ctx); r > 0 {
+					logger.Info("clone credentials of ended runs let go", slog.Int("credentials", r))
+				}
 			}
 			if swept != nil {
 				swept(n, err)

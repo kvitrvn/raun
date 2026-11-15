@@ -21,6 +21,9 @@ type Fixture struct {
 	Runners       job.RunnerStore
 	AddWorkspace  func(t *testing.T, w job.Workspace)
 	AddRepository func(t *testing.T, workspace, forge, repository string)
+	// Queued tells how many times the store told its notifier that a job
+	// may have become claimable.
+	Queued func() int
 }
 
 // Identifiers of the suite: 32 hexadecimal digits, as workspaces have.
@@ -481,6 +484,9 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 			t.Errorf("a running job was superseded: %+v", got)
 		}
 	})
+
+	logCases(t, setup)
+	wakeCases(t, newFixture)
 }
 
 func ok() job.Result {

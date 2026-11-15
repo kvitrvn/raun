@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -80,8 +81,12 @@ type Options struct {
 	// redacted, for the Instance settings screen.
 	Settings []Setting
 	// Runners manages the runners and authenticates the runner API; nil
-	// means no runner API and no Runners screen. It needs Administrators.
+	// means no runner API and no Runners screen. It needs Administrators
+	// and Dispatcher.
 	Runners RunnerRegistry
+	// Dispatcher serves the protocol of the runner API; required with
+	// Runners.
+	Dispatcher RunnerDispatcher
 	// Now gives the time of a request; nil means time.Now.
 	Now func() time.Time
 	// Random is the source of session identifiers and CSRF tokens; nil
@@ -107,6 +112,7 @@ type Server struct {
 	forgeName      string
 	administrators AdministratorChecker
 	runners        RunnerRegistry
+	dispatcher     RunnerDispatcher
 	settings       []Setting
 	// patterns are the routes of the server, as route registered them:
 	// their first segments are names of the namespace kept for Raun.
@@ -116,6 +122,10 @@ type Server struct {
 	bypass   *bypass
 	assets   *assets
 	stopping atomic.Bool
+	// stop is closed by BeginShutdown: the claims waiting for a job answer
+	// that there is none, so the stop does not wait for them.
+	stop     chan struct{}
+	stopOnce sync.Once
 	app      *http.ServeMux
 	handler  http.Handler
 }
@@ -158,6 +168,9 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 	if opts.Runners != nil && (opts.Administrators == nil || opts.Login == nil) {
 		return nil, errors.New("web: Options.Runners is set without Administrators and a Login")
 	}
+	if opts.Runners != nil && opts.Dispatcher == nil {
+		return nil, errors.New("web: Options.Dispatcher is nil with Runners")
+	}
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
@@ -196,6 +209,8 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 		administrators: opts.Administrators,
 		settings:       slices.Clone(opts.Settings),
 		runners:        opts.Runners,
+		dispatcher:     opts.Dispatcher,
+		stop:           make(chan struct{}),
 		now:            opts.Now,
 		random:         opts.Random,
 		bypass:         skip,
@@ -249,9 +264,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // BeginShutdown makes /readyz answer 503 from now on, without asking the
 // database, so that whatever routes traffic stops sending requests while the
-// server drains.
+// server drains, and ends the claims that wait for a job.
 func (s *Server) BeginShutdown() {
 	s.stopping.Store(true)
+	s.stopOnce.Do(func() { close(s.stop) })
 }
 
 // route registers a route of the server: h on mux for pattern, recorded in

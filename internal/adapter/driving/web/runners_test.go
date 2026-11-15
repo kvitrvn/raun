@@ -7,42 +7,87 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/kvitrvn/raun/internal/core/job"
 	"github.com/kvitrvn/raun/internal/core/job/jobtest"
+	"github.com/kvitrvn/raun/internal/forgetest"
 )
 
 // failingRegistry is a registry whose store cannot authenticate.
 type failingRegistry struct{ *job.Registry }
 
-func (failingRegistry) Authenticate(context.Context, string) (job.Runner, error) {
+func (failingRegistry) Authenticate(context.Context, string, string) (job.Runner, error) {
 	return job.Runner{}, errors.New("database locked")
 }
 
-// newRunnerServer is a login server with an Instance screen and runners on
-// a memory store, with the workspace acme.
-func newRunnerServer(t *testing.T, wrap func(*job.Registry) RunnerRegistry) (*loginServer, *adminSwitch, *job.Registry) {
-	t.Helper()
-	admins := &adminSwitch{}
-	store := &jobtest.Memory{}
-	store.AddWorkspace(job.Workspace{ID: strings.Repeat("a", 32), Name: "acme"})
-	registry := job.NewRegistry(job.RegistryOptions{Store: store, Admins: admins, Random: rand.Reader,
-		Now: func() time.Time { return time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC) }})
-	var runners RunnerRegistry = registry
-	if wrap != nil {
-		runners = wrap(registry)
-	}
-	l := newLoginServer(t, func(o *Options) { o.Administrators = admins; o.Runners = runners })
-	return l, admins, registry
+// runnerWorld is a login server with an Instance screen and runners on a
+// memory store, with the workspace acme, whose dispatcher mints the clone
+// credentials of a fake forge and waits wait for a job.
+type runnerWorld struct {
+	*loginServer
+	admins   *adminSwitch
+	registry *job.Registry
+	store    *jobtest.Memory
+	clones   *forgetest.Fake
+	clock    *testClock
 }
 
-// call sends a request of a runner to the runner API, with these values of
+// testClock is a clock tests move.
+type testClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *testClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *testClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+func newRunnerWorld(t *testing.T, wait time.Duration, wrap func(*job.Registry) RunnerRegistry) *runnerWorld {
+	t.Helper()
+	w := &runnerWorld{admins: &adminSwitch{}, clock: &testClock{now: time.Date(2026, 11, 12, 10, 0, 0, 0, time.UTC)}}
+	notifier := &job.Notifier{}
+	w.store = &jobtest.Memory{Queued: notifier.Notify}
+	w.store.AddWorkspace(job.Workspace{ID: strings.Repeat("a", 32), Name: "acme"})
+	w.registry = job.NewRegistry(job.RegistryOptions{Store: w.store, Admins: w.admins, Random: rand.Reader, Now: w.clock.Now})
+	w.clones, _ = forgetest.Scenario("github", false)
+	dispatcher := job.NewDispatcher(job.DispatcherOptions{Runners: w.store, Jobs: w.store, Clone: w.clones, Forge: "github",
+		Notifier: notifier, Wait: wait, Now: w.clock.Now})
+	var runners RunnerRegistry = w.registry
+	if wrap != nil {
+		runners = wrap(w.registry)
+	}
+	w.loginServer = newLoginServer(t, func(o *Options) {
+		o.Administrators, o.Runners, o.Dispatcher = w.admins, runners, dispatcher
+	})
+	return w
+}
+
+// newRunnerServer is the login server of a runnerWorld whose claims wait
+// little.
+func newRunnerServer(t *testing.T, wrap func(*job.Registry) RunnerRegistry) (*loginServer, *adminSwitch, *job.Registry) {
+	t.Helper()
+	w := newRunnerWorld(t, 10*time.Millisecond, wrap)
+	return w.loginServer, w.admins, w.registry
+}
+
+// call sends a claim of a runner to the runner API, with these values of
 // Authorization.
 func call(l *loginServer, host string, authorization ...string) *http.Response {
 	r := request(http.MethodPost, "/api/runner/v1/claim", host, strings.NewReader("{}"))
 	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Raun-Runner-Protocol", "1")
+	r.Header.Set("User-Agent", "raun-runner/1.0.0")
 	for _, a := range authorization {
 		r.Header.Add("Authorization", a)
 	}
@@ -58,14 +103,14 @@ func TestTheRunnerAPIAuthenticatesByToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A known token gets through: no route of the protocol exists yet.
-	if resp := call(l, testHost, "Bearer "+token); resp.StatusCode != http.StatusNotFound {
+	// A known token gets through, to an empty queue.
+	if resp := call(l, testHost, "Bearer "+token); resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("a runner = %d %s", resp.StatusCode, readBody(t, resp))
 	}
 	refused := func(name string, resp *http.Response) string {
 		t.Helper()
 		body := readBody(t, resp)
-		if resp.StatusCode != http.StatusUnauthorized || resp.Header.Get("WWW-Authenticate") == "" {
+		if resp.StatusCode != http.StatusUnauthorized || resp.Header.Get("WWW-Authenticate") == "" || body != `{"error":"unauthorized"}`+"\n" {
 			t.Errorf("%s = %d %s", name, resp.StatusCode, body)
 		}
 		return body
@@ -83,7 +128,7 @@ func TestTheRunnerAPIAuthenticatesByToken(t *testing.T) {
 			t.Errorf("%s answers %q, want the same refusal %q", name, body, want)
 		}
 	}
-	if resp := call(l, "evil.example", "Bearer "+token); resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusOK {
+	if resp := call(l, "evil.example", "Bearer "+token); resp.StatusCode != http.StatusMisdirectedRequest {
 		t.Errorf("another host = %d", resp.StatusCode)
 	}
 	if strings.Contains(l.logs.String(), token) {
@@ -109,7 +154,7 @@ func TestTheRunnerAPIAuthenticatesByToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	refused("the old token", call(l, testHost, "Bearer "+token))
-	if resp := call(l, testHost, "bearer "+fresh); resp.StatusCode != http.StatusNotFound {
+	if resp := call(l, testHost, "bearer "+fresh); resp.StatusCode != http.StatusNoContent {
 		t.Errorf("the new token = %d", resp.StatusCode)
 	}
 	if _, _, err := registry.Revoke(ctx, admin, runner.ID); err != nil {

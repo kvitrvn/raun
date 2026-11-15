@@ -164,10 +164,11 @@ func (s Runners) RevokeRunner(ctx context.Context, id string, at time.Time) (int
 		}
 		return nil
 	})
+	s.s.tellQueued(err == nil && n > 0)
 	return n, err
 }
 
-func (s Runners) Authenticate(ctx context.Context, hash string, now time.Time) (job.Runner, error) {
+func (s Runners) Authenticate(ctx context.Context, hash, release string, now time.Time) (job.Runner, error) {
 	now = now.UTC()
 	var out job.Runner
 	err := s.s.read(ctx, func(tx *sql.Tx) error {
@@ -181,18 +182,20 @@ func (s Runners) Authenticate(ctx context.Context, hash string, now time.Time) (
 		out = r
 		return nil
 	})
-	if err != nil || now.Before(out.LastContact.Add(job.ContactEvery)) {
+	upgraded := release != "" && release != out.Release
+	if err != nil || (now.Before(out.LastContact.Add(job.ContactEvery)) && !upgraded) {
 		return out, err
 	}
-	// The last contact is written every ContactEvery at most, apart from
-	// the read: most requests write nothing, and of concurrent requests
-	// one writes. It is advisory: a write that fails leaves the runner
-	// authenticated, and a later request writes it.
+	// The last contact is written every ContactEvery at most, and the
+	// release when it changes, apart from the read: most requests write
+	// nothing, and of concurrent requests one writes. It is advisory: a
+	// write that fails leaves the runner authenticated, and a later request
+	// writes it.
 	written := false
 	err = s.s.write(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `UPDATE runners SET last_contact_at = ?
-			WHERE id = ? AND revoked_at IS NULL AND (last_contact_at IS NULL OR last_contact_at <= ?)`,
-			formatTime(now), out.ID, formatTime(now.Add(-job.ContactEvery)))
+		res, err := tx.ExecContext(ctx, `UPDATE runners SET last_contact_at = ?, release = CASE WHEN ? <> '' THEN ? ELSE release END
+			WHERE id = ? AND revoked_at IS NULL AND (last_contact_at IS NULL OR last_contact_at <= ? OR (? <> '' AND release <> ?))`,
+			formatTime(now), release, release, out.ID, formatTime(now.Add(-job.ContactEvery)), release, release)
 		if err != nil {
 			return err
 		}
@@ -201,6 +204,9 @@ func (s Runners) Authenticate(ctx context.Context, hash string, now time.Time) (
 	})
 	if err == nil && written {
 		out.LastContact = now
+		if release != "" {
+			out.Release = release
+		}
 	}
 	return out, nil
 }
@@ -208,9 +214,9 @@ func (s Runners) Authenticate(ctx context.Context, hash string, now time.Time) (
 func (s Runners) ClaimFor(ctx context.Context, runner string, now time.Time) (job.Claimed, error) {
 	now = now.UTC()
 	var out job.Claimed
-	found, refused := false, false
+	found, refused, swept := false, false, 0
 	err := s.s.write(ctx, func(tx *sql.Tx) error {
-		found, refused = false, false
+		found, refused, swept = false, false, 0
 		r, err := runnerIn(ctx, tx, runner)
 		if errors.Is(err, job.ErrNoRunner) || (err == nil && r.Revoked()) {
 			refused = true
@@ -219,9 +225,10 @@ func (s Runners) ClaimFor(ctx context.Context, runner string, now time.Time) (jo
 		if err != nil {
 			return fmt.Errorf("claim job: %w", err)
 		}
-		out, found, err = claimIn(ctx, tx, r.Claimant(), now)
+		out, found, swept, err = claimIn(ctx, tx, r.Claimant(), now)
 		return err
 	})
+	s.s.tellQueued(err == nil && swept > 0)
 	switch {
 	case err != nil:
 		return job.Claimed{}, err
