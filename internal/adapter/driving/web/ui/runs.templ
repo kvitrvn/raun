@@ -1,0 +1,307 @@
+package ui
+
+import "strconv"
+
+// Job and run states, as the pages show them.
+const (
+	JobQueued    = "queued"
+	JobRunning   = "running"
+	JobSucceeded = "succeeded"
+	JobFailed    = "failed"
+	JobCancelled = "cancelled"
+	RunLost      = "lost"
+)
+
+// jobVariant is the badge of the state of a job or the outcome of a run;
+// the text names it.
+func jobVariant(state string) BadgeVariant {
+	switch state {
+	case JobSucceeded:
+		return BadgeSuccess
+	case JobFailed:
+		return BadgeDanger
+	case JobRunning:
+		return BadgeInfo
+	case RunLost:
+		return BadgeWarning
+	default:
+		return BadgeDefault
+	}
+}
+
+// JobBadge shows the state of a job or the outcome of a run.
+templ JobBadge(state string) {
+	@Badge(BadgeProps{Variant: jobVariant(state)}) {
+		{ state }
+	}
+}
+
+// JobRow is a job of the Runs list of a repository.
+type JobRow struct {
+	Href    string
+	Created string
+	Kind    string
+	// Trigger is what caused it: the ref of its event, or "by hand".
+	Trigger string
+	Commit  string
+	State   string
+	// Reason says why it ended as it did, when its runner did not.
+	Reason   string
+	Runs     int
+	Duration string
+	// Wait says why a queued job is not taken yet; empty when it will be.
+	Wait string
+}
+
+// RunsProps configures the Runs list of a repository.
+type RunsProps struct {
+	FullName string
+	RepoHref string
+	Rows     []JobRow
+	Limit    int
+}
+
+// RunsPage lists the jobs of a repository, newest first, with their runs.
+templ RunsPage(p Page, rp RunsProps) {
+	@Layout(p) {
+		<nav aria-label="Breadcrumb" class="text-[13px] text-muted-foreground">
+			<a class="hover:underline font-mono" href={ templ.URL(rp.RepoHref) }>{ rp.FullName }</a>
+		</nav>
+		<h1 class="text-2xl font-semibold tracking-tight">Runs</h1>
+		if len(rp.Rows) == 0 {
+			@Empty(EmptyProps{Title: "No job yet", Description: "The jobs of this repository, and the runs that attempt them, show here.", Icon: IconFolder})
+		} else {
+			<p class="text-[13px] text-muted-foreground">The { strconv.Itoa(rp.Limit) } newest jobs at most, newest first.</p>
+			<section data-slot="runs" class="cn-card overflow-x-auto">
+				@Table(TableProps{Label: "Jobs of the repository, newest first"}) {
+					@TableHeader() {
+						@TableRow() {
+							@TableHead() {
+								Created
+							}
+							@TableHead() {
+								Kind
+							}
+							@TableHead() {
+								Trigger
+							}
+							@TableHead() {
+								Commit
+							}
+							@TableHead() {
+								State
+							}
+							@TableHead() {
+								Runs
+							}
+							@TableHead() {
+								Duration
+							}
+						}
+					}
+					@TableBody() {
+						for _, row := range rp.Rows {
+							@TableRow() {
+								@TableCell(TableCellProps{Class: "whitespace-nowrap"}) {
+									<a class="hover:underline" href={ templ.URL(row.Href) }>{ row.Created }</a>
+								}
+								@TableCell(TableCellProps{Class: "font-mono"}) {
+									{ row.Kind }
+								}
+								@TableCell(TableCellProps{Class: "font-mono break-all"}) {
+									{ row.Trigger }
+								}
+								@TableCell(TableCellProps{Class: "font-mono whitespace-nowrap"}) {
+									{ short(row.Commit) }
+								}
+								@TableCell() {
+									<div class="flex flex-col items-start gap-1">
+										@JobBadge(row.State)
+										if row.Reason != "" {
+											<span class="text-[12.5px] text-muted-foreground">{ row.Reason }</span>
+										}
+										if row.Wait != "" {
+											<span class="text-[12.5px] text-muted-foreground">{ row.Wait }</span>
+										}
+									</div>
+								}
+								@TableCell() {
+									{ strconv.Itoa(row.Runs) }
+								}
+								@TableCell(TableCellProps{Class: "whitespace-nowrap"}) {
+									{ row.Duration }
+								}
+							}
+						}
+					}
+				}
+			</section>
+		}
+	}
+}
+
+// RunRow is a run of a job, on the page of the job.
+type RunRow struct {
+	Href     string
+	Selected bool
+	Runner   string
+	Started  string
+	Outcome  string
+	Summary  string
+	Duration string
+}
+
+// LogView is the log of the selected run: the text so far and, while the
+// run lasts, the address its next part is polled from.
+type LogView struct {
+	ID      string
+	Text    string
+	PollURL string
+}
+
+// JobProps configures the page of a job.
+type JobProps struct {
+	FullName  string
+	RepoHref  string
+	RunsHref  string
+	Kind      string
+	Trigger   string
+	Commit    string
+	State     string
+	Reason    string
+	Wait      string
+	Created   string
+	Duration  string
+	Runs      []RunRow
+	Log       LogView
+	HasLog    bool
+	CanCancel bool
+	CancelURL string
+}
+
+// JobPage shows a job, its runs and the log of one of them, followed live
+// while it runs.
+templ JobPage(p Page, jp JobProps) {
+	@Layout(p) {
+		<nav aria-label="Breadcrumb" class="flex gap-2 text-[13px] text-muted-foreground">
+			<a class="hover:underline font-mono" href={ templ.URL(jp.RepoHref) }>{ jp.FullName }</a>
+			<span aria-hidden="true">/</span>
+			<a class="hover:underline" href={ templ.URL(jp.RunsHref) }>Runs</a>
+		</nav>
+		<section data-slot="job" class="cn-card flex flex-col items-start gap-2 px-7 py-6">
+			<div class="flex flex-wrap items-center gap-3">
+				<h1 class="text-2xl font-semibold tracking-tight font-mono">{ jp.Kind }</h1>
+				@JobBadge(jp.State)
+			</div>
+			<p class="text-[13.5px]">
+				<span class="font-mono">{ jp.Trigger }</span> at <span class="font-mono">{ short(jp.Commit) }</span>, created { jp.Created }
+				if jp.Duration != "" {
+					, { jp.Duration }
+				}
+			</p>
+			if jp.Reason != "" {
+				<p class="text-[13.5px] text-muted-foreground">{ jp.Reason }</p>
+			}
+			if jp.Wait != "" {
+				<p class="text-[13.5px] text-muted-foreground">{ jp.Wait }</p>
+			}
+			if jp.CanCancel {
+				<form method="post" action={ templ.URL(jp.CancelURL) }>
+					@CSRFField(p.CSRF)
+					@Button(ButtonProps{Type: TypeSubmit, Variant: ButtonDanger, Size: ButtonSmall}) {
+						Cancel the job
+					}
+				</form>
+			}
+		</section>
+		if len(jp.Runs) > 0 {
+			<section data-slot="job-runs" class="cn-card overflow-x-auto">
+				@Table(TableProps{Label: "Runs of the job, oldest first"}) {
+					@TableHeader() {
+						@TableRow() {
+							@TableHead() {
+								Started
+							}
+							@TableHead() {
+								Runner
+							}
+							@TableHead() {
+								Outcome
+							}
+							@TableHead() {
+								Duration
+							}
+						}
+					}
+					@TableBody() {
+						for _, run := range jp.Runs {
+							@TableRow() {
+								@TableCell(TableCellProps{Class: "whitespace-nowrap"}) {
+									if run.Selected {
+										<span aria-current="true" class="font-semibold">{ run.Started }</span>
+									} else {
+										<a class="hover:underline" href={ templ.URL(run.Href) }>{ run.Started }</a>
+									}
+								}
+								@TableCell(TableCellProps{Class: "font-mono"}) {
+									{ run.Runner }
+								}
+								@TableCell() {
+									<div class="flex flex-col items-start gap-1">
+										if run.Outcome == "" {
+											@JobBadge(JobRunning)
+										} else {
+											@JobBadge(run.Outcome)
+										}
+										if run.Summary != "" {
+											<span class="text-[12.5px] text-muted-foreground">{ run.Summary }</span>
+										}
+									</div>
+								}
+								@TableCell(TableCellProps{Class: "whitespace-nowrap"}) {
+									{ run.Duration }
+								}
+							}
+						}
+					}
+				}
+			</section>
+		}
+		if jp.HasLog {
+			<section data-slot="log" class="cn-card flex flex-col gap-3 px-7 py-6">
+				<h2 class="text-[17px] font-semibold">Log</h2>
+				@LogBlock(jp.Log, false)
+			</section>
+		}
+	}
+}
+
+// LogBlock is the log of a run as text, never markup, and, while the run
+// lasts, the element that polls its next part every 2 seconds. oob marks it
+// to replace the block shown, when the log was cut since.
+templ LogBlock(l LogView, oob bool) {
+	<pre
+		id={ l.ID }
+		data-slot="log-text"
+		class="max-h-[70vh] overflow-auto whitespace-pre-wrap break-all rounded-md bg-muted px-4 py-3 font-mono text-[12.5px]"
+		if oob {
+			hx-swap-oob="true"
+		}
+	>
+		@LogTail(l.Text, l.PollURL)
+	</pre>
+}
+
+// LogTail is the next part of a log: its text, then the element that polls
+// the part after it, inert once the run has ended. Nothing comes between
+// them: in a pre, a space would show.
+templ LogTail(text, pollURL string) {
+	{ text }<span
+	data-slot="log-poll"
+	if pollURL != "" {
+		hx-get={ pollURL }
+		hx-trigger="every 2s"
+		hx-swap="outerHTML"
+	}
+></span>
+}

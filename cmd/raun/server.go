@@ -228,7 +228,7 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 	var runners web.RunnerRegistry
 	var dispatcher *job.Dispatcher
 	if login != nil {
-		runners = job.NewRegistry(job.RegistryOptions{Store: store.Runners(), Admins: administrators, Random: rand.Reader, Now: time.Now})
+		runners = job.NewRegistry(job.RegistryOptions{Store: store.Runners(), Admins: administrators, Reads: store.Jobs(), Random: rand.Reader, Now: time.Now})
 		// The clone credentials come from the forge alone; without the
 		// capability no repository is activated, so no job exists.
 		clone, _ := forge.(job.Clone)
@@ -256,6 +256,7 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		Settings:       cfg.shownSettings(),
 		Runners:        runners,
 		Dispatcher:     runnerDispatcher(dispatcher),
+		Runs:           runsBoard(repositories, job.NewBoard(job.BoardOptions{Store: store.Jobs(), Reads: store.Jobs(), Runners: store.Runners()})),
 	})
 	if err != nil {
 		logger.Error("build the handler", slog.String("error", err.Error()))

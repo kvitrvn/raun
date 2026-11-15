@@ -1,6 +1,9 @@
 package ui
 
-import "slices"
+import (
+	"slices"
+	"strconv"
+)
 
 // InstanceSetting is a variable of the configuration, as the Instance
 // settings screen shows it.
@@ -66,7 +69,12 @@ type RunnerRow struct {
 	Scope        string
 	Capabilities []string
 	LastContact  string
-	Revoked      bool
+	// Seen says the runner was seen in the last two minutes.
+	Seen    bool
+	Release string
+	// Running is how many runs it holds now.
+	Running int
+	Revoked bool
 }
 
 // RunnerForm is the form that creates a runner: the values sent, the
@@ -114,6 +122,12 @@ templ RunnersPage(p Page, rp RunnersProps) {
 								Last contact
 							}
 							@TableHead() {
+								Release
+							}
+							@TableHead() {
+								Running
+							}
+							@TableHead() {
 								<span class="sr-only">Actions</span>
 							}
 						}
@@ -136,12 +150,25 @@ templ RunnersPage(p Page, rp RunnersProps) {
 									}
 								}
 								@TableCell() {
-									if row.Revoked {
-										@Badge() {
-											revoked
+									<div class="flex flex-col items-start gap-1">
+										if row.Revoked {
+											@Badge() {
+												revoked
+											}
+										} else if row.Seen {
+											@Badge(BadgeProps{Variant: BadgeSuccess}) {
+												seen
+											}
 										}
-									} else {
-										{ row.LastContact }
+										<span class="whitespace-nowrap text-[12.5px] text-muted-foreground">{ row.LastContact }</span>
+									</div>
+								}
+								@TableCell(TableCellProps{Class: "font-mono"}) {
+									{ row.Release }
+								}
+								@TableCell() {
+									if !row.Revoked {
+										{ strconv.Itoa(row.Running) }
 									}
 								}
 								@TableCell(TableCellProps{Class: "whitespace-nowrap"}) {

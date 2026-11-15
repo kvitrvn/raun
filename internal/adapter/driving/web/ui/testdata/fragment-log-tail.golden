@@ -1,0 +1,2 @@
+&lt;script&gt;alert(1)&lt;/script&gt;&#34; onmouseover=&#34;x
+<span data-slot="log-poll" hx-get="/acme/acme/api/runs/0123/log?cut=0&amp;offset=40&amp;run=b" hx-trigger="every 2s" hx-swap="outerHTML"></span>

@@ -19,6 +19,7 @@ type RunnerRegistry interface {
 	Rotate(ctx context.Context, actor, id string) (job.Runner, string, error)
 	Revoke(ctx context.Context, actor, id string) (job.Runner, int, error)
 	Authenticate(ctx context.Context, token, release string) (job.Runner, error)
+	Busy(ctx context.Context, actor string) (map[string]int, error)
 }
 
 type runnerKey struct{}
@@ -130,6 +131,11 @@ func (s *Server) runnersForm(w http.ResponseWriter, r *http.Request, status int,
 		s.fail(w, r, "list the runners", err)
 		return
 	}
+	busy, err := s.runners.Busy(r.Context(), account(r))
+	if err != nil {
+		s.fail(w, r, "count the runs of the runners", err)
+		return
+	}
 	workspaceNames := map[string]string{}
 	for _, ws := range workspaces {
 		workspaceNames[ws.ID] = ws.Name
@@ -139,18 +145,16 @@ func (s *Server) runnersForm(w http.ResponseWriter, r *http.Request, status int,
 	now := s.now()
 	var rows []ui.RunnerRow
 	for _, rn := range runners {
-		row := ui.RunnerRow{ID: rn.ID, Name: rn.Name, Scope: "instance", Revoked: rn.Revoked()}
+		row := ui.RunnerRow{ID: rn.ID, Name: rn.Name, Scope: "instance", Revoked: rn.Revoked(), Release: rn.Release, Running: busy[rn.ID]}
 		if rn.Workspace != "" {
 			row.Scope = "workspace " + workspaceNames[rn.Workspace]
 		}
 		row.Capabilities = names(rn.Capabilities)
-		switch {
-		case rn.LastContact.IsZero():
-			row.LastContact = "never"
-		case now.Sub(rn.LastContact) < 2*job.ContactEvery:
-			row.LastContact = "seen recently"
-		default:
+		if rn.LastContact.IsZero() {
+			row.LastContact = "never seen"
+		} else {
 			row.LastContact = rn.LastContact.UTC().Format("2006-01-02 15:04 UTC")
+			row.Seen = !rn.Revoked() && now.Sub(rn.LastContact) < 2*job.ContactEvery
 		}
 		rows = append(rows, row)
 	}
