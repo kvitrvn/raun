@@ -7,6 +7,7 @@ import (
 
 	"github.com/kvitrvn/raun/internal/adapter/driving/web"
 	"github.com/kvitrvn/raun/internal/core/job"
+	"github.com/kvitrvn/raun/internal/core/repository"
 )
 
 // sweeper ends the runs whose lease or deadline has passed and the jobs
@@ -19,6 +20,15 @@ type sweeper interface {
 // job.Dispatcher.Reap.
 type credentialReaper interface {
 	Reap(ctx context.Context) int
+}
+
+// runsBoard is b as the web handler takes it: nil without repositories,
+// whose pages the runs belong to.
+func runsBoard(repositories *repository.Service, b *job.Board) web.RunsBoard {
+	if repositories == nil {
+		return nil
+	}
+	return b
 }
 
 // runnerDispatcher is d as the web handler takes it: nil without one.

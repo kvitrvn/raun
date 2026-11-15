@@ -15,6 +15,7 @@ func memoryFixture(*testing.T) Fixture {
 		AddWorkspace:  func(_ *testing.T, w job.Workspace) { m.AddWorkspace(w) },
 		AddRepository: func(*testing.T, string, string, string) {},
 		Queued:        func() int { return int(queued.Load()) },
+		Reads:         m,
 	}
 }
 

@@ -59,7 +59,7 @@ func newRunnerWorld(t *testing.T, wait time.Duration, wrap func(*job.Registry) R
 	notifier := &job.Notifier{}
 	w.store = &jobtest.Memory{Queued: notifier.Notify}
 	w.store.AddWorkspace(job.Workspace{ID: strings.Repeat("a", 32), Name: "acme"})
-	w.registry = job.NewRegistry(job.RegistryOptions{Store: w.store, Admins: w.admins, Random: rand.Reader, Now: w.clock.Now})
+	w.registry = job.NewRegistry(job.RegistryOptions{Store: w.store, Admins: w.admins, Reads: w.store, Random: rand.Reader, Now: w.clock.Now})
 	w.clones, _ = forgetest.Scenario("github", false)
 	dispatcher := job.NewDispatcher(job.DispatcherOptions{Runners: w.store, Jobs: w.store, Clone: w.clones, Forge: "github",
 		Notifier: notifier, Wait: wait, Now: w.clock.Now})
@@ -289,5 +289,30 @@ func TestTheRunnerReachesTheHandler(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer "+token)
 	if resp := serve(h, r); resp.StatusCode != http.StatusNoContent || got.ID != runner.ID || got.Workspace != runner.Workspace {
 		t.Errorf("the handler got %+v, status %d", got, resp.StatusCode)
+	}
+}
+
+// TestTheRunnersScreenShowsWhatRunnersDo: the release a runner said, its
+// last contact, dated, and how many runs it holds, never their repositories.
+func TestTheRunnersScreenShowsWhatRunnersDo(t *testing.T) {
+	w := newRunnerWorld(t, 10*time.Millisecond, nil)
+	busy := w.runner(t, "busy-runner", "")
+	w.runner(t, "idle-runner", "")
+	w.enqueue(t)
+	if status, body := busy.send("claim", "", "{}"); status != http.StatusOK {
+		t.Fatalf("claim = %d %s", status, body)
+	}
+	alice := w.signUp(t, "1001", "alice")
+	w.admins.set(alice.session(w.sessions).Account, true, nil)
+	list := readBody(t, alice.do(http.MethodGet, "/instance/runners", nil))
+	row := between(t, list, "busy-runner", "</tr>")
+	if !strings.Contains(row, "1.0.0") || !strings.Contains(row, ">seen<") || !strings.Contains(row, "2026-11-12 10:00 UTC") || !strings.Contains(row, ">1<") {
+		t.Errorf("the row of a busy runner: %s", row)
+	}
+	if idle := between(t, list, "idle-runner", "</tr>"); !strings.Contains(idle, "never seen") || !strings.Contains(idle, ">0<") {
+		t.Errorf("the row of an idle runner: %s", idle)
+	}
+	if strings.Contains(list, "acme/api") || strings.Contains(list, strings.Repeat("c", 40)) {
+		t.Error("the Runners screen shows the repository or the commit of a run")
 	}
 }

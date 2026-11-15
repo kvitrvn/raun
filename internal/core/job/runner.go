@@ -210,6 +210,8 @@ type Administrators interface {
 type RegistryOptions struct {
 	Store  RunnerStore
 	Admins Administrators
+	// Reads tells the runs each runner holds; nil tells none.
+	Reads Reads
 	// Random is the source of identifiers and tokens.
 	Random io.Reader
 	// Now gives the time of a change; nil means time.Now.
@@ -222,6 +224,7 @@ type RegistryOptions struct {
 type Registry struct {
 	store  RunnerStore
 	admins Administrators
+	reads  Reads
 	random io.Reader
 	now    func() time.Time
 }
@@ -231,7 +234,7 @@ func NewRegistry(opts RegistryOptions) *Registry {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	return &Registry{store: opts.Store, admins: opts.Admins, random: opts.Random, now: opts.Now}
+	return &Registry{store: opts.Store, admins: opts.Admins, reads: opts.Reads, random: opts.Random, now: opts.Now}
 }
 
 // admin checks that actor is an administrator; a role that cannot be
@@ -262,6 +265,23 @@ func (g *Registry) Runners(ctx context.Context, actor string) ([]Runner, []Works
 		return nil, nil, fmt.Errorf("list the workspaces: %w", err)
 	}
 	return runners, workspaces, nil
+}
+
+// Busy returns, for actor, an administrator, how many open runs each
+// runner holds, by runner: a count, never their repositories, which an
+// administrator may not read on the forge.
+func (g *Registry) Busy(ctx context.Context, actor string) (map[string]int, error) {
+	if err := g.admin(ctx, actor); err != nil {
+		return nil, err
+	}
+	if g.reads == nil {
+		return map[string]int{}, nil
+	}
+	busy, err := g.reads.OpenRuns(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("count the runs of the runners: %w", err)
+	}
+	return busy, nil
 }
 
 // Create creates for actor, an administrator, the runner with this name,

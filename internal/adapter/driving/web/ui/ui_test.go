@@ -215,12 +215,33 @@ func TestPages(t *testing.T) {
 		}, true)},
 		{"runners", RunnersPage(adminPage, RunnersProps{
 			Rows: []RunnerRow{
-				{ID: "0123456789abcdef0123456789abcdef", Name: hostile, Scope: "workspace acme", Capabilities: []string{"noop"}, LastContact: "seen recently"},
+				{ID: "0123456789abcdef0123456789abcdef", Name: hostile, Scope: "workspace acme", Capabilities: []string{"noop"}, LastContact: "2026-11-14 15:01 UTC", Seen: true, Release: hostile, Running: 2},
+				{ID: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Name: "idle", Scope: "instance", Capabilities: []string{"noop"}, LastContact: "never seen"},
 				{ID: "fedcba9876543210fedcba9876543210", Name: "old", Scope: "instance", Capabilities: []string{"noop"}, Revoked: true},
 			},
 			Form: RunnerForm{Name: hostile, Workspace: "acme", Capabilities: []string{"noop"}, Workspaces: []string{"acme", "beta"}, Known: []string{"noop"}, Error: hostile},
 		})},
 		{"runners-empty", RunnersPage(adminPage, RunnersProps{Form: RunnerForm{Known: []string{"noop"}}})},
+		{"runs-empty", RunsPage(loggedIn, RunsProps{FullName: "acme/api", RepoHref: "/acme/acme/api", Limit: 50})},
+		{"runs", RunsPage(loggedIn, RunsProps{FullName: hostile, RepoHref: "/acme/acme/api", Limit: 50, Rows: []JobRow{
+			{Href: "/acme/acme/api/runs/0123", Created: "2026-11-14 15:00:00 UTC", Kind: "noop", Trigger: hostile, Commit: strings.Repeat("c", 40), State: JobQueued, Runs: 0, Duration: "1m0s", Wait: hostile},
+			{Href: "/acme/acme/api/runs/4567", Created: "2026-11-14 14:00:00 UTC", Kind: "noop", Trigger: "refs/heads/main", Commit: strings.Repeat("d", 40), State: JobSucceeded, Runs: 2, Duration: "2m3s"},
+			{Href: "/acme/acme/api/runs/89ab", Created: "2026-11-14 13:00:00 UTC", Kind: "noop", Trigger: "by hand", Commit: strings.Repeat("e", 40), State: JobCancelled, Reason: "Cancelled by hand.", Runs: 1, Duration: "5s"},
+		}})},
+		{"job-running", JobPage(withSession, JobProps{FullName: "acme/api", RepoHref: "/acme/acme/api", RunsHref: "/acme/acme/api/runs",
+			Kind: "noop", Trigger: "refs/heads/main", Commit: strings.Repeat("c", 40), State: JobRunning, Created: "2026-11-14 15:00:00 UTC", Duration: "12s",
+			Runs: []RunRow{
+				{Href: "/acme/acme/api/runs/0123?run=a", Runner: "r1", Started: "2026-11-14 15:00:01 UTC", Outcome: RunLost, Duration: "1m0s"},
+				{Href: "/acme/acme/api/runs/0123?run=b", Selected: true, Runner: hostile, Started: "2026-11-14 15:01:01 UTC", Duration: "11s"},
+			},
+			HasLog: true, Log: LogView{ID: "log", Text: "fetching\n" + hostile + "\n&amp; done", PollURL: "/acme/acme/api/runs/0123/log?cut=0&offset=9&run=b"},
+			CanCancel: true, CancelURL: "/acme/acme/api/runs/0123/cancel"})},
+		{"job-ended", JobPage(withSession, JobProps{FullName: "acme/api", RepoHref: "/acme/acme/api", RunsHref: "/acme/acme/api/runs",
+			Kind: "noop", Trigger: "refs/heads/main", Commit: strings.Repeat("c", 40), State: JobFailed, Reason: hostile, Created: "2026-11-14 15:00:00 UTC", Duration: "12s",
+			Runs:   []RunRow{{Href: "/acme/acme/api/runs/0123?run=b", Selected: true, Runner: "r1", Started: "2026-11-14 15:01:01 UTC", Outcome: JobFailed, Summary: hostile, Duration: "11s"}},
+			HasLog: true, Log: LogView{ID: "log", Text: "done\n"}})},
+		{"job-queued", JobPage(withSession, JobProps{FullName: "acme/api", RepoHref: "/acme/acme/api", RunsHref: "/acme/acme/api/runs",
+			Kind: "noop", Trigger: "by hand", Commit: strings.Repeat("c", 40), State: JobQueued, Wait: hostile, Created: "2026-11-14 15:00:00 UTC", Duration: "3s"})},
 		{"runner-token", RunnerTokenPage(adminPage, RunnerTokenProps{Name: hostile, Token: "token-sentinel", Created: true})},
 	}
 	for _, tt := range tests {
@@ -292,5 +313,28 @@ func TestButtonsKeepTheFocusRing(t *testing.T) {
 		if c := ButtonClasses(p); strings.Contains(c, "outline-") {
 			t.Errorf("button classes %q remove the focus outline", c)
 		}
+	}
+}
+
+// TestLogFragments: the parts of a log a poll answers hold its text as
+// text, and the next poll while the run lasts; the block of a reset is
+// marked to replace the one shown.
+func TestLogFragments(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		c    templ.Component
+	}{
+		{"log-tail", LogTail(hostile+"\n", "/acme/acme/api/runs/0123/log?cut=0&offset=40&run=b")},
+		{"log-tail-ended", LogTail("done\n", "")},
+		{"log-reset", LogBlock(LogView{ID: "log", Text: "x\n(truncated)\n", PollURL: "/acme/acme/api/runs/0123/log?cut=1&offset=14&run=b"}, true)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := render(t, tt.c)
+			if strings.Contains(got, "<script>") {
+				t.Errorf("markup came out as markup: %s", got)
+			}
+			golden.Equal(t, "testdata/fragment-"+tt.name+".golden", []byte(got))
+			checkMarkup(t, got)
+		})
 	}
 }

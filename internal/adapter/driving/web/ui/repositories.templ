@@ -1,6 +1,9 @@
 package ui
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // Repository states, as the pages show them.
 const (
@@ -153,6 +156,10 @@ type RepositoryProps struct {
 	Configuration ConfigurationView
 	// Events are the newest rows of its event log, newest first.
 	Events []EventRow
+	// RunsHref is the Runs list of the repository; empty without a queue.
+	RunsHref string
+	// Jobs is how many of its newest jobs there are, MaxListed at most.
+	Jobs int
 }
 
 // ConfigurationView is what the page says of the configuration of a
@@ -214,6 +221,9 @@ type EventRow struct {
 	Before     string
 	After      string
 	Result     string
+	// Jobs is how many jobs the delivery created, among the newest of the
+	// repository.
+	Jobs int
 }
 
 // short is the start of a commit, as the log shows it.
@@ -314,6 +324,11 @@ templ RepositoryPage(p Page, rp RepositoryProps) {
 							@TableHead() {
 								Result
 							}
+							if rp.RunsHref != "" {
+								@TableHead() {
+									Jobs
+								}
+							}
 						}
 					}
 					@TableBody() {
@@ -339,13 +354,29 @@ templ RepositoryPage(p Page, rp RepositoryProps) {
 								@TableCell() {
 									{ e.Result }
 								}
+								if rp.RunsHref != "" {
+									@TableCell() {
+										if e.Jobs > 0 {
+											<a class="hover:underline" href={ templ.URL(rp.RunsHref) }>{ strconv.Itoa(e.Jobs) }</a>
+										}
+									}
+								}
 							}
 						}
 					}
 				}
 			}
 		</section>
-		@Empty(EmptyProps{Title: "Nothing analyzed yet", Description: "The runs of this repository and their knowledge show here once Raun analyzes it.", Icon: IconFolder})
+		if rp.RunsHref != "" {
+			<section data-slot="runs-link" class="cn-card flex flex-col items-start gap-2 px-7 py-6">
+				<h2 class="text-[17px] font-semibold">Runs</h2>
+				if rp.Jobs == 0 {
+					<p class="text-[13.5px] text-muted-foreground">No job yet: the jobs of this repository, and the runs that attempt them, show on its Runs list.</p>
+				}
+				<a class="text-[13.5px] hover:underline" href={ templ.URL(rp.RunsHref) }>See the runs</a>
+			</section>
+		}
+		@Empty(EmptyProps{Title: "Nothing analyzed yet", Description: "The knowledge of this repository shows here once Raun analyzes it.", Icon: IconFolder})
 	}
 }
 

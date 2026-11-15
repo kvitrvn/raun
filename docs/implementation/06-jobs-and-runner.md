@@ -119,7 +119,7 @@ Choices #37 made within the decisions above, for the owner to confirm in its rev
 - **Runs are counted from their rows**: a run removed by `Release` leaves none, so it is never counted.
 - **A `noop` result** carries no data, or an empty object however it is written, and 4 KiB at most; the summary of every result is one line of 1 KiB at most. A result is stored on its run.
 - **The delivery path.** `repository.EventStore.Record` takes the requests for jobs of the delivery (`repository.JobRequest`), and the SQLite adapter queues them as jobs of the job context in the transaction of the delivery, only when its row is logged as recorded; a request the job context refuses keeps nothing of the delivery, which the hook answers with `500`: such a request is a defect of the policy, seen at once, and the forge can deliver the delivery again once it is fixed. The policy point (`repository.Options.Jobs`, a `repository.JobPolicy`) is asked before the delivery is recorded, for every delivery of a repository, and the requests of a delivery not logged are dropped. `cmd/raun` gives none in production.
-- **A job keeps the identifier of its delivery** without a reference: the purge of the deliveries after 30 days leaves the jobs. The event log does not show the jobs of a delivery yet; #41 does.
+- **A job keeps the identifier of its delivery** without a reference: the purge of the deliveries after 30 days leaves the jobs. The event log shows the jobs of a delivery since #41.
 - **Cancellation of a repository's jobs** happens in the transaction of `Deactivate` and of `SetReach`, which now takes the time of the change, with the reason `deactivated`.
 - **Migration 8** adds the tables `jobs` and `runs`: one open run per job at most, held by a unique index, and the queue, the coalescing key, the repository and the delivery indexed for the queries of the queue.
 
@@ -167,6 +167,18 @@ Choices #40 made within the decisions above, for the owner to confirm in its rev
 - **Results** are checked by their kind (`job.CheckResult`) before they are sent: one the server would refuse, or that cannot be written, fails the job with a fixed summary.
 - **The work directory** belongs to one runner: its default is `raun-runner-<uid>` in the temporary directory, one per user, the runner refuses one that is a link or belongs to another user, closes it to other users, and holds the lock (`flock`) of its file `.lock` while it runs, so a second runner on it refuses to start instead of removing the runs of the first; outside Unix, nothing detects it. The directories of runs start with `run-`, and only those are removed at start, a link never followed.
 - **Configuration.** The runner reads the four `RAUN_RUNNER_*` variables of the record only, and refuses another `RAUN_RUNNER_*` one; it logs in JSON at the level info. Its release is the module version of the build when it is one, `dev` otherwise.
+
+## Implementation of #41
+
+Choices #41 made within the decisions above, for the owner to confirm in its review:
+
+- **Reads.** `job.Reads` (`JobsOf`, `OpenRuns`) is a port apart from `Store`, met by the memory and SQLite stores and held by their contract suite; migration 11 indexes the jobs of a repository in every state. `job.Board` reads the jobs and runs of one repository and cancels by hand; a job or a run of another repository is `ErrNotFound`, the same as none. `job.Waiting` says why a queued job waits: delayed, no runner of its scope with its capability, or none seen in the last two minutes; a runner's capacity is not known to the server, so a full runner is not a reason.
+- **Access.** Every page and poll opens the repository as its page does, through the forge: 404 for whoever cannot read it, a login for a visitor. Cancelling needs the permission to decide on the repository, on the forge, as the record says; membership of the workspace is not asked, unlike deactivation. Anyone else who reads it gets `403`, and no button.
+- **The list** shows the 50 newest jobs of the repository, no older page; its trigger is the ref of the job, or `by hand`, never the row of the event log, which is purged after 30 days while jobs stay. Its duration runs from the creation of the job to its end, or now; a run's from its start to its end.
+- **The live log** is polled from a byte offset of the text shown, refused off a character; the text past it is appended. When the log was cut since, which can shorten its end, the whole block is replaced out of band. A log purged after 30 days shows as an empty one.
+- **The Runners screen** shows a count of the runs each runner holds, never their repositories or commits, which an administrator may not read on the forge (`job.Registry.Busy`).
+- **The event log** of a repository counts the jobs of each delivery among its 50 newest jobs, linked to the Runs list, as the implementation of #37 left to #41.
+- **The purge of logs** runs with the events since #39; #41 adds no worker.
 
 ## Deferred
 

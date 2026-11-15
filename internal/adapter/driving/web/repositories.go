@@ -196,12 +196,25 @@ func (s *Server) repositoryPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rp := v.Repository
+		// The jobs of each delivery, among the newest of the repository.
+		jobs, perDelivery := 0, map[string]int{}
+		if s.runs != nil {
+			if jobs, perDelivery, err = s.runs.Deliveries(r.Context(), rp.Forge, rp.ID); err != nil {
+				s.fail(w, r, "list the jobs", err)
+				return
+			}
+		}
 		var events []ui.EventRow
 		for _, e := range v.Events {
 			events = append(events, ui.EventRow{
 				ReceivedAt: e.ReceivedAt.UTC().Format("2006-01-02 15:04:05 UTC"),
 				Event:      e.Event, Action: e.Action, Ref: e.Ref, Before: e.Before, After: e.After, Result: string(e.Result),
+				Jobs: perDelivery[e.Delivery],
 			})
+		}
+		runsHref := ""
+		if s.runs != nil {
+			runsHref = runsPath(rp)
 		}
 		var config ui.ConfigurationView
 		if c := v.Configuration; c != nil {
@@ -219,6 +232,8 @@ func (s *Server) repositoryPage(w http.ResponseWriter, r *http.Request) {
 			State:         string(rp.State()),
 			CanDecide:     v.CanDecide(),
 			Missing:       missingNames(s.repositories.Missing()),
+			RunsHref:      runsHref,
+			Jobs:          jobs,
 		}))
 	})).ServeHTTP(w, r)
 }

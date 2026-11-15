@@ -50,6 +50,7 @@ func jobFixture(t *testing.T) jobtest.Fixture {
 	}
 	return jobtest.Fixture{
 		Queued:  func() int { return int(queued.Load()) },
+		Reads:   s.Jobs(),
 		Store:   s.Jobs(),
 		Runners: s.Runners(),
 		AddWorkspace: func(t *testing.T, w job.Workspace) {

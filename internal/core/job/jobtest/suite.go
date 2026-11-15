@@ -24,6 +24,9 @@ type Fixture struct {
 	// Queued tells how many times the store told its notifier that a job
 	// may have become claimable.
 	Queued func() int
+	// Reads are the reads of the screens on the same data; nil skips
+	// their cases.
+	Reads job.Reads
 }
 
 // Identifiers of the suite: 32 hexadecimal digits, as workspaces have.
@@ -487,6 +490,7 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 
 	logCases(t, setup)
 	wakeCases(t, newFixture)
+	readCases(t, newFixture)
 }
 
 func ok() job.Result {

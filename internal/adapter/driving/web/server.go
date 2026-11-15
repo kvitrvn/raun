@@ -87,6 +87,9 @@ type Options struct {
 	// Dispatcher serves the protocol of the runner API; required with
 	// Runners.
 	Dispatcher RunnerDispatcher
+	// Runs reads the jobs and runs of a repository; nil means no Runs list
+	// and no page of a job. It needs Repositories.
+	Runs RunsBoard
 	// Now gives the time of a request; nil means time.Now.
 	Now func() time.Time
 	// Random is the source of session identifiers and CSRF tokens; nil
@@ -113,6 +116,7 @@ type Server struct {
 	administrators AdministratorChecker
 	runners        RunnerRegistry
 	dispatcher     RunnerDispatcher
+	runs           RunsBoard
 	settings       []Setting
 	// patterns are the routes of the server, as route registered them:
 	// their first segments are names of the namespace kept for Raun.
@@ -168,6 +172,9 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 	if opts.Runners != nil && (opts.Administrators == nil || opts.Login == nil) {
 		return nil, errors.New("web: Options.Runners is set without Administrators and a Login")
 	}
+	if opts.Runs != nil && opts.Repositories == nil {
+		return nil, errors.New("web: Options.Runs is set without Repositories")
+	}
 	if opts.Runners != nil && opts.Dispatcher == nil {
 		return nil, errors.New("web: Options.Dispatcher is nil with Runners")
 	}
@@ -210,6 +217,7 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 		settings:       slices.Clone(opts.Settings),
 		runners:        opts.Runners,
 		dispatcher:     opts.Dispatcher,
+		runs:           opts.Runs,
 		stop:           make(chan struct{}),
 		now:            opts.Now,
 		random:         opts.Random,
@@ -224,6 +232,9 @@ func newServer(opts Options, bypassPatterns []string) (*Server, error) {
 	}
 	if s.repositories != nil {
 		s.repositoryRoutes()
+	}
+	if s.runs != nil {
+		s.runRoutes()
 	}
 	if s.administrators != nil {
 		s.instanceRoutes()
