@@ -234,7 +234,7 @@ func wakeCases(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		}
 	})
 
-	t.Run("a revocation tells when it sends runs back", func(t *testing.T) {
+	t.Run("a revocation tells, once", func(t *testing.T) {
 		f := newFixture(t)
 		if f.Queued == nil {
 			t.Skip("the fixture does not count")
@@ -247,12 +247,20 @@ func wakeCases(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		if _, err := f.Runners.ClaimFor(ctx, r.ID, at(time.Second)); err != nil {
 			t.Fatal(err)
 		}
+		// An idle runner too: its claims that wait learn it at once.
 		before := f.Queued()
 		if _, err := f.Runners.RevokeRunner(ctx, idle.ID, at(2*time.Second)); err != nil {
 			t.Fatal(err)
 		}
+		if f.Queued() == before {
+			t.Error("the revocation of an idle runner did not tell")
+		}
+		before = f.Queued()
+		if _, err := f.Runners.RevokeRunner(ctx, idle.ID, at(3*time.Second)); err != nil {
+			t.Fatal(err)
+		}
 		if f.Queued() != before {
-			t.Error("a revocation that sent nothing back told")
+			t.Error("the revocation of a revoked runner told")
 		}
 		if n, err := f.Runners.RevokeRunner(ctx, r.ID, at(2*time.Second)); err != nil || n != 1 {
 			t.Fatalf("RevokeRunner = %d, %v", n, err)

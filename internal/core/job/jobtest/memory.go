@@ -458,21 +458,21 @@ func (m *Memory) RotateRunner(_ context.Context, id, hash string) error {
 }
 
 func (m *Memory) RevokeRunner(ctx context.Context, id string, at time.Time) (int, error) {
-	n, err := m.revokeRunner(ctx, id, at)
-	m.queued(n > 0)
+	n, revoked, err := m.revokeRunner(ctx, id, at)
+	m.queued(revoked)
 	return n, err
 }
 
-func (m *Memory) revokeRunner(_ context.Context, id string, at time.Time) (int, error) {
+func (m *Memory) revokeRunner(_ context.Context, id string, at time.Time) (int, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.init()
 	r, ok := m.runners[id]
 	if !ok {
-		return 0, job.ErrNoRunner
+		return 0, false, job.ErrNoRunner
 	}
 	if r.runner.Revoked() {
-		return 0, nil
+		return 0, false, nil
 	}
 	at = at.UTC()
 	r.runner.RevokedAt = at
@@ -489,7 +489,7 @@ func (m *Memory) revokeRunner(_ context.Context, id string, at time.Time) (int, 
 			changed++
 		}
 	}
-	return changed, nil
+	return changed, true, nil
 }
 
 // authenticated returns the runner whose token has hash, when it is not

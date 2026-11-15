@@ -146,9 +146,9 @@ func (s Runners) RotateRunner(ctx context.Context, id, hash string) error {
 }
 
 func (s Runners) RevokeRunner(ctx context.Context, id string, at time.Time) (int, error) {
-	n := 0
+	n, revoked := 0, false
 	err := s.s.write(ctx, func(tx *sql.Tx) error {
-		n = 0
+		n, revoked = 0, false
 		r, err := runnerIn(ctx, tx, id)
 		if err != nil {
 			return err
@@ -156,6 +156,7 @@ func (s Runners) RevokeRunner(ctx context.Context, id string, at time.Time) (int
 		if r.Revoked() {
 			return nil
 		}
+		revoked = true
 		if _, err := tx.ExecContext(ctx, `UPDATE runners SET revoked_at = ? WHERE id = ?`, formatTime(at), id); err != nil {
 			return fmt.Errorf("revoke runner: %w", err)
 		}
@@ -164,7 +165,9 @@ func (s Runners) RevokeRunner(ctx context.Context, id string, at time.Time) (int
 		}
 		return nil
 	})
-	s.s.tellQueued(err == nil && n > 0)
+	// Told for every revocation: the runs sent back may be claimed, and the
+	// claims of the runner, which wait, learn at once that it is revoked.
+	s.s.tellQueued(err == nil && revoked)
 	return n, err
 }
 

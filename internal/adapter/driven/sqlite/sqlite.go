@@ -29,8 +29,9 @@ type Options struct {
 	ReadConns int
 	// Queued, when set, is told after each commit that may have made a job
 	// claimable: a job queued, by itself or with a delivery, or sent back
-	// to the queue by a sweep or the revocation of its runner. The server
-	// gives the notifier that wakes the claims waiting for a job.
+	// to the queue by a sweep, and any revocation of a runner, whose claims
+	// that wait then learn it is revoked. The server gives the notifier
+	// that wakes the claims waiting for a job.
 	Queued func()
 }
 
