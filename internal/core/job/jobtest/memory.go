@@ -46,6 +46,7 @@ type storedRun struct {
 var (
 	_ job.Store       = (*Memory)(nil)
 	_ job.RunnerStore = (*Memory)(nil)
+	_ job.Reads       = (*Memory)(nil)
 )
 
 func (m *Memory) init() {
@@ -385,6 +386,49 @@ func (m *Memory) PurgeLogs(_ context.Context, before time.Time) (int, error) {
 		}
 	}
 	return n, nil
+}
+
+func (m *Memory) JobsOf(ctx context.Context, forge, repository string, limit int) ([]job.JobRuns, error) {
+	m.mu.Lock()
+	m.init()
+	var jobs []job.Job
+	for _, j := range m.jobs {
+		if j.Forge == forge && j.Repository == repository {
+			jobs = append(jobs, j)
+		}
+	}
+	m.mu.Unlock()
+	slices.SortFunc(jobs, func(a, b job.Job) int {
+		if c := b.CreatedAt.Compare(a.CreatedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(b.ID, a.ID)
+	})
+	if len(jobs) > max(limit, 0) {
+		jobs = jobs[:max(limit, 0)]
+	}
+	out := make([]job.JobRuns, 0, len(jobs))
+	for _, j := range jobs {
+		runs, err := m.Runs(ctx, j.ID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, job.JobRuns{Job: j, Runs: runs})
+	}
+	return out, nil
+}
+
+func (m *Memory) OpenRuns(context.Context) (map[string]int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	out := map[string]int{}
+	for _, r := range m.runs {
+		if r.run.Open() {
+			out[r.run.Runner]++
+		}
+	}
+	return out, nil
 }
 
 func cloneRunner(r job.Runner) job.Runner {

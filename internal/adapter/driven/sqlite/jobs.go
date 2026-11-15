@@ -25,7 +25,10 @@ func (s *Store) Jobs() Jobs {
 	return Jobs{s: s}
 }
 
-var _ job.Store = Jobs{}
+var (
+	_ job.Store = Jobs{}
+	_ job.Reads = Jobs{}
+)
 
 const jobColumns = `id, kind, workspace, forge, repository, commit_id, ref, delivery, coalesce_key, priority,
 	state, reason, created_at, not_before, finished_at`
@@ -635,4 +638,77 @@ func (s Jobs) PurgeLogs(ctx context.Context, before time.Time) (int, error) {
 		return nil
 	})
 	return n, err
+}
+
+func (s Jobs) JobsOf(ctx context.Context, forge, repository string, limit int) ([]job.JobRuns, error) {
+	var out []job.JobRuns
+	err := s.s.read(ctx, func(tx *sql.Tx) error {
+		out = nil
+		rows, err := tx.QueryContext(ctx, `SELECT `+jobColumns+` FROM jobs WHERE forge = ? AND repository = ?
+			ORDER BY created_at DESC, id DESC LIMIT ?`, forge, repository, max(limit, 0))
+		if err != nil {
+			return fmt.Errorf("list jobs: %w", err)
+		}
+		index := map[string]int{}
+		for rows.Next() {
+			j, err := scanJob(rows)
+			if err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("list jobs: %w", err)
+			}
+			index[j.ID] = len(out)
+			out = append(out, job.JobRuns{Job: j})
+		}
+		if err := rows.Close(); err != nil {
+			return fmt.Errorf("list jobs: %w", err)
+		}
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("list jobs: %w", err)
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		ids := make([]any, 0, len(out))
+		for _, j := range out {
+			ids = append(ids, j.Job.ID)
+		}
+		runs, err := tx.QueryContext(ctx, `SELECT `+runColumns+` FROM runs WHERE job IN (?`+strings.Repeat(", ?", len(ids)-1)+`)
+			ORDER BY started_at, id`, ids...)
+		if err != nil {
+			return fmt.Errorf("list runs: %w", err)
+		}
+		defer func() { _ = runs.Close() }()
+		for runs.Next() {
+			r, err := scanRun(runs)
+			if err != nil {
+				return fmt.Errorf("list runs: %w", err)
+			}
+			i := index[r.Job]
+			out[i].Runs = append(out[i].Runs, r)
+		}
+		return runs.Err()
+	})
+	return out, err
+}
+
+func (s Jobs) OpenRuns(ctx context.Context) (map[string]int, error) {
+	out := map[string]int{}
+	err := s.s.read(ctx, func(tx *sql.Tx) error {
+		// runs_runner of 0009 holds the open runs by runner.
+		rows, err := tx.QueryContext(ctx, `SELECT runner, count(*) FROM runs WHERE outcome IS NULL GROUP BY runner`)
+		if err != nil {
+			return fmt.Errorf("count open runs: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var runner string
+			var n int
+			if err := rows.Scan(&runner, &n); err != nil {
+				return fmt.Errorf("count open runs: %w", err)
+			}
+			out[runner] = n
+		}
+		return rows.Err()
+	})
+	return out, err
 }
