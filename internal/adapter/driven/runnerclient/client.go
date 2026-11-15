@@ -71,7 +71,7 @@ func New(opts Options) (*Client, error) {
 	if !job.ValidRelease(opts.Release) {
 		return nil, fmt.Errorf("runnerclient: %q is not a release", opts.Release)
 	}
-	c := &http.Client{}
+	c := &http.Client{Transport: transport()}
 	if opts.HTTP != nil {
 		copied := *opts.HTTP
 		c = &copied
@@ -96,7 +96,9 @@ func (c *Client) send(ctx context.Context, timeout time.Duration, path string, l
 	defer cancel()
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return answer{}, fmt.Errorf("runnerclient: %s: %w", path, err)
+		// Only the data of a result can fail: it is not JSON, and sending
+		// it again would fail again.
+		return answer{}, fmt.Errorf("runnerclient: %s: %w: %v", path, job.ErrInvalidResult, err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, bytes.NewReader(payload))
 	if err != nil {
@@ -286,4 +288,17 @@ func (c *Client) Report(ctx context.Context, run string, lease job.Secret, r job
 		return refusal(path, a)
 	}
 	return nil
+}
+
+// maxIdle is how many idle connections the client keeps to the server: one
+// for each of the 64 jobs a runner may run at most.
+const maxIdle = 64
+
+// transport is the transport of a client of its own: the default one, which
+// keeps 2 idle connections to a host, with one for each job.
+func transport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConns = maxIdle
+	t.MaxIdleConnsPerHost = maxIdle
+	return t
 }

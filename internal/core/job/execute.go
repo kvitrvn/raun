@@ -28,6 +28,9 @@ const (
 	resendMax   = 10 * time.Second
 	// flushEvery is how often the log of a run is sent while it runs.
 	flushEvery = 2 * time.Second
+	// lastFlushTries bounds the sends of a chunk at the end of a run: the
+	// result goes even when the log cannot.
+	lastFlushTries = 3
 	// claimPauseFirst and claimPauseMax bound the wait after a claim that
 	// failed for want of a server.
 	claimPauseFirst = time.Second
@@ -352,21 +355,31 @@ func (l *Loop) execute(ctx context.Context, w Work) error {
 	r.logger.Info("job claimed", slog.String("commit", w.Commit))
 
 	// The lease is renewed, and the log sent, from the claim until the
-	// result is answered, the fetch included.
+	// result is answered, the fetch included, each on its own: a log that
+	// cannot be sent never holds up the lease.
 	alive, stopAlive := context.WithCancel(ctx)
-	kept := make(chan struct{})
+	var kept sync.WaitGroup
+	kept.Add(2)
 	go func() {
-		defer close(kept)
-		r.keepAlive(alive, cancel)
+		defer kept.Done()
+		r.renew(alive, cancel)
+	}()
+	go func() {
+		defer kept.Done()
+		r.sendLog(alive, cancel)
 	}()
 	defer func() {
 		stopAlive()
-		<-kept
+		kept.Wait()
 	}()
 
 	res := r.work(ctx)
 	if res == nil || ctx.Err() != nil {
 		return r.stopped(ctx)
+	}
+	if err := CheckResult(w.Kind, *res); err != nil {
+		r.logger.Error("the handler gave a result its kind refuses", slog.String("error", err.Error()))
+		res = &Result{Outcome: OutcomeFailed, Summary: "the handler gave a result its kind refuses"}
 	}
 	r.logf("%s: %s\n", res.Outcome, res.Summary)
 	if err := r.flush(ctx, true); err != nil {
@@ -485,12 +498,12 @@ func (r *run) fetchOnce(ctx context.Context, dir string, try int) (Snapshot, err
 		return nil, err
 	}
 	s, err := r.l.checkout.Fetch(ctx, target, r.w)
+	if err == nil && s.Commit() != r.w.Commit {
+		err = fmt.Errorf("the checkout holds %s, not the commit of the job", s.Commit())
+	}
 	if err != nil {
 		_ = os.RemoveAll(target)
 		return nil, err
-	}
-	if s.Commit() != r.w.Commit {
-		return nil, fmt.Errorf("the checkout holds %s, not the commit of the job", s.Commit())
 	}
 	return s, nil
 }
@@ -499,45 +512,56 @@ func (r *run) logf(format string, args ...any) {
 	_, _ = fmt.Fprintf(r.log, format, args...)
 }
 
-// keepAlive renews the lease every HeartbeatEvery and sends the log every
-// flushEvery, until ctx is done; it ends the run, through cancel, when the
-// server says it must stop or when its lease has passed.
-func (r *run) keepAlive(ctx context.Context, cancel context.CancelFunc) {
-	beats, stopBeats := r.l.every(HeartbeatEvery)
-	defer stopBeats()
-	flushes, stopFlushes := r.l.every(flushEvery)
-	defer stopFlushes()
+// renew renews the lease every HeartbeatEvery until ctx is done; it ends the
+// run, through cancel, when the server says it must stop or when its lease
+// has passed.
+func (r *run) renew(ctx context.Context, cancel context.CancelFunc) {
+	beats, stop := r.l.every(HeartbeatEvery)
+	defer stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-flushes:
-			if err := r.flush(ctx, false); err != nil {
-				r.end(err)
-				cancel()
-				return
-			}
 		case <-beats:
-			renewal, err := r.l.remote.Heartbeat(ctx, r.w.Run, r.w.Lease)
-			switch {
-			case ctx.Err() != nil:
-				return
-			case err == nil && renewal.Cancel:
-				r.end(ErrCancelled)
-			case err == nil:
-				r.mu.Lock()
-				r.expires = renewal.Expires
-				r.mu.Unlock()
+		}
+		renewal, err := r.l.remote.Heartbeat(ctx, r.w.Run, r.w.Lease)
+		switch {
+		case ctx.Err() != nil:
+			return
+		case err == nil && renewal.Cancel:
+			r.end(ErrCancelled)
+		case err == nil:
+			r.mu.Lock()
+			r.expires = renewal.Expires
+			r.mu.Unlock()
+			continue
+		case errors.Is(err, ErrStaleLease) || errors.Is(err, ErrUnauthenticated) || errors.Is(err, ErrProtocol):
+			r.end(err)
+		default:
+			r.logger.Warn("renew the lease; trying again", slog.String("error", err.Error()))
+			if r.l.now().Before(r.leaseExpires()) {
 				continue
-			case errors.Is(err, ErrStaleLease) || errors.Is(err, ErrUnauthenticated) || errors.Is(err, ErrProtocol):
-				r.end(err)
-			default:
-				r.logger.Warn("renew the lease; trying again", slog.String("error", err.Error()))
-				if r.l.now().Before(r.leaseExpires()) {
-					continue
-				}
-				r.end(ErrStaleLease)
 			}
+			r.end(ErrStaleLease)
+		}
+		cancel()
+		return
+	}
+}
+
+// sendLog sends the log every flushEvery until ctx is done; it ends the run,
+// through cancel, when the server says it must stop.
+func (r *run) sendLog(ctx context.Context, cancel context.CancelFunc) {
+	ticks, stop := r.l.every(flushEvery)
+	defer stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticks:
+		}
+		if err := r.flush(ctx, false); err != nil {
+			r.end(err)
 			cancel()
 			return
 		}
@@ -550,6 +574,7 @@ func (r *run) keepAlive(ctx context.Context, cancel context.CancelFunc) {
 func (r *run) flush(ctx context.Context, final bool) error {
 	r.flushing.Lock()
 	defer r.flushing.Unlock()
+	failed := 0
 	for {
 		seq, text, ok := r.log.take(final)
 		if !ok {
@@ -560,6 +585,7 @@ func (r *run) flush(ctx context.Context, final bool) error {
 		switch {
 		case err == nil:
 			r.log.ack(seq)
+			failed = 0
 		case errors.As(err, &gap) && gap.Expected > seq:
 			// The server took the chunk, and the answer was lost.
 			r.log.ack(seq)
@@ -576,9 +602,11 @@ func (r *run) flush(ctx context.Context, final bool) error {
 			if !final {
 				return nil
 			}
-			// The last chunks are sent again until the lease or the
-			// deadline passes, with the result after them.
-			if !r.wait(ctx) {
+			// The last chunks are sent again a few times, then dropped:
+			// the result goes after them either way.
+			if failed++; failed >= lastFlushTries || !r.wait(ctx) {
+				r.logger.Warn("the rest of the log of the run could not be sent; dropped")
+				r.log.drop()
 				return nil
 			}
 		}

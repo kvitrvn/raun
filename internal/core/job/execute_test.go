@@ -529,3 +529,57 @@ func TestCleanWorkDirRemovesTheRunsLeft(t *testing.T) {
 		t.Error("a link was followed")
 	}
 }
+
+// TestALogThatCannotBeSentHoldsUpNeitherTheLeaseNorTheResult: the log
+// route failing for good, the heartbeats go on and the result is sent.
+func TestALogThatCannotBeSentHoldsUpNeitherTheLeaseNorTheResult(t *testing.T) {
+	release := make(chan struct{})
+	h := job.HandlerFunc(func(ctx context.Context, task job.Task) (job.Result, error) {
+		fmt.Fprintln(task.Log, "working")
+		<-release
+		return job.Result{Outcome: job.OutcomeSucceeded, Summary: "done"}, nil
+	})
+	w := newWorld(t, 1, h)
+	var beats atomic.Int32
+	w.remote.heartbeat = func(string) (job.Renewal, error) {
+		beats.Add(1)
+		return job.Renewal{Expires: time.Now().Add(job.Lease)}, nil
+	}
+	w.remote.appendLog = func(string, int) error { return errors.New("the log route is down") }
+	w.remote.works <- work("r1")
+	stop, _ := w.start(t)
+	time.Sleep(30 * time.Millisecond)
+	before := beats.Load()
+	time.Sleep(30 * time.Millisecond)
+	if beats.Load() <= before {
+		t.Error("the heartbeats stopped while the log could not be sent")
+	}
+	close(release)
+	w.waitReported(t, "r1")
+	_ = stop()
+	if res := w.remote.resultsOf("r1"); len(res) != 1 || res[0].Outcome != job.OutcomeSucceeded {
+		t.Errorf("results %+v", res)
+	}
+}
+
+// TestAResultItsKindRefusesIsNotSent: the runner checks the result of a
+// handler, and fails the job instead of sending one the server would
+// refuse, or one it cannot send.
+func TestAResultItsKindRefusesIsNotSent(t *testing.T) {
+	for name, res := range map[string]job.Result{
+		"data noop refuses": {Outcome: job.OutcomeSucceeded, Summary: "x", Data: []byte(`{"found":1}`)},
+		"data not JSON":     {Outcome: job.OutcomeSucceeded, Summary: "x", Data: []byte(`{`)},
+		"no outcome":        {Summary: "x"},
+		"two lines":         {Outcome: job.OutcomeSucceeded, Summary: "a\nb"},
+	} {
+		w := newWorld(t, 1, job.HandlerFunc(func(context.Context, job.Task) (job.Result, error) { return res, nil }))
+		w.remote.works <- work("r1")
+		stop, _ := w.start(t)
+		w.waitReported(t, "r1")
+		_ = stop()
+		got := w.remote.resultsOf("r1")
+		if len(got) != 1 || got[0].Outcome != job.OutcomeFailed || got[0].Summary != "the handler gave a result its kind refuses" || got[0].Data != nil {
+			t.Errorf("%s: sent %+v", name, got)
+		}
+	}
+}
