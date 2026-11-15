@@ -19,6 +19,14 @@ const ClaimWait = 30 * time.Second
 // apart from the request that ended the run.
 const revokeTimeout = 10 * time.Second
 
+// mintTimeout bounds the mint of one clone credential: a claim waits
+// ClaimWait, then mints once more at most, and answers well within the time
+// the server gives a response.
+const mintTimeout = 15 * time.Second
+
+// reapParallel bounds the revocations Reap sends at once.
+const reapParallel = 8
+
 // ErrNoClone: the forge of the job cannot mint a clone credential.
 var ErrNoClone = errors.New("the forge of the job cannot mint a clone credential")
 
@@ -96,11 +104,22 @@ type Assignment struct {
 // closed: ErrNoJob then. The wait holds no transaction: each wake-up claims
 // again. A job whose credential cannot be minted is not given: its run is
 // removed, the job may be claimed again MintDelay later, and the claim goes
-// on waiting. ErrUnauthenticated for a runner revoked meanwhile.
+// on waiting, until its wait has passed. ErrUnauthenticated for a runner
+// revoked meanwhile.
 func (d *Dispatcher) Claim(ctx context.Context, runner string, stop <-chan struct{}) (Assignment, error) {
 	timer := time.NewTimer(d.wait)
 	defer timer.Stop()
 	for {
+		// The wait ends between two tries too, after a mint that failed.
+		select {
+		case <-timer.C:
+			return Assignment{}, ErrNoJob
+		case <-stop:
+			return Assignment{}, ErrNoJob
+		case <-ctx.Done():
+			return Assignment{}, ErrNoJob
+		default:
+		}
 		wake := d.notifier.Wait()
 		c, err := d.runners.ClaimFor(ctx, runner, d.now())
 		switch {
@@ -116,12 +135,8 @@ func (d *Dispatcher) Claim(ctx context.Context, runner string, stop <-chan struc
 		case err != nil:
 			return Assignment{}, err
 		}
-		a, ok := d.assign(ctx, c)
-		if ok {
+		if a, ok := d.assign(ctx, c); ok {
 			return a, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return Assignment{}, ErrNoJob
 		}
 	}
 }
@@ -157,6 +172,8 @@ func (d *Dispatcher) mint(ctx context.Context, j Job) (Credential, error) {
 	if d.clone == nil || j.Forge != d.forge {
 		return Credential{}, fmt.Errorf("%w: %s", ErrNoClone, j.Forge)
 	}
+	ctx, cancel := context.WithTimeout(ctx, mintTimeout)
+	defer cancel()
 	return d.clone.MintClone(ctx, j.Repository)
 }
 
@@ -167,11 +184,18 @@ func (d *Dispatcher) hold(run string, c Credential) {
 }
 
 // revoke revokes the credential of run, if one is held, apart from ctx: a
-// request that ends does not stop it. It is sent whatever the clock of the
-// server says of the expiry, which the clock of the forge decides; a
-// revocation that fails is tried again by Reap until the credential
-// expires by the clock of the server.
+// request that ends does not stop it.
 func (d *Dispatcher) revoke(ctx context.Context, run string) {
+	d.revokeWithin(context.WithoutCancel(ctx), run)
+}
+
+// revokeWithin revokes the credential of run, if one is held, until ctx is
+// done. Taking it from the held ones first, one revocation at most runs
+// for a credential. It is sent whatever the clock of the server says of the
+// expiry, which the clock of the forge decides; a revocation that fails is
+// tried again by Reap until the credential expires by the clock of the
+// server.
+func (d *Dispatcher) revokeWithin(ctx context.Context, run string) {
 	d.mu.Lock()
 	c, ok := d.held[run]
 	delete(d.held, run)
@@ -179,7 +203,7 @@ func (d *Dispatcher) revoke(ctx context.Context, run string) {
 	if !ok || d.clone == nil {
 		return
 	}
-	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), revokeTimeout)
+	rctx, cancel := context.WithTimeout(ctx, revokeTimeout)
 	defer cancel()
 	if err := d.clone.RevokeClone(rctx, c); err != nil {
 		if !d.now().Before(c.Expires) {
@@ -212,8 +236,9 @@ func (d *Dispatcher) Held() int {
 // Reap revokes the credentials of the runs that have ended, whatever ended
 // them: a sweep, a cancellation, the revocation of their runner, the
 // deactivation of their repository; it tries again the revocations that
-// failed, and forgets the credentials that expired. It returns how many
-// credentials it let go.
+// failed, and forgets the credentials that expired. It sends reapParallel
+// revocations at once at most, and stops with ctx. It returns how many
+// credentials it let go or tried to revoke.
 func (d *Dispatcher) Reap(ctx context.Context) int {
 	d.mu.Lock()
 	runs := make([]string, 0, len(d.held))
@@ -221,12 +246,13 @@ func (d *Dispatcher) Reap(ctx context.Context) int {
 		runs = append(runs, run)
 	}
 	d.mu.Unlock()
+	var ended []string
 	n := 0
 	for _, run := range runs {
 		r, err := d.jobs.Run(ctx, run)
 		switch {
 		case errors.Is(err, ErrNotFound) || (err == nil && !r.Open()):
-			d.revoke(ctx, run)
+			ended = append(ended, run)
 		case err != nil:
 			continue
 		default:
@@ -238,9 +264,27 @@ func (d *Dispatcher) Reap(ctx context.Context) int {
 				continue
 			}
 			d.forget(run)
+			n++
+		}
+	}
+	slots := make(chan struct{}, reapParallel)
+	var wg sync.WaitGroup
+	for _, run := range ended {
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			wg.Wait()
+			return n
 		}
 		n++
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer func() { <-slots }()
+			d.revokeWithin(ctx, run)
+		}()
 	}
+	wg.Wait()
 	return n
 }
 

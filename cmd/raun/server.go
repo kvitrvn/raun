@@ -311,7 +311,14 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		defer ticker.Stop()
 		sweeps = ticker.C
 	}
-	go sweepEvery(ctx, logger, store.Jobs(), reaper(dispatcher), sweeps, deps.swept, done)
+	go sweepEvery(ctx, logger, store.Jobs(), sweeps, deps.swept, done)
+	if dispatcher != nil {
+		// The credentials of the runs ended by a sweep, a cancellation or
+		// a revocation are revoked at the pace of the sweep.
+		reaps := time.NewTicker(sweepInterval)
+		defer reaps.Stop()
+		go reapEvery(ctx, logger, dispatcher, reaps.C, done)
+	}
 	if repositories != nil {
 		go reach.run(ctx, logger, repositories.SyncReach, deps.synced, done)
 		// What the App reaches may have changed while the server was

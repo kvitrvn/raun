@@ -24,11 +24,26 @@ type clones struct {
 	live    map[string]bool
 	fail    error
 	failRev error
+	// slow is how long each mint and revocation takes, or until its
+	// context is done.
+	slow  time.Duration
+	mints int
 	// minting, when set, runs during each mint.
 	minting func()
 }
 
-func (c *clones) MintClone(_ context.Context, repo string) (job.Credential, error) {
+func (c *clones) MintClone(ctx context.Context, repo string) (job.Credential, error) {
+	c.mu.Lock()
+	c.mints++
+	slow := c.slow
+	c.mu.Unlock()
+	if slow > 0 {
+		select {
+		case <-time.After(slow):
+		case <-ctx.Done():
+			return job.Credential{}, ctx.Err()
+		}
+	}
 	c.mu.Lock()
 	if c.fail != nil {
 		defer c.mu.Unlock()
@@ -49,7 +64,17 @@ func (c *clones) MintClone(_ context.Context, repo string) (job.Credential, erro
 		Password: job.Secret(secret), Expires: time.Now().Add(time.Hour)}, nil
 }
 
-func (c *clones) RevokeClone(_ context.Context, cred job.Credential) error {
+func (c *clones) RevokeClone(ctx context.Context, cred job.Credential) error {
+	c.mu.Lock()
+	slow := c.slow
+	c.mu.Unlock()
+	if slow > 0 {
+		select {
+		case <-time.After(slow):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.failRev != nil {
@@ -200,6 +225,27 @@ func TestDispatcherClaim(t *testing.T) {
 		}
 	})
 
+	t.Run("a runner revoked while its claim waits is refused at once", func(t *testing.T) {
+		w := newDispatchWorld(t, time.Minute)
+		got := make(chan error, 1)
+		go func() {
+			_, err := w.d.Claim(ctx, w.runner.ID, nil)
+			got <- err
+		}()
+		time.Sleep(20 * time.Millisecond)
+		if _, err := w.store.RevokeRunner(ctx, w.runner.ID, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case err := <-got:
+			if !errors.Is(err, job.ErrUnauthenticated) {
+				t.Errorf("Claim = %v, want ErrUnauthenticated", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("the revocation did not end the claim")
+		}
+	})
+
 	t.Run("a revoked runner is refused", func(t *testing.T) {
 		w := newDispatchWorld(t, time.Minute)
 		if _, err := w.store.RevokeRunner(ctx, w.runner.ID, time.Now()); err != nil {
@@ -230,6 +276,33 @@ func TestDispatcherClaim(t *testing.T) {
 		}
 		if !strings.Contains(w.logs.String(), "forge down") {
 			t.Errorf("the failure was not logged: %s", w.logs)
+		}
+	})
+
+	t.Run("a slow forge does not hold a claim past its wait", func(t *testing.T) {
+		w := newDispatchWorld(t, 50*time.Millisecond)
+		for range 20 {
+			w.enqueue(t)
+		}
+		w.clones.fail = errors.New("forge down")
+		w.clones.slow = 20 * time.Millisecond
+		start := time.Now()
+		if _, err := w.d.Claim(ctx, w.runner.ID, nil); !errors.Is(err, job.ErrNoJob) {
+			t.Fatalf("Claim = %v", err)
+		}
+		w.clones.mu.Lock()
+		mints := w.clones.mints
+		w.clones.mu.Unlock()
+		if elapsed := time.Since(start); mints >= 20 || elapsed > time.Second {
+			t.Errorf("the claim minted %d times in %s, past its wait", mints, elapsed)
+		}
+		stop := make(chan struct{})
+		close(stop)
+		w.clones.mu.Lock()
+		w.clones.mints = 0
+		w.clones.mu.Unlock()
+		if _, err := w.d.Claim(ctx, w.runner.ID, stop); !errors.Is(err, job.ErrNoJob) || w.clones.mints != 0 {
+			t.Errorf("a claim of a stopping server = %v, %d mints", err, w.clones.mints)
 		}
 	})
 
@@ -396,6 +469,58 @@ func TestDispatcherRun(t *testing.T) {
 		}
 		if n := w.d.Reap(ctx); n != 1 || w.clones.isLive(a.Clone) || w.d.Held() != 0 {
 			t.Errorf("Reap after the revocation of the runner = %d, live %v", n, w.clones.isLive(a.Clone))
+		}
+	})
+
+	t.Run("reap revokes in parallel and stops with its context", func(t *testing.T) {
+		w := newDispatchWorld(t, time.Minute)
+		var claimed []job.Assignment
+		for range 16 {
+			w.enqueue(t)
+			a, err := w.d.Claim(ctx, w.runner.ID, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			claimed = append(claimed, a)
+		}
+		if _, err := w.store.RevokeRunner(ctx, w.runner.ID, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		w.clones.slow = 50 * time.Millisecond
+		start := time.Now()
+		if n := w.d.Reap(ctx); n != 16 {
+			t.Errorf("Reap = %d", n)
+		}
+		// 16 revocations of 50 ms, 8 at a time.
+		if elapsed := time.Since(start); elapsed > 400*time.Millisecond {
+			t.Errorf("Reap took %s: the revocations ran one after another", elapsed)
+		}
+		for _, a := range claimed {
+			if w.clones.isLive(a.Clone) {
+				t.Fatal("a credential outlived Reap")
+			}
+		}
+
+		w.enqueue(t)
+		other, err := w.d.Claim(ctx, w.other.ID, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.store.RevokeRunner(ctx, w.other.ID, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		w.clones.slow = time.Hour
+		cctx, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+		defer cancel()
+		done := make(chan struct{})
+		go func() { w.d.Reap(cctx); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("Reap outlived its context")
+		}
+		if w.d.Held() != 1 || !w.clones.isLive(other.Clone) {
+			t.Error("a revocation cut short was not kept for the next pass")
 		}
 	})
 

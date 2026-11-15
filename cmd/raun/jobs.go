@@ -21,15 +21,6 @@ type credentialReaper interface {
 	Reap(ctx context.Context) int
 }
 
-// reaper is d as sweepEvery takes it: nil without a dispatcher, and not an
-// interface holding a nil pointer.
-func reaper(d *job.Dispatcher) credentialReaper {
-	if d == nil {
-		return nil
-	}
-	return d
-}
-
 // runnerDispatcher is d as the web handler takes it: nil without one.
 func runnerDispatcher(d *job.Dispatcher) web.RunnerDispatcher {
 	if d == nil {
@@ -38,12 +29,30 @@ func runnerDispatcher(d *job.Dispatcher) web.RunnerDispatcher {
 	return d
 }
 
-// sweepEvery sweeps the queue on each tick until done, then revokes the
-// clone credentials of the runs that ended, with reap when set, telling
-// swept, when set, what each sweep did. A failure is logged and the next
-// tick tries again; the stop of the server cancels ctx, and with it a sweep
-// in progress.
-func sweepEvery(ctx context.Context, logger *slog.Logger, s sweeper, reap credentialReaper, ticks <-chan time.Time, swept func(int, error), done <-chan struct{}) {
+// reapEvery revokes, on each tick until done, the clone credentials of the
+// runs that ended, apart from the sweep of the queue, which a forge that
+// hangs never holds up. The stop of the server cancels ctx, and with it the
+// revocations in progress.
+func reapEvery(ctx context.Context, logger *slog.Logger, reap credentialReaper, ticks <-chan time.Time, done <-chan struct{}) {
+	for {
+		select {
+		case <-done:
+			return
+		case <-ctx.Done():
+			return
+		case <-ticks:
+			if n := reap.Reap(ctx); n > 0 {
+				logger.Info("clone credentials of ended runs let go", slog.Int("credentials", n))
+			}
+		}
+	}
+}
+
+// sweepEvery sweeps the queue on each tick until done, telling swept, when
+// set, what each sweep did. A failure is logged and the next tick tries
+// again; the stop of the server cancels ctx, and with it a sweep in
+// progress.
+func sweepEvery(ctx context.Context, logger *slog.Logger, s sweeper, ticks <-chan time.Time, swept func(int, error), done <-chan struct{}) {
 	for {
 		select {
 		case <-done:
@@ -57,11 +66,6 @@ func sweepEvery(ctx context.Context, logger *slog.Logger, s sweeper, reap creden
 				logger.Warn("sweep the queue of jobs", slog.String("error", err.Error()))
 			case n > 0:
 				logger.Info("jobs ended or sent back to the queue", slog.Int("jobs", n))
-			}
-			if reap != nil {
-				if r := reap.Reap(ctx); r > 0 {
-					logger.Info("clone credentials of ended runs let go", slog.Int("credentials", r))
-				}
 			}
 			if swept != nil {
 				swept(n, err)
