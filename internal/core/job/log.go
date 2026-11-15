@@ -68,6 +68,20 @@ func CheckChunk(seq int, text string) error {
 	return nil
 }
 
+// Takes reports whether a log whose next chunk is l.Next takes the chunk
+// numbered seq: not one sent again, below it, which changes nothing; one
+// past it is a SequenceError. A store that does not hold the text of l
+// decides by it as Append does.
+func (l Log) Takes(seq int) (bool, error) {
+	switch {
+	case seq < l.Next:
+		return false, nil
+	case seq > l.Next:
+		return false, &SequenceError{Expected: l.Next}
+	}
+	return true, nil
+}
+
 // Append returns l with the chunk numbered seq holding text, by the rules
 // every store applies: a chunk sent again, below Next, changes nothing; one
 // past Next is a SequenceError; past MaxLog the text is cut, at a character,
@@ -78,11 +92,8 @@ func (l Log) Append(seq int, text string) (Log, error) {
 	if err := CheckChunk(seq, text); err != nil {
 		return l, err
 	}
-	switch {
-	case seq < l.Next:
-		return l, nil
-	case seq > l.Next:
-		return l, &SequenceError{Expected: l.Next}
+	if take, err := l.Takes(seq); !take {
+		return l, err
 	}
 	l.Next++
 	if l.Cut {

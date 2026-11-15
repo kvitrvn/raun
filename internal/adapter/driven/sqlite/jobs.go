@@ -569,21 +569,42 @@ func (s Jobs) AppendLog(ctx context.Context, run, token string, seq int, text st
 		if !r.Holds(now) {
 			return job.ErrStaleLease
 		}
-		l, err := logIn(ctx, tx, run)
-		if err != nil {
+		// The text is read only when the chunk crosses the bound: below
+		// it, the chunk is appended in place, and past the cut only the
+		// number moves.
+		var l job.Log
+		var cut, size int
+		err = tx.QueryRowContext(ctx, `SELECT next_seq, cut, length(CAST(text AS BLOB)) FROM run_logs WHERE run = ?`, run).Scan(&l.Next, &cut, &size)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("append log: %w", err)
 		}
-		next, err := l.Append(seq, text)
-		if err != nil || next.Next == l.Next {
+		l.Cut = cut == 1
+		if take, err := l.Takes(seq); !take {
 			return err
 		}
-		cut := 0
-		if next.Cut {
-			cut = 1
+		switch {
+		case l.Cut:
+			_, err = tx.ExecContext(ctx, `UPDATE run_logs SET next_seq = ? WHERE run = ?`, l.Next+1, run)
+		case size+len(text) <= job.MaxLog:
+			_, err = tx.ExecContext(ctx, `INSERT INTO run_logs (run, next_seq, cut, text) VALUES (?, ?, 0, ?)
+				ON CONFLICT (run) DO UPDATE SET next_seq = excluded.next_seq, text = run_logs.text || excluded.text`,
+				run, l.Next+1, text)
+		default:
+			if l, err = logIn(ctx, tx, run); err != nil {
+				return fmt.Errorf("append log: %w", err)
+			}
+			next, aerr := l.Append(seq, text)
+			if aerr != nil {
+				return aerr
+			}
+			if !next.Cut {
+				return fmt.Errorf("append log: a log past its bound was not cut")
+			}
+			_, err = tx.ExecContext(ctx, `INSERT INTO run_logs (run, next_seq, cut, text) VALUES (?, ?, 1, ?)
+				ON CONFLICT (run) DO UPDATE SET next_seq = excluded.next_seq, cut = 1, text = excluded.text`,
+				run, next.Next, next.Text)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO run_logs (run, next_seq, cut, text) VALUES (?, ?, ?, ?)
-			ON CONFLICT (run) DO UPDATE SET next_seq = excluded.next_seq, cut = excluded.cut, text = excluded.text`,
-			run, next.Next, cut, next.Text); err != nil {
+		if err != nil {
 			return fmt.Errorf("append log: %w", err)
 		}
 		return nil
