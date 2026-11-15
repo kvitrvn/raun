@@ -37,8 +37,12 @@ func (f *Fake) MintClone(_ context.Context, repo string) (job.Credential, error)
 	expires := f.clock().Add(CloneLifetime)
 	f.clones[secret] = &fakeClone{repo: repo, expires: expires}
 	full := f.repos[repo].repo.FullName
+	u := "https://" + f.name + ".test/" + full + ".git"
+	if f.cloneURL != nil {
+		u = f.cloneURL(repo)
+	}
 	return job.Credential{
-		URL: "https://" + f.name + ".test/" + full + ".git", FullName: full,
+		URL: u, FullName: full,
 		Username: "x-access-token", Password: job.Secret(secret), Expires: expires,
 	}, nil
 }
@@ -77,4 +81,20 @@ func (f *Fake) Clones() (minted, live int) {
 		}
 	}
 	return minted, live
+}
+
+// SetCloneURL makes the clone credentials of the fake fetch the repository
+// with this identifier from the address url gives, such as a fixture served
+// on a loopback address, instead of https://<name>.test/<owner>/<name>.git.
+func (f *Fake) SetCloneURL(url func(repo string) string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cloneURL = url
+}
+
+// ClonePassword reports whether password is the one of a clone credential
+// the fake minted for the repository with this identifier and still
+// accepts.
+func (f *Fake) ClonePassword(password, repo string) bool {
+	return f.CloneReads(job.Credential{Password: job.Secret(password)}, repo)
 }

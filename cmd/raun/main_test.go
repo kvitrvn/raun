@@ -51,10 +51,10 @@ func TestRun(t *testing.T) {
 			wantStderr: []string{"raun server: takes no arguments", "Usage:"},
 		},
 		{
-			name:       "runner is not implemented",
-			args:       []string{"runner"},
-			wantCode:   exitNotImplemented,
-			wantStderr: []string{"raun runner: not implemented yet"},
+			name:       "runner takes no arguments",
+			args:       []string{"runner", "--capacity", "2"},
+			wantCode:   exitUsage,
+			wantStderr: []string{"raun runner: takes no arguments", "Usage:"},
 		},
 		{
 			name:       "unknown command",
