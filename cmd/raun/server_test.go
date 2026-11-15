@@ -97,6 +97,10 @@ func start(t *testing.T, dir string, env []string, deps serverDeps) *server {
 	started := make(chan struct{})
 	deps.listener = ln
 	deps.started = func(net.Addr) { close(started) }
+	if deps.claimWait == 0 {
+		// A claim of an empty queue answers quickly.
+		deps.claimWait = 50 * time.Millisecond
+	}
 	go func() { s.code <- runServer(ctx, environ, s.stderr, deps) }()
 	select {
 	case <-started:

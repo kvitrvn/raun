@@ -1,6 +1,6 @@
 # Runners
 
-> Status: decided by the [epic 6 review](implementation/06-jobs-and-runner.md) (#36), not implemented yet, but for the queue: jobs, runs, leases, retry, cancellation and coalescing exist in `internal/core/job` on SQLite since #37, and nothing creates a job in production yet; runners, their tokens and the authentication of `/api/runner/` exist since #38, which answers an authenticated request with `404` until #39 adds the routes below and the clone credential, #40 `raun runner`, #41 the screens, #42 the end-to-end test; each updates this page as it lands. `raun runner` still answers that it is not implemented.
+> Status: decided by the [epic 6 review](implementation/06-jobs-and-runner.md) (#36). Jobs, runs, leases, retry, cancellation and coalescing exist in `internal/core/job` on SQLite since #37, and nothing creates a job in production yet; runners, their tokens and the authentication of `/api/runner/` since #38; the protocol below, the clone credential and the logs since #39: the routes in `internal/adapter/driving/web`, the messages in `internal/adapter/runnerapi`, the long poll and the credentials in `job.Dispatcher`. #40 brings `raun runner`, #41 the screens, #42 the end-to-end test; each updates this page as it lands. `raun runner` still answers that it is not implemented.
 
 A runner is a `raun runner` process that pulls jobs from a Raun server over HTTP, fetches the commit of each job with a short-lived credential, runs it, and reports back. It runs where its owner wants, behind a NAT included: the server never connects to it. It holds what the server never holds, such as LLM credentials (from epic 9), and receives nothing but what its job needs. Why each rule is what it is: [the record](implementation/06-jobs-and-runner.md).
 
@@ -55,16 +55,18 @@ Version 1. Every route is under `/api/runner/v1/`, takes and gives JSON, and nee
 | `User-Agent` | `raun-runner/<release>` |
 | `Raun-Lease` | The lease token of the run, on the routes of a run |
 
-Bodies are decoded strictly: an unknown field or a value out of range is refused with `400`, a body past the bound of its route with `413`. An error answers `{"error": "<what went wrong>"}`, which holds no token.
+Every answer with a body is JSON. Bodies are decoded strictly: anything but one JSON object, an unknown field, a chunk without `seq` or `text`, or a value out of range is refused with `400`, a body past the bound of its route with `413`. A `User-Agent` that is not `raun-runner/<release>`, a release of 1 to 64 letters, digits and `.+-_`, is refused with `400`; the server records the release on the runner. A route of a run without one `Raun-Lease` header is refused with `400`. An error answers `{"error": "<what went wrong>"}`, which holds no token; an unknown route of protocol 1 answers `404`, another method than `POST` `405`.
 
 | Route | Body | Bound | Answers |
 | --- | --- | --- | --- |
-| `POST /api/runner/v1/claim` | `{}` | 1 KiB | `200` a job, `204` none after up to 30 seconds |
-| `POST /api/runner/v1/runs/{run}/heartbeat` | `{}` | 1 KiB | `200` the new end of the lease and whether the job is cancelled; `409` the run is no longer current |
-| `POST /api/runner/v1/runs/{run}/log` | `{"seq": n, "text": "..."}` | 512 KiB, and 64 KiB of decoded text | `204`; `409` with the expected `seq`, or for a run no longer current |
-| `POST /api/runner/v1/runs/{run}/result` | `{"outcome": "succeeded" \| "failed", "summary": "...", "data": {...}}` | That of the kind (`noop`: 4 KiB) | `204`; `409` for another result, or a run no longer current; `422` a result its kind refuses, which fails the job |
+| `POST /api/runner/v1/claim` | `{}` | 1 KiB | `200` a job, `204` none after up to 30 seconds, or at once when the server stops; `401` at once for a runner revoked while it waits |
+| `POST /api/runner/v1/runs/{run}/heartbeat` | `{}` | 1 KiB | `200` `{"expires": "...", "cancel": false}`, the new end of the lease, or `{"cancel": true}` for a cancelled job; `409` the run is no longer current |
+| `POST /api/runner/v1/runs/{run}/log` | `{"seq": n, "text": "..."}` | 512 KiB, and 64 KiB of decoded text (`413` past it) | `204`, for a chunk sent again too; `409` `{"error": "...", "expected": n}` for a chunk that skips a number, or a run no longer current or cancelled; `400` a negative `seq` |
+| `POST /api/runner/v1/runs/{run}/result` | `{"outcome": "succeeded" \| "failed", "summary": "...", "data": {...}}` | The data bound of the kind plus 8 KiB (`noop`: 12 KiB) | `204`; `409` for another result, or a run no longer current or cancelled; `422` a result its kind refuses, which fails the job |
 
-Any route answers `401` to a token that is unknown or revoked, and `400` to a protocol the server does not speak, whether the header or the path names it.
+A run is no longer current when its lease token is not the one of the current run of its job, when the run holds no lease any more, or when it belongs to another runner: each answers the same `409`.
+
+Any route answers `401` to a token that is unknown or revoked, and `400` to a protocol the server does not speak, whether the header or the path names it, or when they name different ones; every path below `/api/runner/` is the runner API's.
 
 ### A normal run
 
@@ -97,7 +99,7 @@ Raun-Runner-Protocol: 1
 }
 ```
 
-The runner then sends heartbeats (`{"expires": "...", "cancel": false}`), log chunks numbered from 0, and its result:
+The runner then sends heartbeats (`{"expires": "...", "cancel": false}`, `{"cancel": true}` once the job is cancelled), log chunks numbered from 0, and its result:
 
 ```http
 POST /api/runner/v1/runs/3e9b0c6a1f2d4e58/result
@@ -106,7 +108,7 @@ Raun-Lease: [lease token]
 {"outcome": "succeeded", "summary": "nothing to do", "data": {}}
 ```
 
-`204`. Sent again after a lost answer, the same result gets `204` again; a different one gets `409`.
+`204`. Sent again after a lost answer, the same result, byte for byte, gets `204` again; a different one gets `409`.
 
 ### A runner of another protocol
 
@@ -131,8 +133,8 @@ The commit cannot be fetched after three tries (the credential refused, the comm
 
 ## The clone credential
 
-On GitHub, an installation token of the App for the repository of the job alone, with Contents read, which lasts one hour at most. The server mints it for the run at the claim, holds it in memory only, and revokes it when the run ends. The runner passes it to the one `git fetch --depth 1` of the commit as an HTTP header, through the environment of that Git process alone, never on its command line, in a file or in the configuration of the checkout, and forgets it before the handler starts. It reads the whole repository until then: a runner is trusted with the repositories of the jobs it takes, no more. The head commit of a pull request from a fork is fetched from the base repository.
+On GitHub, an installation token of the App for the repository of the job alone, with Contents read, which lasts one hour at most. The server mints it for the run at the claim, apart from the tokens it keeps for its own reads, holds it in memory only, and revokes it when the run ends: at once for a result, accepted or refused, and for a heartbeat, a log or a result that finds the run cancelled or no longer current; within 15 seconds, at the next pass of the reaper, for a run ended otherwise, by its lease, its deadline, a cancellation, the revocation of its runner or the deactivation of its repository. A revocation that fails is tried again at each pass until the credential expires. A job cancelled while its credential is minted is not given, and the credential is revoked at once. The runner passes it to the one `git fetch --depth 1` of the commit as an HTTP header, through the environment of that Git process alone, never on its command line, in a file or in the configuration of the checkout, and forgets it before the handler starts. It reads the whole repository until then: a runner is trusted with the repositories of the jobs it takes, no more. The head commit of a pull request from a fork is fetched from the base repository.
 
 ## Logs
 
-A log is lines of text: the steps of the runner and what the handler of the job writes. It never holds a credential, a URL holding one, the environment, a declared secret or the content of the repository; the runner redacts the clone credential and the secrets it knows. A run keeps 1 MiB of log, ending with `(truncated)` beyond. The page of a run shows it as escaped text to whoever the forge lets read the repository, polled every 2 seconds while the run lasts, and keeps it 30 days.
+A log is lines of text: the steps of the runner and what the handler of the job writes. It never holds a credential, a URL holding one, the environment, a declared secret or the content of the repository; the runner redacts the clone credential and the secrets it knows. A run keeps 1 MiB of log, cut at a character and ending with a line `(truncated)` beyond; the numbers of later chunks are still taken, their text dropped. Text that is not UTF-8 is refused with `400`. The page of a run shows it as escaped text to whoever the forge lets read the repository, polled every 2 seconds while the run lasts (#41), and keeps it 30 days after the run ended, purged hourly with the events.

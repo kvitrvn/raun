@@ -55,6 +55,9 @@ type serverDeps struct {
 	sweep <-chan time.Time
 	// swept, when set, is told what each sweep of the queue did.
 	swept func(n int, err error)
+	// claimWait, when set, is how long a claim waits for a job instead of
+	// job.ClaimWait.
+	claimWait time.Duration
 }
 
 // purgeInterval is how often what has expired is deleted, after the purge
@@ -62,11 +65,19 @@ type serverDeps struct {
 const purgeInterval = time.Hour
 
 // expiring are the stores the purge cleans: sessions, login states,
-// sign-ups, and the keys of the deliveries and the event log.
+// sign-ups, the keys of the deliveries and the event log, and the logs of
+// the runs.
 type expiring struct {
 	sessions session.Store
 	accounts identity.Store
 	events   repository.EventStore
+	logs     logPurger
+}
+
+// logPurger deletes the logs of the runs ended before a time:
+// job.Store.PurgeLogs.
+type logPurger interface {
+	PurgeLogs(ctx context.Context, before time.Time) (int, error)
 }
 
 // purge deletes the sessions, login states and sign-ups that have ended at
@@ -81,6 +92,9 @@ func purge(ctx context.Context, logger *slog.Logger, e expiring, now time.Time) 
 		{"sign-ups", e.accounts.DeleteExpiredSignups},
 		{"deliveries and events", func(ctx context.Context, now time.Time) (int, error) {
 			return e.events.PurgeEvents(ctx, now.Add(-repository.EventRetention))
+		}},
+		{"logs of runs", func(ctx context.Context, now time.Time) (int, error) {
+			return e.logs.PurgeLogs(ctx, now.Add(-job.LogRetention))
 		}},
 	} {
 		n, err := p.delete(ctx, now)
@@ -147,7 +161,10 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		logger.Info("forge", attrs...)
 	}
 
-	store, err := sqlite.Open(ctx, cfg.databasePath, sqlite.Options{})
+	// The store tells the notifier when a job may have become claimable,
+	// and the notifier wakes the claims of the runners that wait.
+	notifier := &job.Notifier{}
+	store, err := sqlite.Open(ctx, cfg.databasePath, sqlite.Options{Queued: notifier.Notify})
 	if err != nil {
 		logger.Error("open the database (RAUN_DATABASE_PATH)", slog.String("error", err.Error()))
 		return exitFailure
@@ -168,7 +185,7 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		return exitFailure
 	}
 	accounts := store.Accounts(keys)
-	stale := expiring{sessions: sessions, accounts: accounts, events: store.Repositories()}
+	stale := expiring{sessions: sessions, accounts: accounts, events: store.Repositories(), logs: store.Jobs()}
 	// The purge first: an expired sign-up is deleted, not rotated.
 	if err := purge(ctx, logger, stale, time.Now()); err != nil {
 		return exitFailure
@@ -209,8 +226,16 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 	// Runners are managed by the administrators, and need a login to have
 	// one.
 	var runners web.RunnerRegistry
+	var dispatcher *job.Dispatcher
 	if login != nil {
 		runners = job.NewRegistry(job.RegistryOptions{Store: store.Runners(), Admins: administrators, Random: rand.Reader, Now: time.Now})
+		// The clone credentials come from the forge alone; without the
+		// capability no repository is activated, so no job exists.
+		clone, _ := forge.(job.Clone)
+		dispatcher = job.NewDispatcher(job.DispatcherOptions{
+			Runners: store.Runners(), Jobs: store.Jobs(), Clone: clone, Forge: forge.Name(),
+			Notifier: notifier, Wait: deps.claimWait, Logger: logger, Now: time.Now,
+		})
 	}
 
 	handler, err := web.New(web.Options{
@@ -230,6 +255,7 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		Administrators: administrators,
 		Settings:       cfg.shownSettings(),
 		Runners:        runners,
+		Dispatcher:     runnerDispatcher(dispatcher),
 	})
 	if err != nil {
 		logger.Error("build the handler", slog.String("error", err.Error()))
@@ -286,6 +312,13 @@ func runServer(ctx context.Context, environ []string, stderr io.Writer, deps ser
 		sweeps = ticker.C
 	}
 	go sweepEvery(ctx, logger, store.Jobs(), sweeps, deps.swept, done)
+	if dispatcher != nil {
+		// The credentials of the runs ended by a sweep, a cancellation or
+		// a revocation are revoked at the pace of the sweep.
+		reaps := time.NewTicker(sweepInterval)
+		defer reaps.Stop()
+		go reapEvery(ctx, logger, dispatcher, reaps.C, done)
+	}
 	if repositories != nil {
 		go reach.run(ctx, logger, repositories.SyncReach, deps.synced, done)
 		// What the App reaches may have changed while the server was

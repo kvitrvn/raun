@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/kvitrvn/raun/internal/adapter/driving/web/ui"
+	"github.com/kvitrvn/raun/internal/adapter/runnerapi"
 	"github.com/kvitrvn/raun/internal/core/job"
 )
 
@@ -17,12 +18,8 @@ type RunnerRegistry interface {
 	Create(ctx context.Context, actor, name, workspace string, capabilities []job.Capability) (job.Runner, string, error)
 	Rotate(ctx context.Context, actor, id string) (job.Runner, string, error)
 	Revoke(ctx context.Context, actor, id string) (job.Runner, int, error)
-	Authenticate(ctx context.Context, token string) (job.Runner, error)
+	Authenticate(ctx context.Context, token, release string) (job.Runner, error)
 }
-
-// runnerAPIPrefix is the path of the runner API: every path below it is the
-// API's, served by the root mux apart from the application.
-const runnerAPIPrefix = "/api/runner/"
 
 type runnerKey struct{}
 
@@ -35,9 +32,12 @@ func runnerFrom(ctx context.Context) (job.Runner, bool) {
 // runnerRoute registers the runner API on the root mux, like the hook: the
 // Host check, the access log and the security headers apply, none of the
 // protections of the application, and every request authenticates by the
-// bearer token of its runner.
+// bearer token of its runner, then speaks a protocol of the server. Every
+// path below /api/runner/ is the API's.
 func (s *Server) runnerRoute(root *http.ServeMux) {
-	s.route(root, runnerAPIPrefix, s.checkHost(s.runnerAuth(http.HandlerFunc(s.runnerNotFound))))
+	api := http.NewServeMux()
+	s.runnerAPIRoutes(api)
+	s.route(root, runnerapi.Prefix, s.checkHost(s.runnerAuth(s.runnerProtocol(api))))
 }
 
 // bearer returns the token of the one Authorization header of r, in the
@@ -64,26 +64,20 @@ func (s *Server) runnerAuth(next http.Handler) http.Handler {
 		var runner job.Runner
 		err := job.ErrUnauthenticated
 		if ok {
-			runner, err = s.runners.Authenticate(r.Context(), token)
+			runner, err = s.runners.Authenticate(r.Context(), token, runnerapi.Release(r.UserAgent()))
 		}
 		switch {
 		case errors.Is(err, job.ErrUnauthenticated):
 			s.warn(r, "runner refused", "no token of a runner")
 			w.Header().Set("WWW-Authenticate", `Bearer realm="raun"`)
-			writeText(w, http.StatusUnauthorized, "unauthorized")
+			writeAPIError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		case err != nil:
-			s.fail(w, r, "authenticate a runner", err)
+			s.apiFail(w, r, "authenticate a runner", err)
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), runnerKey{}, runner)))
 	})
-}
-
-// runnerNotFound answers a route of the runner API that does not exist; the
-// protocol routes come with #39.
-func (s *Server) runnerNotFound(w http.ResponseWriter, _ *http.Request) {
-	writeText(w, http.StatusNotFound, "no such route of the runner API")
 }
 
 // runnerRoutes registers the Runners screen of the instance.

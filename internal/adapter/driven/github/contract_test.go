@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kvitrvn/raun/internal/core/identity"
+	"github.com/kvitrvn/raun/internal/core/job"
 	"github.com/kvitrvn/raun/internal/forgetest"
 )
 
@@ -81,6 +82,11 @@ func fixture(t *testing.T, key *rsa.PrivateKey) (*gitHub, forgetest.Fixture) {
 		Revoke:        func(*testing.T) { g.revoke(1001) },
 		SetDown:       func(_ *testing.T, down bool) { g.change(func() { g.down = down }) },
 		RenameAlice:   func(_ *testing.T, login string) { g.change(func() { g.people[1001].login = login }) },
+		CloneReads: func(_ *testing.T, c job.Credential, repo string) bool {
+			id, _ := strconv.ParseInt(repo, 10, 64)
+			return g.cloneReads(c.Password.Reveal(), id)
+		},
+		Now: g.clock.Now,
 	}
 }
 

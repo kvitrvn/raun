@@ -22,6 +22,7 @@ cmd/raun/                  wiring and subcommands; run() is testable (args, stdo
 internal/core/<context>/   domain logic: standard library and its own context only
 internal/adapter/driven/   implementations of the ports: database, forge, sandbox, Git
 internal/adapter/driving/  entry points: HTTP server, webhooks, runner API
+internal/adapter/runnerapi/ messages of the runner protocol, shared by the server and the runner
 internal/gittest/          test helper outside the core: fixture Git repositories
 internal/golden/           test helper outside the core: golden files, rewritten with -update
 internal/forgetest/        test helper outside the core: the fake forge and the contract suite of forge adapters

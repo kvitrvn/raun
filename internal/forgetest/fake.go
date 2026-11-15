@@ -76,6 +76,8 @@ type Fake struct {
 	// repository and pull request, oldest first.
 	statuses map[string]map[string]PublishedStatus
 	comments map[string][]PublishedComment
+	// clones are the clone credentials minted, by secret.
+	clones map[string]*fakeClone
 }
 
 var (

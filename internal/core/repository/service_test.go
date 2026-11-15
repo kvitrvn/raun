@@ -204,6 +204,7 @@ func TestActivationRefusals(t *testing.T) {
 		{"a repository the forge does not list", "alice", "acme", "2003", nil, repository.ErrNotFound},
 		{"no identifier", "alice", "acme", "", nil, repository.ErrNotFound},
 		{"a forge without files", "alice", "acme", "2001", []repository.Capability{repository.CapabilityFiles}, repository.ErrMissingCapability},
+		{"a forge without clone credentials", "alice", "acme", "2001", []repository.Capability{repository.CapabilityClone}, repository.ErrMissingCapability},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newWorld(t, tc.missing...)

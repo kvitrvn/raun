@@ -123,7 +123,7 @@ func TestTheLastContactIsAdvisory(t *testing.T) {
 	if err := s.writer.Close(); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Runners().Authenticate(ctx, job.HashToken(token), when())
+	got, err := s.Runners().Authenticate(ctx, job.HashToken(token), "", when())
 	if err != nil || got.ID != r.ID || !got.LastContact.IsZero() {
 		t.Errorf("Authenticate without a writer = %+v, %v", got, err)
 	}
@@ -141,7 +141,7 @@ func TestConcurrentContactsWriteOnce(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := s.Runners().Authenticate(ctx, hash, when().Add(time.Duration(i)*time.Millisecond)); err != nil {
+			if _, err := s.Runners().Authenticate(ctx, hash, "", when().Add(time.Duration(i)*time.Millisecond)); err != nil {
 				t.Errorf("Authenticate: %v", err)
 			}
 		}()

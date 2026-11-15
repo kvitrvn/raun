@@ -31,11 +31,14 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// bypass holds the routes that opt out of the cross-origin protection, the
-// session requirement and the CSRF check, each because it authenticates
-// requests its own way (webhooks in epic 5, the runner API in epic 6). One
-// mux decides for every protection; the cross-origin protection itself is
-// given no bypass, so the two can never disagree.
+// bypass holds the routes of the application that opt out of the
+// cross-origin protection, the session requirement and the CSRF check, each
+// because it would authenticate requests its own way. None does: the hook of
+// epic 5 and the runner API of epic 6 are served on the root mux, apart from
+// the application and its protections, and authenticate each request by a
+// signature or a bearer token; the tests give their own patterns. One mux
+// decides for every protection; the cross-origin protection itself is given
+// no bypass, so the two can never disagree.
 type bypass struct {
 	mux    *http.ServeMux
 	origin *http.CrossOriginProtection

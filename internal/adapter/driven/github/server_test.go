@@ -112,6 +112,7 @@ type gitHub struct {
 	down          bool
 	seq           int
 	mints         []mintRequest
+	revoked       []string // installation tokens revoked, in order
 	calls         map[string]int
 	// intercept, when set, answers a request before the routes do, when
 	// it returns true.
@@ -168,6 +169,7 @@ func newGitHub(t *testing.T, key *rsa.PrivateKey) *gitHub {
 	mux.HandleFunc("GET /api/v3/app/installations", g.appInstallations)
 	mux.HandleFunc("POST /api/v3/app/installations/{id}/access_tokens", g.mint)
 	mux.HandleFunc("GET /api/v3/installation/repositories", g.asInstallation)
+	mux.HandleFunc("DELETE /api/v3/installation/token", g.revokeInstallationToken)
 	mux.HandleFunc("GET /api/v3/repositories/{id}/installation", g.repositoryInstallation)
 	mux.HandleFunc("GET /api/v3/repositories/{id}/commits/{branch}", g.commit)
 	mux.HandleFunc("GET /api/v3/repositories/{id}/contents/{path...}", g.contents)
@@ -522,11 +524,54 @@ func (g *gitHub) mint(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"message": "This installation has been suspended"})
 		return
 	}
+	// A token covers repositories of its installation only, and GitHub
+	// lists those it was asked for.
+	var covered []map[string]any
+	for _, rid := range req.Repositories {
+		i := slices.IndexFunc(g.repos, func(repo ghRepo) bool { return repo.id == rid && repo.installation == id })
+		if i < 0 {
+			writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"message": "There is at least one repository that does not exist or is not accessible to the parent installation."})
+			return
+		}
+		covered = append(covered, map[string]any{"id": rid, "full_name": g.repos[i].fullName, "private": g.repos[i].private})
+	}
 	token := g.next("s")
 	expires := g.clock.Now().Add(time.Hour)
 	g.installTokens[token] = ghToken{person: id, expires: expires}
 	g.tokenScopes[token] = req
-	writeJSON(w, http.StatusCreated, map[string]any{"token": token, "expires_at": expires.Format(time.RFC3339), "permissions": req.Permissions})
+	body := map[string]any{"token": token, "expires_at": expires.Format(time.RFC3339), "permissions": req.Permissions}
+	if len(req.Repositories) > 0 {
+		body["repository_selection"] = "selected"
+		body["repositories"] = covered
+	}
+	writeJSON(w, http.StatusCreated, body)
+}
+
+// revokeInstallationToken revokes the installation token the request
+// carries.
+func (g *gitHub) revokeInstallationToken(w http.ResponseWriter, r *http.Request) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	tok, ok := g.installTokens[token]
+	if !ok || !g.clock.Now().Before(tok.expires) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Bad credentials"})
+		return
+	}
+	delete(g.installTokens, token)
+	g.revoked = append(g.revoked, token)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// cloneReads reports whether token is a live installation token of the
+// repository id alone that reads its contents.
+func (g *gitHub) cloneReads(token string, id int64) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	tok, ok := g.installTokens[token]
+	s := g.tokenScopes[token]
+	return ok && g.clock.Now().Before(tok.expires) && len(s.Repositories) == 1 && s.Repositories[0] == id &&
+		s.Permissions["contents"] == "read" && len(s.Permissions) == 1
 }
 
 func (g *gitHub) asInstallation(w http.ResponseWriter, r *http.Request) {

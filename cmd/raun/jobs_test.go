@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -118,5 +120,36 @@ func TestJobsThroughTheServer(t *testing.T) {
 	}
 	if runs, err := jobs.Runs(ctx, c.Job.ID); err != nil || len(runs) != 2 || runs[0].Outcome != job.OutcomeLost {
 		t.Errorf("runs = %+v, %v", runs, err)
+	}
+}
+
+// slowReaper is a credentialReaper whose pass waits for ctx: a forge that
+// hangs.
+type slowReaper struct{ passes chan struct{} }
+
+func (r slowReaper) Reap(ctx context.Context) int {
+	r.passes <- struct{}{}
+	<-ctx.Done()
+	return 0
+}
+
+// TestReapingStopsWithTheServer: a pass of the reaper that hangs on the
+// forge ends with the server, and the loop with it.
+func TestReapingStopsWithTheServer(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	r := slowReaper{passes: make(chan struct{}, 1)}
+	ticks := make(chan time.Time, 1)
+	ended := make(chan struct{})
+	go func() {
+		reapEvery(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)), r, ticks, make(chan struct{}))
+		close(ended)
+	}()
+	ticks <- time.Now()
+	<-r.passes
+	cancel()
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the reaper outlived the server")
 	}
 }

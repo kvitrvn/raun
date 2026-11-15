@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/kvitrvn/raun/internal/adapter/driving/web"
 	"github.com/kvitrvn/raun/internal/core/job"
 )
 
@@ -12,6 +13,39 @@ import (
 // queued too long: job.Store.Sweep.
 type sweeper interface {
 	Sweep(ctx context.Context, now time.Time) (int, error)
+}
+
+// credentialReaper revokes the clone credentials of the runs that ended:
+// job.Dispatcher.Reap.
+type credentialReaper interface {
+	Reap(ctx context.Context) int
+}
+
+// runnerDispatcher is d as the web handler takes it: nil without one.
+func runnerDispatcher(d *job.Dispatcher) web.RunnerDispatcher {
+	if d == nil {
+		return nil
+	}
+	return d
+}
+
+// reapEvery revokes, on each tick until done, the clone credentials of the
+// runs that ended, apart from the sweep of the queue, which a forge that
+// hangs never holds up. The stop of the server cancels ctx, and with it the
+// revocations in progress.
+func reapEvery(ctx context.Context, logger *slog.Logger, reap credentialReaper, ticks <-chan time.Time, done <-chan struct{}) {
+	for {
+		select {
+		case <-done:
+			return
+		case <-ctx.Done():
+			return
+		case <-ticks:
+			if n := reap.Reap(ctx); n > 0 {
+				logger.Info("clone credentials of ended runs let go", slog.Int("credentials", n))
+			}
+		}
+	}
 }
 
 // sweepEvery sweeps the queue on each tick until done, telling swept, when

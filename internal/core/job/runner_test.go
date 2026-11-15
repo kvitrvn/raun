@@ -102,11 +102,11 @@ func TestRegistry(t *testing.T) {
 	if err != nil || len(runners) != 1 || len(workspaces) != 1 {
 		t.Errorf("Runners = %+v, %+v, %v", runners, workspaces, err)
 	}
-	if got, err := g.Authenticate(ctx, token); err != nil || got.ID != r.ID {
+	if got, err := g.Authenticate(ctx, token, "1.0.0"); err != nil || got.ID != r.ID {
 		t.Errorf("Authenticate = %+v, %v", got, err)
 	}
 	for _, bad := range []string{"", strings.Repeat("a", job.MaxToken+1), "nope"} {
-		if _, err := g.Authenticate(ctx, bad); !errors.Is(err, job.ErrUnauthenticated) {
+		if _, err := g.Authenticate(ctx, bad, "1.0.0"); !errors.Is(err, job.ErrUnauthenticated) {
 			t.Errorf("Authenticate(%.8q) = %v", bad, err)
 		}
 	}
@@ -117,7 +117,7 @@ func TestRegistry(t *testing.T) {
 	if err != nil || fresh == token {
 		t.Fatalf("Rotate = %v", err)
 	}
-	if _, err := g.Authenticate(ctx, token); !errors.Is(err, job.ErrUnauthenticated) {
+	if _, err := g.Authenticate(ctx, token, "1.0.0"); !errors.Is(err, job.ErrUnauthenticated) {
 		t.Errorf("the old token = %v", err)
 	}
 	if _, _, err := g.Revoke(ctx, "bob", r.ID); !errors.Is(err, job.ErrNotAdministrator) {
@@ -128,7 +128,7 @@ func TestRegistry(t *testing.T) {
 	if err != nil || !got.RevokedAt.Equal(now) {
 		t.Errorf("Revoke = %+v, %v", got, err)
 	}
-	if _, err := g.Authenticate(ctx, fresh); !errors.Is(err, job.ErrUnauthenticated) {
+	if _, err := g.Authenticate(ctx, fresh, "1.0.0"); !errors.Is(err, job.ErrUnauthenticated) {
 		t.Errorf("the token of a revoked runner = %v", err)
 	}
 }

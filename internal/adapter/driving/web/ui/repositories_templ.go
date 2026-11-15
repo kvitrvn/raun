@@ -177,14 +177,14 @@ func RepositoriesPage(p Page, rp RepositoriesProps) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			if len(rp.Missing) > 0 {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<section data-slot=\"missing\" class=\"cn-card flex flex-col gap-1.5 px-6 py-4\"><h2 class=\"text-[15px] font-semibold\">No repository can be activated yet</h2><p class=\"text-[13.5px] text-muted-foreground\">The forge lacks what Raun needs to read the configuration of a repository and hear from it: <span class=\"font-mono\">")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<section data-slot=\"missing\" class=\"cn-card flex flex-col gap-1.5 px-6 py-4\"><h2 class=\"text-[15px] font-semibold\">No repository can be activated yet</h2><p class=\"text-[13.5px] text-muted-foreground\">The forge lacks what Raun needs to read the configuration of a repository, hear from it and let a runner fetch it: <span class=\"font-mono\">")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var7 string
 				templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(strings.Join(rp.Missing, ", "))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `repositories.templ`, Line: 81, Col: 199}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `repositories.templ`, Line: 81, Col: 222}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 				if templ_7745c5c3_Err != nil {

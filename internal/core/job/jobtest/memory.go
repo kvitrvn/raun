@@ -17,9 +17,14 @@ import (
 // Memory is a job.Store in memory, safe for concurrent use. Its zero value
 // is ready.
 type Memory struct {
+	// Queued, when set, is told after each operation that may have made a
+	// job claimable, as the SQLite store tells its notifier.
+	Queued func()
+
 	mu   sync.Mutex
 	jobs map[string]job.Job
 	runs map[string]*storedRun
+	logs map[string]job.Log
 	// order holds the runs of each job, oldest first.
 	order map[string][]string
 	// runners are the runners by identifier, with the hash of their
@@ -46,7 +51,7 @@ var (
 func (m *Memory) init() {
 	if m.jobs == nil {
 		m.jobs, m.runs, m.order = map[string]job.Job{}, map[string]*storedRun{}, map[string][]string{}
-		m.runners = map[string]*storedRunner{}
+		m.runners, m.logs = map[string]*storedRunner{}, map[string]job.Log{}
 	}
 }
 
@@ -60,7 +65,20 @@ func (m *Memory) AddWorkspace(w job.Workspace) {
 	}
 }
 
-func (m *Memory) Enqueue(_ context.Context, j job.Job) error {
+// queued tells Queued, outside the lock, when changed.
+func (m *Memory) queued(changed bool) {
+	if changed && m.Queued != nil {
+		m.Queued()
+	}
+}
+
+func (m *Memory) Enqueue(ctx context.Context, j job.Job) error {
+	err := m.enqueue(ctx, j)
+	m.queued(err == nil)
+	return err
+}
+
+func (m *Memory) enqueue(_ context.Context, j job.Job) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.init()
@@ -84,14 +102,17 @@ func (m *Memory) Enqueue(_ context.Context, j job.Job) error {
 
 func (m *Memory) Claim(_ context.Context, c job.Claimant, now time.Time) (job.Claimed, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.init()
-	return m.claim(c, now.UTC())
+	out, swept, err := m.claim(c, now.UTC())
+	m.mu.Unlock()
+	m.queued(swept > 0)
+	return out, err
 }
 
-// claim applies the rules of Claim.
-func (m *Memory) claim(c job.Claimant, now time.Time) (job.Claimed, error) {
-	m.sweep(now)
+// claim applies the rules of Claim, and returns how many jobs its sweep
+// changed.
+func (m *Memory) claim(c job.Claimant, now time.Time) (job.Claimed, int, error) {
+	m.init()
+	swept := m.sweep(now)
 	var candidates []job.Job
 	for _, j := range m.jobs {
 		if j.Claimable(now) && c.May(j) {
@@ -99,18 +120,18 @@ func (m *Memory) claim(c job.Claimant, now time.Time) (job.Claimed, error) {
 		}
 	}
 	if len(candidates) == 0 {
-		return job.Claimed{}, job.ErrNoJob
+		return job.Claimed{}, swept, job.ErrNoJob
 	}
 	j := slices.MinFunc(candidates, job.Before)
 	run, token, hash, err := job.Start(rand.Reader, j, c, now)
 	if err != nil {
-		return job.Claimed{}, err
+		return job.Claimed{}, swept, err
 	}
 	j.State = job.StateRunning
 	m.jobs[j.ID] = j
 	m.runs[run.ID] = &storedRun{run: run, hash: hash}
 	m.order[j.ID] = append(m.order[j.ID], run.ID)
-	return job.Claimed{Job: j, Run: run, Token: token}, nil
+	return job.Claimed{Job: j, Run: run, Token: token}, swept, nil
 }
 
 // lookup returns the run with this identifier when token is its own.
@@ -189,6 +210,7 @@ func (m *Memory) Release(_ context.Context, run, token string, now time.Time) er
 	}
 	j := m.jobs[r.run.Job]
 	delete(m.runs, run)
+	delete(m.logs, run)
 	m.order[j.ID] = slices.DeleteFunc(m.order[j.ID], func(id string) bool { return id == run })
 	j.State, j.NotBefore = job.StateQueued, now.UTC().Add(job.MintDelay)
 	m.jobs[j.ID] = j
@@ -237,9 +259,11 @@ func (m *Memory) CancelRepository(_ context.Context, forge, repository string, r
 
 func (m *Memory) Sweep(_ context.Context, now time.Time) (int, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.init()
-	return m.sweep(now.UTC()), nil
+	n := m.sweep(now.UTC())
+	m.mu.Unlock()
+	m.queued(n > 0)
+	return n, nil
 }
 
 // sweep applies the rules of Sweep, and returns how many jobs changed.
@@ -304,6 +328,63 @@ func (m *Memory) Runs(_ context.Context, id string) ([]job.Run, error) {
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+func (m *Memory) Run(_ context.Context, id string) (job.Run, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	r, ok := m.runs[id]
+	if !ok {
+		return job.Run{}, job.ErrNotFound
+	}
+	out := r.run
+	if out.Result != nil {
+		res := *out.Result
+		res.Data = slices.Clone(res.Data)
+		out.Result = &res
+	}
+	return out, nil
+}
+
+func (m *Memory) AppendLog(_ context.Context, run, token string, seq int, text string, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	r, err := m.lookup(run, token)
+	if err != nil {
+		return err
+	}
+	if !r.run.Holds(now) {
+		return job.ErrStaleLease
+	}
+	l, err := m.logs[run].Append(seq, text)
+	if err != nil {
+		return err
+	}
+	m.logs[run] = l
+	return nil
+}
+
+func (m *Memory) Log(_ context.Context, run string) (job.Log, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	return m.logs[run], nil
+}
+
+func (m *Memory) PurgeLogs(_ context.Context, before time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	n := 0
+	for id := range m.logs {
+		if r, ok := m.runs[id]; ok && !r.run.Open() && r.run.EndedAt.Before(before) {
+			delete(m.logs, id)
+			n++
+		}
+	}
+	return n, nil
 }
 
 func cloneRunner(r job.Runner) job.Runner {
@@ -376,16 +457,22 @@ func (m *Memory) RotateRunner(_ context.Context, id, hash string) error {
 	return nil
 }
 
-func (m *Memory) RevokeRunner(_ context.Context, id string, at time.Time) (int, error) {
+func (m *Memory) RevokeRunner(ctx context.Context, id string, at time.Time) (int, error) {
+	n, revoked, err := m.revokeRunner(ctx, id, at)
+	m.queued(revoked)
+	return n, err
+}
+
+func (m *Memory) revokeRunner(_ context.Context, id string, at time.Time) (int, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.init()
 	r, ok := m.runners[id]
 	if !ok {
-		return 0, job.ErrNoRunner
+		return 0, false, job.ErrNoRunner
 	}
 	if r.runner.Revoked() {
-		return 0, nil
+		return 0, false, nil
 	}
 	at = at.UTC()
 	r.runner.RevokedAt = at
@@ -402,7 +489,7 @@ func (m *Memory) RevokeRunner(_ context.Context, id string, at time.Time) (int, 
 			changed++
 		}
 	}
-	return changed, nil
+	return changed, true, nil
 }
 
 // authenticated returns the runner whose token has hash, when it is not
@@ -416,7 +503,7 @@ func (m *Memory) authenticated(hash string) (*storedRunner, error) {
 	return nil, job.ErrUnauthenticated
 }
 
-func (m *Memory) Authenticate(_ context.Context, hash string, now time.Time) (job.Runner, error) {
+func (m *Memory) Authenticate(_ context.Context, hash, release string, now time.Time) (job.Runner, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.init()
@@ -425,21 +512,27 @@ func (m *Memory) Authenticate(_ context.Context, hash string, now time.Time) (jo
 		return job.Runner{}, err
 	}
 	now = now.UTC()
-	if !now.Before(r.runner.LastContact.Add(job.ContactEvery)) {
+	if !now.Before(r.runner.LastContact.Add(job.ContactEvery)) || (release != "" && release != r.runner.Release) {
 		r.runner.LastContact = now
+		if release != "" {
+			r.runner.Release = release
+		}
 	}
 	return cloneRunner(r.runner), nil
 }
 
 func (m *Memory) ClaimFor(_ context.Context, runner string, now time.Time) (job.Claimed, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.init()
 	r, ok := m.runners[runner]
 	if !ok || r.runner.Revoked() {
+		m.mu.Unlock()
 		return job.Claimed{}, job.ErrUnauthenticated
 	}
-	return m.claim(r.runner.Claimant(), now.UTC())
+	out, swept, err := m.claim(r.runner.Claimant(), now.UTC())
+	m.mu.Unlock()
+	m.queued(swept > 0)
+	return out, err
 }
 
 func (m *Memory) Workspaces(_ context.Context) ([]job.Workspace, error) {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kvitrvn/raun/internal/core/identity"
+	"github.com/kvitrvn/raun/internal/core/job"
 	"github.com/kvitrvn/raun/internal/core/repository"
 )
 
@@ -69,6 +70,13 @@ type Fixture struct {
 	SetDown func(t *testing.T, down bool)
 	// RenameAlice gives Alice a new login on the forge.
 	RenameAlice func(t *testing.T, login string)
+	// CloneReads reports whether the forge accepts c to read the
+	// repository with this identifier now; nil for a forge without the
+	// clone capability.
+	CloneReads func(t *testing.T, c job.Credential, repo string) bool
+	// Now is the time of the forge, which the expiry of a credential
+	// follows.
+	Now func() time.Time
 }
 
 // Scenario returns the fake forge called name set up with the scenario of
@@ -149,6 +157,12 @@ func Scenario(name string, bare bool) (*Fake, Fixture) {
 			if !f.Rename("1001", login) {
 				t.Fatal("Alice is unknown")
 			}
+		},
+		CloneReads: func(_ *testing.T, c job.Credential, repo string) bool { return f.CloneReads(c, repo) },
+		Now: func() time.Time {
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			return f.clock()
 		},
 	}
 }
@@ -540,6 +554,71 @@ func Suite(t *testing.T, newFixture func(t *testing.T) Fixture) {
 		fx.SetDown(t, true)
 		if _, err := read("2001", fx.Head, ".raun.yaml", 1<<16); !errors.Is(err, identity.ErrUnavailable) {
 			t.Errorf("Read of a forge down = %v, want ErrUnavailable", err)
+		}
+	})
+
+	t.Run("clone credentials, when the forge has them", func(t *testing.T) {
+		fx := newFixture(t)
+		c, ok := fx.Forge.(job.Clone)
+		if !ok {
+			t.Skip("the forge cannot mint a clone credential")
+		}
+		now := fx.Now()
+		a, err := c.MintClone(ctx, "2001")
+		if err != nil {
+			t.Fatalf("MintClone = %v", err)
+		}
+		secret := a.Password.Reveal()
+		u, err := url.Parse(a.URL)
+		if err != nil || u.Scheme != "https" || u.User != nil || strings.Contains(a.URL, secret) || !strings.HasSuffix(u.Path, "/acme/api.git") ||
+			a.FullName != "acme/api" || a.Username == "" || secret == "" {
+			t.Errorf("MintClone = %+v (URL %q), %v", a, a.URL, err)
+		}
+		if !a.Expires.After(now) || a.Expires.After(now.Add(time.Hour)) {
+			t.Errorf("the credential expires at %s, the forge being at %s: want within the hour", a.Expires, now)
+		}
+		if !fx.CloneReads(t, a, "2001") {
+			t.Fatal("the forge refuses the credential it minted")
+		}
+		if fx.CloneReads(t, a, "2002") {
+			t.Error("the credential reads another repository")
+		}
+		b, err := c.MintClone(ctx, "2001")
+		if err != nil || b.Password.Reveal() == secret {
+			t.Fatalf("a second MintClone = %v, the same credential %v", err, b.Password.Reveal() == secret)
+		}
+		if err := c.RevokeClone(ctx, a); err != nil {
+			t.Fatalf("RevokeClone = %v", err)
+		}
+		if fx.CloneReads(t, a, "2001") || !fx.CloneReads(t, b, "2001") {
+			t.Error("a revocation did not refuse its credential alone")
+		}
+		if err := c.RevokeClone(ctx, a); err != nil {
+			t.Errorf("RevokeClone of a revoked credential = %v", err)
+		}
+		// The reads of the server keep their own credentials.
+		if f, ok := fx.Forge.(repository.Files); ok {
+			if _, err := f.Head(ctx, "2001", "main"); err != nil {
+				t.Errorf("Head after a revocation = %v", err)
+			}
+		}
+		for _, repo := range []string{"2004", "9999", "not-an-id", ""} {
+			if got, err := c.MintClone(ctx, repo); err == nil || got.Password.Reveal() != "" {
+				t.Errorf("MintClone(%q) = %+v, %v; want an error", repo, got, err)
+			}
+		}
+		fx.SetDown(t, true)
+		if _, err := c.MintClone(ctx, "2001"); err == nil {
+			t.Error("MintClone of a forge down succeeded")
+		}
+		if err := c.RevokeClone(ctx, b); err == nil {
+			t.Error("RevokeClone of a forge down succeeded")
+		} else {
+			noSecret(t, err, b.Password.Reveal())
+		}
+		fx.SetDown(t, false)
+		if err := c.RevokeClone(ctx, b); err != nil || fx.CloneReads(t, b, "2001") {
+			t.Errorf("RevokeClone once the forge is back = %v", err)
 		}
 	})
 

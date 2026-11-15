@@ -198,9 +198,36 @@ func (a *App) installationToken(ctx context.Context, s scope) (identity.Secret, 
 
 // mintToken asks GitHub for a token of s and caches it under key.
 func (a *App) mintToken(ctx context.Context, s scope, key string) (identity.Secret, error) {
+	t, _, err := a.requestToken(ctx, s)
+	if err != nil {
+		return "", err
+	}
+	a.tokens.mu.Lock()
+	// Tokens of other scopes past their margin are dropped too, so the
+	// cache holds no token that would not be used.
+	now := a.now()
+	for k, old := range a.tokens.tokens {
+		if !now.Add(tokenMargin).Before(old.expires) {
+			delete(a.tokens.tokens, k)
+		}
+	}
+	a.tokens.tokens[key] = t
+	a.tokens.mu.Unlock()
+	return t.token, nil
+}
+
+// tokenRepository is a repository GitHub says a token it minted covers.
+type tokenRepository struct {
+	ID       int64  `json:"id"`
+	FullName string `json:"full_name"`
+}
+
+// requestToken asks GitHub for a new token of s, which it caches nowhere,
+// and returns it with the repositories GitHub says it covers.
+func (a *App) requestToken(ctx context.Context, s scope) (installationToken, []tokenRepository, error) {
 	jwt, err := a.jwt()
 	if err != nil {
-		return "", fmt.Errorf("github: installation token: %w", err)
+		return installationToken{}, nil, fmt.Errorf("github: installation token: %w", err)
 	}
 	path := "/app/installations/" + strconv.FormatInt(s.installation, 10) + "/access_tokens"
 	req := request{
@@ -217,41 +244,30 @@ func (a *App) mintToken(ctx context.Context, s scope, key string) (identity.Secr
 	}
 	r, err := a.do(ctx, req)
 	if err != nil {
-		return "", err
+		return installationToken{}, nil, err
 	}
 	switch r.status {
 	case http.StatusCreated:
 	case http.StatusNotFound, http.StatusForbidden, http.StatusUnprocessableEntity:
 		a.forgetInstallation(s.installation)
-		return "", fmt.Errorf("github: %s %s: %w: %w: status %d", req.method, req.path, identity.ErrUnavailable, errInstallation, r.status)
+		return installationToken{}, nil, fmt.Errorf("github: %s %s: %w: %w: status %d", req.method, req.path, identity.ErrUnavailable, errInstallation, r.status)
 	case http.StatusUnauthorized:
-		return "", fail(req, identity.ErrUnavailable, "GitHub refuses the JWT of the App: check RAUN_GITHUB_APP_ID, the private key and the clock")
+		return installationToken{}, nil, fail(req, identity.ErrUnavailable, "GitHub refuses the JWT of the App: check RAUN_GITHUB_APP_ID, the private key and the clock")
 	default:
-		return "", status(req, r)
+		return installationToken{}, nil, status(req, r)
 	}
 	var out struct {
-		Token     string    `json:"token"`
-		ExpiresAt time.Time `json:"expires_at"`
+		Token        string            `json:"token"`
+		ExpiresAt    time.Time         `json:"expires_at"`
+		Repositories []tokenRepository `json:"repositories"`
 	}
 	if err := decode(req, r, &out); err != nil {
-		return "", err
+		return installationToken{}, nil, err
 	}
 	if out.Token == "" || out.ExpiresAt.IsZero() {
-		return "", fail(req, identity.ErrUnavailable, "malformed response")
+		return installationToken{}, nil, fail(req, identity.ErrUnavailable, "malformed response")
 	}
-	t := installationToken{installation: s.installation, token: identity.Secret(out.Token), expires: out.ExpiresAt}
-	a.tokens.mu.Lock()
-	// Tokens of other scopes past their margin are dropped too, so the
-	// cache holds no token that would not be used.
-	now := a.now()
-	for k, old := range a.tokens.tokens {
-		if !now.Add(tokenMargin).Before(old.expires) {
-			delete(a.tokens.tokens, k)
-		}
-	}
-	a.tokens.tokens[key] = t
-	a.tokens.mu.Unlock()
-	return t.token, nil
+	return installationToken{installation: s.installation, token: identity.Secret(out.Token), expires: out.ExpiresAt}, out.Repositories, nil
 }
 
 // forgetInstallation drops every token of installation, and the
