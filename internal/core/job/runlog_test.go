@@ -120,3 +120,26 @@ func TestRunLogBoundCountsRedactedText(t *testing.T) {
 		t.Errorf("a redacted log past its bound: %d bytes, %d markers", len(got), strings.Count(got, Truncated))
 	}
 }
+
+// TestASplitSecretIsRedactedAtTheCutAndAtTheEnd: the start of a secret
+// that no later write completes, at the cut or at the end of the run, is
+// not sent.
+func TestASplitSecretIsRedactedAtTheCutAndAtTheEnd(t *testing.T) {
+	const secret = "ghs_0123456789abcdef"
+	l := newRunLog(secret)
+	_, _ = l.Write([]byte("fetching with " + secret[:8]))
+	got, _ := drain(l)
+	if strings.Contains(got, secret[:4]) || !strings.HasSuffix(got, "[redacted]") {
+		t.Errorf("the end of the run sent %q", got)
+	}
+
+	l = newRunLog(secret)
+	filler := strings.Repeat("x", logLimit-4)
+	_, _ = l.Write([]byte(filler))
+	_, _ = l.Write([]byte(secret[:8]))
+	_, _ = l.Write([]byte(secret[8:]))
+	got, _ = drain(l)
+	if strings.Contains(got, secret[:4]) || len(got) > MaxLog || !strings.HasSuffix(got, Truncated) {
+		t.Errorf("the cut sent %q", got[max(len(got)-40, 0):])
+	}
+}

@@ -583,3 +583,17 @@ func TestAResultItsKindRefusesIsNotSent(t *testing.T) {
 		}
 	}
 }
+
+// TestAKindWithoutHandlerFailsAndSaysSo: the summary names the kind.
+func TestAKindWithoutHandlerFailsAndSaysSo(t *testing.T) {
+	w := newWorld(t, 1, nil)
+	wk := work("r1")
+	wk.Kind = "check"
+	w.remote.works <- wk
+	stop, _ := w.start(t)
+	w.waitReported(t, "r1")
+	_ = stop()
+	if res := w.remote.resultsOf("r1"); len(res) != 1 || res[0].Outcome != job.OutcomeFailed || res[0].Summary != "this runner has no handler for kind check" {
+		t.Errorf("results %+v", res)
+	}
+}

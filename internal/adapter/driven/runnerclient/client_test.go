@@ -246,3 +246,11 @@ func TestNew(t *testing.T) {
 		}
 	}
 }
+
+func TestAResultThatCannotBeWrittenIsInvalid(t *testing.T) {
+	c, s := newClient(t, nil)
+	err := c.Report(context.Background(), run, lease, job.Result{Outcome: job.OutcomeSucceeded, Data: []byte("{")})
+	if !errors.Is(err, job.ErrInvalidResult) || len(s.seen) != 0 {
+		t.Errorf("Report of data that is not JSON = %v, %d requests", err, len(s.seen))
+	}
+}

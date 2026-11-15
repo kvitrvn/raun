@@ -57,6 +57,9 @@ func (l *runLog) Write(p []byte) (int, error) {
 	// The bound counts the text as it is sent, redacted.
 	if before := l.sent + len(l.chunk); before+len(l.pending) > logLimit {
 		l.pending = l.pending[:cutAt(l.pending, max(logLimit-before, 0))]
+		// No later write completes a secret now: the start of one at the
+		// end goes too.
+		l.pending = l.pending[:len(l.pending)-l.secretStart(l.pending)]
 		last := l.pending
 		if last == "" {
 			last = l.chunk
@@ -79,6 +82,13 @@ func (l *runLog) take(final bool) (int, string, bool) {
 	if l.chunk != "" {
 		return l.seq, l.chunk, true
 	}
+	if final && !l.cut {
+		// No later write completes a secret: the start of one at the end
+		// is redacted.
+		if n := l.secretStart(l.pending); n > 0 {
+			l.pending = l.pending[:len(l.pending)-n] + redacted
+		}
+	}
 	avail := len(l.pending)
 	if !final && !l.cut {
 		avail -= l.hold
@@ -92,6 +102,21 @@ func (l *runLog) take(final bool) (int, string, bool) {
 	}
 	l.chunk, l.pending = l.pending[:n], l.pending[n:]
 	return l.seq, l.chunk, true
+}
+
+// secretStart returns the length of the longest end of text that starts a
+// secret without holding it whole; the caller holds the lock.
+func (l *runLog) secretStart(text string) int {
+	longest := 0
+	for _, s := range l.secrets {
+		for n := min(len(s)-1, len(text)); n > longest; n-- {
+			if strings.HasSuffix(text, s[:n]) {
+				longest = n
+				break
+			}
+		}
+	}
+	return longest
 }
 
 // ack removes the chunk numbered seq, which the server took.

@@ -377,7 +377,7 @@ func (l *Loop) execute(ctx context.Context, w Work) error {
 	if res == nil || ctx.Err() != nil {
 		return r.stopped(ctx)
 	}
-	if err := CheckResult(w.Kind, *res); err != nil {
+	if err := CheckResult(w.Kind, *res); errors.Is(err, ErrInvalidResult) {
 		r.logger.Error("the handler gave a result its kind refuses", slog.String("error", err.Error()))
 		res = &Result{Outcome: OutcomeFailed, Summary: "the handler gave a result its kind refuses"}
 	}
@@ -589,6 +589,7 @@ func (r *run) flush(ctx context.Context, final bool) error {
 		case errors.As(err, &gap) && gap.Expected > seq:
 			// The server took the chunk, and the answer was lost.
 			r.log.ack(seq)
+			failed = 0
 		case errors.As(err, &gap):
 			r.logger.Error("the server lost chunks of the log; the rest is dropped", slog.Int("expected", gap.Expected), slog.Int("seq", seq))
 			r.log.drop()
